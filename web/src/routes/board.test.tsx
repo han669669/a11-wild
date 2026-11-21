@@ -33,9 +33,10 @@ const board = (overrides: Partial<BoardData> = {}): BoardData => ({
       idea: idea(1),
       drafts: [draft("idea-1", 1), draft("idea-1", 2, { imageId: "idea-1-d2", items: [{ code: "D11", note: "The pouch is 5% wider than the packshot.", tool: "pack_check" }], looked: true, savedAt: at }), draft("idea-1", 3)],
       pick: null,
+      rank: null,
       finals: [],
     },
-    { idea: idea(2), drafts: [draft("idea-2", 1), draft("idea-2", 2), draft("idea-2", 3)], pick: null, finals: [] },
+    { idea: idea(2), drafts: [draft("idea-2", 1), draft("idea-2", 2), draft("idea-2", 3)], pick: null, rank: null, finals: [] },
   ],
   ...overrides,
 });
@@ -89,7 +90,7 @@ describe("Pick board", () => {
   });
 
   it("saves a pass on all three, and shows a saved pick in the owner's words", async () => {
-    const sent = show(board({ ideas: [{ idea: idea(1), drafts: [draft("idea-1", 1), draft("idea-1", 2), draft("idea-1", 3)], pick: { ideaId: "idea-1", imageId: "idea-1-d2", ownerSaid: "the rock reads at once", at, by: "owner@example.com" }, finals: [] }] }));
+    const sent = show(board({ ideas: [{ idea: idea(1), drafts: [draft("idea-1", 1), draft("idea-1", 2), draft("idea-1", 3)], pick: { ideaId: "idea-1", imageId: "idea-1-d2", ownerSaid: "the rock reads at once", at, by: "owner@example.com" }, rank: null, finals: [] }] }));
     expect(await screen.findByText(/You picked draft 2/)).toHaveTextContent("the rock reads at once");
     expect(screen.getByText("Your pick")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Pass on all 3" }));
@@ -110,6 +111,7 @@ describe("Pick board", () => {
             idea: idea(1),
             drafts: [{ ...made, shown: repair, viewUrl: "https://pictures.example/swap-1.jpg" }],
             pick: null,
+            rank: null,
             finals: [{ number: 1, image: final, shown: final, viewUrl: "https://pictures.example/final-1.jpg", checks: null, finish: { image: finish, viewUrl: "https://pictures.example/finish-1.jpg" } }],
           },
         ],
@@ -134,6 +136,76 @@ describe("Pick board", () => {
     await screen.findByAltText("Rock 1, draft 1");
     expect(screen.getByText(/Its picks are closed/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Pick draft|Pass on all/ })).not.toBeInTheDocument();
+  });
+
+  it("shows where the blind critic put each draft, once the owner has picked", async () => {
+    const drafts = [draft("idea-1", 1), draft("idea-1", 2), draft("idea-1", 3)];
+    const rank = { ideaId: "idea-1", at, order: [{ imageId: "idea-1-d3", shownId: "idea-1-d3", reason: "The calmest of the three." }, { imageId: "idea-1-d1", shownId: "idea-1-d1", reason: "The wave pulls the eye away." }, { imageId: "idea-1-d2", shownId: "idea-1-d2", reason: "The pouch is too wide." }] };
+    show(board({ ideas: [{ idea: idea(1), drafts, pick: { ideaId: "idea-1", imageId: "idea-1-d1", ownerSaid: "the wave", at, by: "owner@example.com" }, rank, finals: [] }] }));
+    const third = (await screen.findByAltText("Rock 1, draft 3")).closest("li")!;
+    expect(within(third).getByText("The blind critic put it first: The calmest of the three.")).toBeInTheDocument();
+    expect(within(screen.getByAltText("Rock 1, draft 1").closest("li")!).getByText(/put it second/)).toBeInTheDocument();
+  });
+
+  it("shows the done gate of a batch at its finals: each condition, its evidence and the stranger test", async () => {
+    const page = board();
+    stubApi({
+      "GET /api/batches/b1/board": () => ({ body: { ...page, batch: { ...page.batch, state: "finals" } } }),
+      "GET /api/batches/b1/done": () => ({
+        body: {
+          batch: page.batch,
+          done: false,
+          conditions: [
+            { name: "picks", asks: "The owner has picked one draft for each idea.", passed: false, evidence: "idea-2: no pick yet" },
+            { name: "finals", asks: "Each pick became a final with no D item, and its shape matches the real product.", passed: true, evidence: "1 final(s): each is checked." },
+          ],
+          strangerTest: ["Show each final, alone, to a person who does not know the brand."],
+        },
+      }),
+    });
+    renderSignedIn(
+      <Routes>
+        <Route path="batches/:batchId" element={<Board />} />
+      </Routes>,
+      undefined,
+      "/batches/b1",
+    );
+    const gate = (await screen.findByRole("heading", { name: "Done gate" })).closest("section")!;
+    expect(await within(gate).findByText("This batch is not done yet.")).toBeInTheDocument();
+    expect(within(gate).getByText("idea-2: no pick yet")).toBeInTheDocument();
+    expect(within(gate).getByText("Not met")).toBeInTheDocument();
+    expect(within(gate).getByText("Met")).toBeInTheDocument();
+    expect(within(gate).getByText(/person who does not know the brand/)).toBeInTheDocument();
+  });
+
+  it("reads the done gate again after the owner's pick", async () => {
+    const page = board();
+    const gate = (evidence: string, passed: boolean) => ({
+      body: { batch: page.batch, done: false, conditions: [{ name: "picks", asks: "The owner has picked one draft for each idea.", passed, evidence }], strangerTest: [] },
+    });
+    let picked = false;
+    stubApi({
+      "GET /api/batches/b1/board": () => ({ body: { ...page, batch: { ...page.batch, state: "finals" } } }),
+      "GET /api/batches/b1/done": () => (picked ? gate("2 idea(s): each has a pick.", true) : gate("idea-1: no pick yet", false)),
+      "POST /api/batches/b1/picks": () => {
+        picked = true;
+        return { body: { pick: { ideaId: "idea-1", imageId: "idea-1-d3", ownerSaid: "calm", at, by: "owner@example.com" } } };
+      },
+    });
+    renderSignedIn(
+      <Routes>
+        <Route path="batches/:batchId" element={<Board />} />
+      </Routes>,
+      undefined,
+      "/batches/b1",
+    );
+    expect(await screen.findByText("idea-1: no pick yet")).toBeInTheDocument();
+    const first = screen.getByRole("heading", { name: "Idea 1: Rock 1" }).closest("section")!;
+    await userEvent.click(within(first).getByRole("button", { name: "Pick draft 3" }));
+    await userEvent.type(within(first).getByLabelText("Why draft 3, in your own words"), "calm");
+    await userEvent.click(within(first).getByRole("button", { name: "Save the pick" }));
+    expect(await screen.findByText("2 idea(s): each has a pick.")).toBeInTheDocument();
+    expect(screen.queryByText("idea-1: no pick yet")).not.toBeInTheDocument();
   });
 
   it("gives a member no way to pick", async () => {
