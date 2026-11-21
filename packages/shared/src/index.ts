@@ -256,10 +256,132 @@ export interface BrandPage {
   batches: Batch[];
 }
 
+/** One batch in the dashboard's list, with the names of its brand and product. */
+export interface BatchSummary {
+  batch: Batch;
+  brand: { id: string; name: string };
+  product: { id: string; name: string };
+}
+
 /** What the dashboard's taste page shows. */
 export interface TastePage {
   canon: CanonVersion;
   versions: Omit<CanonVersion, "text">[];
   log: TasteEntry[];
   swipe: SwipeItem[];
+}
+
+/** What a picture of a batch is: the skeleton a draft is built round, a draft, a final, or what a pixel tool made from one. */
+export type ImageKind = "skeleton" | "draft" | "final" | "reprint" | "swap" | "finish" | "food_crop";
+
+/** A picture that a batch owns. It lives in the private picture store. */
+export interface BatchImage {
+  id: string;
+  batchId: string;
+  kind: ImageKind;
+  key: string;
+  ideaId?: string;
+  /** The picture this one was made from: a draft's skeleton, a final's draft. */
+  fromId?: string;
+  /** The draft or the final that a repair, a finish or a food crop stands for. */
+  rootId?: string;
+  createdAt: string;
+}
+
+export type RenderKind = "draft" | "final";
+
+/** One request to the picture model, from the moment it is sent. */
+export interface Render {
+  id: string;
+  batchId: string;
+  ideaId: string;
+  kind: RenderKind;
+  status: "queued" | "done" | "failed";
+  prompt: string;
+  /** A draft's skeleton, or the picked draft of a final. */
+  fromId?: string;
+  /** The price held for it in the ledger, in US dollars. */
+  usd: number;
+  /** The picture it made. */
+  imageId?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A defect (D) rejects a picture by itself. Two faults (F) do the same. */
+export type CheckCode = "D1" | "D2" | "D3" | "D4" | "D5" | "D6" | "D7" | "D8" | "D9" | "D10" | "D11" | "F1" | "F2" | "F3" | "F4" | "F5" | "F6" | "F7" | "F8";
+
+export interface CheckItem {
+  code: CheckCode;
+  /** What is wrong in this picture, in a line. */
+  note: string;
+  /** The pixel tool that measured it. An item with a tool was measured, and no agent can remove it. */
+  tool?: string;
+}
+
+/** What was found in one draft or one final. No item means it was looked at and nothing was found. */
+export interface ImageChecks {
+  imageId: string;
+  items: CheckItem[];
+  /** True when the agent has saved its own look at the picture. Measured items can arrive before that. */
+  looked: boolean;
+  savedAt: string;
+}
+
+/** The owner's choice for one idea: one of its drafts, or none of them. */
+export interface Pick {
+  ideaId: string;
+  /** The picked draft's picture, or null when the owner passed on all of the idea's drafts. */
+  imageId: string | null;
+  ownerSaid: string;
+  at: string;
+  by: string;
+}
+
+export interface BoardDraft {
+  /** 1 to 3, in the order the drafts were sent. It is a name, not a rank. */
+  number: number;
+  /** The picture as the model made it. A pick names this one. */
+  image: BatchImage;
+  /** The picture that counts: the newest repair of it (a reprint or a swap), or the picture itself. */
+  shown: BatchImage;
+  /** Opens `shown`. */
+  viewUrl: string;
+  /** The D and F items found in `shown`, or null when it has not been checked yet. */
+  checks: ImageChecks | null;
+  /** A final after the real-camera finish: the picture that is delivered. */
+  finish?: { image: BatchImage; viewUrl: string };
+}
+
+export type PixelTool = "skeleton" | "reprint" | "swap" | "pack_check" | "cap_check" | "photo_finish" | "food_crop";
+
+/** One run of a pixel tool, from the moment it is sent. */
+export interface PixelJob {
+  id: string;
+  batchId: string;
+  tool: PixelTool;
+  status: "queued" | "done" | "failed";
+  /** The picture the tool worked on. */
+  imageId?: string;
+  /** What the tool said: a measure, or what it made. */
+  line?: string;
+  /** For a check: whether the picture passed. */
+  passed?: boolean;
+  /** The picture the tool made. */
+  madeId?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** What the owner sees to pick: each idea's drafts beside the product's truth sheet, with no rank. */
+export interface Board {
+  batch: Batch;
+  /** Whether the owner can pick now: `not_yet` until every draft is made and checked, `closed` once the finals are finished. */
+  picking: "not_yet" | "open" | "closed";
+  brand: { id: string; name: string };
+  product: { id: string; name: string };
+  truthSheet: TruthSheet | null;
+  ideas: { idea: Idea; drafts: BoardDraft[]; pick: Pick | null; finals: BoardDraft[] }[];
 }

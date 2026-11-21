@@ -1,4 +1,4 @@
-import type { BrandKit, BrandPage, BrandSummary, TastePage } from "@a11-wild/shared";
+import type { BatchSummary, BrandKit, BrandPage, BrandSummary, TastePage } from "@a11-wild/shared";
 import type { Hono, MiddlewareHandler } from "hono";
 import { z } from "zod";
 import type { Deps } from "../app.js";
@@ -7,6 +7,7 @@ import { Refusal } from "../mcp/registry.js";
 import type { SessionEnv } from "./guards.js";
 
 const CANON = z.strictObject({ text: z.string().max(40_000), reason: z.string().max(500) });
+const PICK = z.strictObject({ ideaId: z.string().min(1).max(64), imageId: z.string().min(1).max(64).nullable(), ownerSaid: z.string().min(1).max(2000) });
 
 /** The dashboard's read of what the studio knows: brands, facts, truth sheets, taste and spend. */
 export function studioRoutes(
@@ -15,7 +16,7 @@ export function studioRoutes(
   session: MiddlewareHandler<SessionEnv>,
   ownerWrite: readonly [MiddlewareHandler<SessionEnv>, MiddlewareHandler, MiddlewareHandler<SessionEnv>],
 ): void {
-  const { brands, facts, truth, batches, ledger, canon, tasteLog, swipe } = deps.studio;
+  const { brands, facts, truth, batches, ledger, canon, tasteLog, swipe, board } = deps.studio;
   const logoUrl = (brand: BrandKit) => (brand.logo ? deps.pictures.viewUrl(brand.logo.key) : null);
 
   routes.get("/api/brands", session, async (c) => {
@@ -83,6 +84,39 @@ export function studioRoutes(
       return c.json(saved);
     } catch (error) {
       // A refusal is written for the person: it says what to change.
+      if (error instanceof Refusal) return c.json({ error: "refused", message: error.message }, 400);
+      throw error;
+    }
+  });
+
+  routes.get("/api/batches", session, async (c) => {
+    const list = await Promise.all(
+      (await batches.list()).map(async (batch): Promise<BatchSummary> => {
+        const [brand, product] = await Promise.all([brands.brand(batch.brandId), brands.product(batch.productId)]);
+        return { batch, brand: { id: brand.id, name: brand.name }, product: { id: product.id, name: product.name } };
+      }),
+    );
+    return c.json({ batches: list });
+  });
+
+  routes.get("/api/batches/:batchId/board", session, async (c) => {
+    try {
+      return c.json(await board.board(c.req.param("batchId")));
+    } catch (error) {
+      if (error instanceof Refusal) return c.json({ error: "not_found" }, 404);
+      throw error;
+    }
+  });
+
+  routes.post("/api/batches/:batchId/picks", ...ownerWrite, async (c) => {
+    const body = PICK.safeParse(await c.req.json().catch(() => undefined));
+    if (!body.success) return c.json({ error: "bad_request", message: "Choose a draft or pass, and say why in your own words." }, 400);
+    const { sub, email, role } = c.get("session");
+    try {
+      const saved = await board.pick(c.req.param("batchId"), body.data, { email, role });
+      log.info("pick_saved", { batch: c.req.param("batchId"), idea: body.data.ideaId, by: sub });
+      return c.json(saved);
+    } catch (error) {
       if (error instanceof Refusal) return c.json({ error: "refused", message: error.message }, 400);
       throw error;
     }
