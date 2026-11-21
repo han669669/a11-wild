@@ -9,7 +9,13 @@ import { buildConfig } from "../../src/config.js";
 import { PROMPTS } from "../../src/mcp/prompts.js";
 import { defineTool, ToolRegistry } from "../../src/mcp/registry.js";
 import { McpServer } from "../../src/mcp/server.js";
-import { coreTools } from "../../src/mcp/tools/core.js";
+import { createSession, SESSION_COOKIE } from "../../src/auth/session.js";
+import { studioTools } from "../../src/mcp/tools/index.js";
+import type { WaitingClient } from "../../src/notify.js";
+import type { Net } from "../../src/urlsafety.js";
+import { fakeNet } from "./net.js";
+import { fakeParallel, type ParallelCall, testKeys } from "./parallel.js";
+import { MemoryPictures } from "./pictures.js";
 import { FakeCognito } from "./fake-cognito.js";
 import { MemoryTable } from "./memory-table.js";
 import { createSigner } from "./tokens.js";
@@ -47,7 +53,14 @@ const sampleTools = [
 ];
 
 /** A whole studio in memory: one owner, one member, and a clock the test controls. */
-export async function createStudio() {
+export interface StudioOptions {
+  /** The pages and pictures the studio can fetch. */
+  net?: Net;
+  /** What Parallel answers. */
+  parallel?: Parameters<typeof fakeParallel>[0];
+}
+
+export async function createStudio(options: StudioOptions = {}) {
   const table = new MemoryTable();
   const cognito = new FakeCognito();
   const signer = await createSigner();
@@ -65,7 +78,27 @@ export async function createStudio() {
   await table.put(userItem({ sub: "sub-owner", email: "owner@example.com", role: "owner" }));
   await table.put(userItem({ sub: "sub-member", email: "member@example.com", role: "member" }));
 
-  const approvals = new ClientApprovals(table, cognito, config.dashboardClientId, now);
+  const notices: WaitingClient[] = [];
+  const notifier = {
+    fails: false,
+    async clientWaiting(client: WaitingClient) {
+      if (this.fails) throw new Error("topic is down");
+      notices.push(client);
+    },
+  };
+  const approvals = new ClientApprovals(table, cognito, config.dashboardClientId, now, notifier);
+  const pictures = new MemoryPictures();
+  const parallel = fakeParallel(options.parallel ?? ((_call: ParallelCall) => ({ status: 500 })));
+  const { tools, services } = studioTools({
+    config,
+    table,
+    now,
+    keys: testKeys,
+    pictures,
+    net: options.net ?? fakeNet({}),
+    parallelFetch: parallel.fetchFn,
+  });
+  const spend = { ledger: services.ledger, gate: services.gate };
   const deps: Deps = {
     config,
     table,
@@ -75,13 +108,31 @@ export async function createStudio() {
     mcp: new McpServer({
       name: "a11-wild",
       version: config.buildId,
-      registry: new ToolRegistry([...coreTools(config), ...sampleTools]),
+      registry: new ToolRegistry([...tools, ...sampleTools]),
       prompts: PROMPTS,
     }),
+    studio: services,
+    pictures,
     now,
   };
 
-  return { app: createApp(deps), deps, table, cognito, signer, clock, approvals, tokenRequests, tokenEndpoint };
+  return {
+    app: createApp(deps),
+    deps,
+    table,
+    cognito,
+    signer,
+    clock,
+    approvals,
+    notices,
+    notifier,
+    spend,
+    services,
+    pictures,
+    parallelCalls: parallel.calls,
+    tokenRequests,
+    tokenEndpoint,
+  };
 }
 
 export type Studio = Awaited<ReturnType<typeof createStudio>>;
@@ -97,4 +148,24 @@ export async function approvedClient(studio: Studio, clientId = "client-1"): Pro
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function json(response: Response): Promise<any> {
   return response.json();
+}
+
+/** Calls one tool as an approved client. Returns the tool's reply parsed, or its error text. */
+export async function callTool(studio: Studio, name: string, args: unknown = {}, as: { sub?: string } = {}) {
+  const token = await studio.signer.accessToken(config, as.sub ? { sub: as.sub } : {});
+  const response = await studio.app.request("/mcp", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+  });
+  const { result } = await json(response);
+  const text = result.content[0].text as string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return result.isError === true ? { ok: false as const, error: text } : { ok: true as const, value: JSON.parse(text) as any };
+}
+
+/** The cookie of a signed-in dashboard session. */
+export async function sessionCookie(studio: Studio, role: "owner" | "member" = "owner"): Promise<string> {
+  const user = { sub: `sub-${role}`, email: `${role}@example.com`, role, disabled: false };
+  return `${SESSION_COOKIE}=${await createSession(studio.table, config, user, studio.clock.now)}`;
 }

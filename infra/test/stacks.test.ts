@@ -75,6 +75,30 @@ describe("studio stack", () => {
     }
   });
 
+  it("lets only the API function read the provider keys and use the picture bucket", () => {
+    const policies = Object.entries(template.findResources("AWS::IAM::Policy"));
+    const holds = (...texts: string[]) =>
+      policies.filter(([, policy]) => texts.every((text) => JSON.stringify(policy).includes(text))).map(([id]) => id);
+    const keyReaders = holds("parameter/a11-wild/keys/*");
+    expect(keyReaders).toHaveLength(1);
+    expect(keyReaders[0]).toMatch(/ApiFunction/);
+    expect(holds("DataPictures")).toEqual(keyReaders);
+
+    const functions = Object.entries(template.findResources("AWS::Lambda::Function"));
+    const withKeys = functions.filter(([, fn]) => fn.Properties.Environment?.Variables?.KEYS_PREFIX !== undefined);
+    expect(withKeys.map(([id]) => id)).toEqual([expect.stringMatching(/ApiFunction/)]);
+    // The key's place is named, never the key.
+    expect(withKeys[0]?.[1].Properties.Environment.Variables.KEYS_PREFIX).toBe("/a11-wild/keys");
+  });
+
+  it("lets only the API function publish a notice to the owner, to an address that is in no file", () => {
+    template.hasResourceProperties("AWS::SNS::Subscription", { Protocol: "email", Endpoint: { Ref: Match.stringLikeRegexp("SsmParameterValuea11wildalertemail") } });
+    const publishers = Object.entries(template.findResources("AWS::IAM::Policy")).filter(([, policy]) => JSON.stringify(policy).includes("sns:Publish"));
+    expect(publishers.map(([id]) => id)).toEqual([expect.stringMatching(/ApiFunction/)]);
+    const statement = (publishers[0]![1].Properties.PolicyDocument.Statement as Statement[]).find((s) => asList(s.Action).includes("sns:Publish"))!;
+    expect(JSON.stringify(statement.Resource)).toContain("AlertsOwnerNotices");
+  });
+
   it("has no sign-up: only an administrator creates users, and errors hide whether a user exists", () => {
     template.hasResourceProperties("AWS::Cognito::UserPool", {
       AdminCreateUserConfig: { AllowAdminCreateUserOnly: true },
@@ -126,12 +150,18 @@ describe("studio stack", () => {
           StrictTransportSecurity: Match.objectLike({ AccessControlMaxAgeSec: 31536000 }),
           ContentTypeOptions: { Override: true },
           FrameOptions: { FrameOption: "DENY", Override: true },
-          ContentSecurityPolicy: Match.objectLike({
-            ContentSecurityPolicy: Match.stringLikeRegexp("default-src 'self'.*frame-ancestors 'none'"),
-          }),
         }),
       },
     });
+  });
+
+  it("lets the dashboard load pictures from itself and the pictures bucket only", () => {
+    const [policy] = Object.values(template.findResources("AWS::CloudFront::ResponseHeadersPolicy"));
+    const csp = JSON.stringify(policy?.Properties.ResponseHeadersPolicyConfig.SecurityHeadersConfig.ContentSecurityPolicy.ContentSecurityPolicy);
+    expect(csp).toMatch(/default-src 'self'.*frame-ancestors 'none'/);
+    // The bucket's own regional host name, made at deploy: no wildcard and no other host.
+    expect(csp).toMatch(/img-src 'self' data: blob: https:\/\/",\{"Fn::GetAtt":\["DataPictures[A-Z0-9]+","RegionalDomainName"\]\},"; font-src/);
+    expect(csp).not.toMatch(/\*/);
   });
 
   it("limits the request rate on the API stage and keeps logs for a month", () => {
