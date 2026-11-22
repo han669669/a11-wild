@@ -1,4 +1,4 @@
-import type { Batch, Board, BoardDraft, OutreachCandidate, OutreachCandidates, ProspectFile } from "@a11-wild/shared";
+import type { Batch, Board, BoardDraft, CheckItem, OutreachCandidate, OutreachCandidates, ProspectFile } from "@a11-wild/shared";
 import { hasWords } from "../batch/state.js";
 import type { BatchStore } from "../batch/store.js";
 import { defectOf, rejected } from "../checks/store.js";
@@ -20,11 +20,32 @@ interface Deps {
   };
 }
 
+const percent = (value: number): string => `${Math.max(1, Math.round(Math.abs(value)))}%`;
+
+/**
+ * What a pixel tool measured, as the owner reads it. The tool's own line is for the agent: it holds pixels and ratios.
+ * A line this does not know is given as it is, so nothing is hidden.
+ */
+export function plainReason({ note, tool }: Pick<CheckItem, "note" | "tool">): string {
+  if (!tool) return note;
+  const pack = /^(Pack \d+: )?/.exec(note)?.[1] ?? "";
+  const limit = /FAIL at (\d+(?:\.\d+)?)%/.exec(note)?.[1];
+  const allowed = limit ? ` The limit is ${limit}%.` : "";
+  // The tool gives height over width against the photo's. Over it, the pack is that much too tall. Under it, the pack is too wide,
+  // and by more than the number says: 20% under is a quarter wider at the same height.
+  const shape = Number(/difference ([+-]\d+(?:\.\d+)?)%/.exec(note)?.[1]);
+  if (tool === "pack_check" && shape > 0) return `${pack}The pack is drawn ${percent(shape)} taller than in its photo.${allowed}`;
+  if (tool === "pack_check" && shape < 0 && shape > -100) return `${pack}The pack is drawn ${percent(100 / (1 + shape / 100) - 100)} wider than in its photo.${allowed}`;
+  const cap = /cap centre [\d.]+ px (left|right) of the body centre \((\d+(?:\.\d+)?)%/.exec(note);
+  if (tool === "cap_check" && cap) return `${pack}The cap sits ${percent(Number(cap[2]))} to the ${cap[1]} of the middle of the pack.${allowed}`;
+  return note;
+}
+
 /** Why a draft cannot go to a person: a D item, or two F items, in the picture or in the picture with its words. */
 export function blockedBy(draft: Pick<BoardDraft, "checks" | "words">): string | undefined {
   for (const checks of [draft.checks ?? undefined, draft.words?.checks ?? undefined]) {
     const defect = defectOf(checks);
-    if (defect) return defect.note;
+    if (defect) return plainReason(defect);
     if (rejected(checks)) return "It has two or more faults.";
   }
   return undefined;
