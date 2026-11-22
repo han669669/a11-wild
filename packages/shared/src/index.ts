@@ -166,10 +166,16 @@ export interface SwipeItem {
 export const BATCH_STATES = [
   "intake",
   "truth",
+  /** v3: the brief with the buyer insights is saved. */
+  "briefed",
   "ideas",
+  /** v3: the critic's review of the concepts is saved. */
+  "reviewed",
   "judged",
   /** The owner approved the words. Only a batch whose kind has words passes through it. */
   "worded",
+  /** v3: each picked concept has its direction. */
+  "directed",
   "priced",
   "waiting_spend",
   "drafting",
@@ -276,6 +282,114 @@ export interface Idea {
   footnote?: string;
   /** The product's real photos of each brand item the picture shows: "pack-1", "food-2". */
   shows?: string[];
+  /** What makes the idea a concept. An idea of a v3 batch has it. */
+  concept?: ConceptPart;
+}
+
+export const INSIGHT_BASES = ["evidence", "interpretation", "hypothesis"] as const;
+/** How sure an insight is: a buyer said it, the agent reads it from what buyers said, or it is a guess to test. */
+export type InsightBasis = (typeof INSIGHT_BASES)[number];
+
+/** One thing a buyer thinks, feels or does. A concept stands on one. */
+export interface Insight {
+  id: string;
+  text: string;
+  basis: InsightBasis;
+  /** Where a buyer said it, and his words. An insight on evidence has both. */
+  sourceUrl?: string;
+  quote?: string;
+}
+
+/** What the studio knows before it writes concepts. A field with nothing known is left out, never filled in. */
+export interface Brief {
+  insights: Insight[];
+  /** What the ads of the category do. */
+  conventions: string[];
+  /** What the category leaves unused. */
+  openings: string[];
+  /** What the ads must not do or claim. */
+  constraints: string[];
+  /** What could not be verified. */
+  unknowns: string[];
+  version: number;
+  at: string;
+  by: string;
+}
+
+export const CONCEPT_SCORES = ["originality", "appropriateness", "insight", "headline", "visual", "product", "brand", "commercial", "execution"] as const;
+/** What the critic scores a concept on, each from 1 to 5. `visual`: the picture says the idea. `product`: the product is needed. `execution`: it can be made true to the product. */
+export type ConceptScore = (typeof CONCEPT_SCORES)[number];
+
+/** What a fresh critic said of one concept, from its rough beside the owner's reference ads. The owner sees it before he picks. */
+export interface ConceptReview {
+  ideaId: string;
+  scores: Record<ConceptScore, number>;
+  /** The headline points at something the picture shows. */
+  pointTest: IdeaTest;
+  /** A buyer in Singapore lives this moment. */
+  localTruth: IdeaTest;
+  /** With the words covered, the rough still says the idea. */
+  coverTest: IdeaTest;
+  /** Would the owner pay for this ad from his own pocket and be proud of it, beside his reference ads? */
+  wouldPay: boolean;
+  /** The critic's advice. The owner chooses. */
+  recommend: boolean;
+  note: string;
+  /** The roughs the critic saw. With none, it judged from words. */
+  roughs: string[];
+}
+
+/** The critic's review of every concept of a batch, as the set stood when it looked. */
+export interface ConceptReviews {
+  reviews: ConceptReview[];
+  at: string;
+}
+
+/** The owner's pick of three concepts, with what he said of each, and of any concept he passed on. */
+export interface ConceptPick {
+  picks: { ideaId: string; ownerSaid: string }[];
+  passes: { ideaId: string; ownerSaid: string }[];
+  /** What he was told when he picked: a soft gate never stops him. */
+  warnings: string[];
+  by: string;
+  at: string;
+}
+
+/** The concept board: every concept of a batch with its roughs and the critic's review, for the owner's pick of three. */
+export interface ConceptBoard {
+  batch: Batch;
+  brand: { id: string; name: string };
+  product: { id: string; name: string };
+  insights: Insight[];
+  /** "not_yet": the critic has not reviewed the set as it is now. "closed": the owner approved the words of his pick. */
+  picking: "not_yet" | "open" | "closed";
+  reviewedAt: string | null;
+  concepts: { idea: Idea; roughs: { imageId: string; viewUrl: string }[]; review: ConceptReview | null }[];
+  pick: ConceptPick | null;
+}
+
+export const SUBLINE_BASES = ["fact", "second_beat", "none"] as const;
+export type SublineBasis = (typeof SUBLINE_BASES)[number];
+
+/** A concept is a pair: one picture device, and the line that points at it. `Idea.device` holds the device. */
+export interface ConceptPart {
+  /** The group of concepts that stand on one insight. */
+  territory: string;
+  insightId: string;
+  /** What the ad wants the buyer to understand. */
+  proposition: string;
+  /** How the picture and the line work together: the kind of device, and how it says the proposition. */
+  mechanism: { type: string; how: string };
+  /** Why the product must be in the picture. */
+  productRole: string;
+  /** What makes it this brand's ad. */
+  brandRole: string;
+  /** What the subline is: a saved fact, or a second beat that claims nothing. */
+  sublineBasis: { kind: SublineBasis; factId?: string };
+  /** The writer's own answers. The critic gives its own from the rough. */
+  pictureAlone: string;
+  headlineAlone: string;
+  risks: string[];
 }
 
 /** The buttons Meta offers that the studio uses. The text of an ad names one of them and no other. */
@@ -471,6 +585,8 @@ export interface TastePage {
 /** What a picture of a batch is: the skeleton a draft is built round, a draft, a final, or what a pixel tool made from one. */
 export type ImageKind =
   | "skeleton"
+  /** A cheap first picture of a concept, made before the owner picks concepts. */
+  | "rough"
   | "draft"
   | "final"
   | "reprint"
@@ -503,7 +619,7 @@ export interface BatchImage {
   createdAt: string;
 }
 
-export type RenderKind = "draft" | "final";
+export type RenderKind = "rough" | "draft" | "final";
 
 /** One request to the picture model, from the moment it is sent. */
 export interface Render {
