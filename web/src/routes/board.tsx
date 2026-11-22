@@ -3,11 +3,12 @@ import { useCallback, useState } from "react";
 import { Link, useParams } from "react-router";
 import { Loading } from "@/components/loading";
 import { DoneGate } from "@/components/done-gate";
-import { Card, Empty, PageHeader, Section } from "@/components/page";
+import { Card, Empty, Fold, PageHeader, Section, Step } from "@/components/page";
 import { Badge } from "@/components/ui/badge";
 import { Banner, BannerTitle } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
 import { api, describeError } from "@/lib/api";
+import { useAttention } from "@/lib/attention";
 import { KIND_NAMES } from "@/lib/kinds";
 import { useMe } from "@/lib/session";
 import { useLoad } from "@/lib/use-load";
@@ -33,10 +34,8 @@ export function Board() {
   const { batch, picking, brand, product, truthSheet, ideas } = board;
   return (
     <>
-      <PageHeader
-        title={`${brand.name}: ${product.name}`}
-        lead="Each idea's drafts, in the order they were made. The numbers are names, not a rank. Pick one draft for each idea, or pass on all three, and say why in your own words."
-      />
+      <PageHeader title={`${brand.name}: ${product.name}`} lead="Each idea's drafts, in the order they were made. The numbers are names, not a rank." />
+      <BoardStep board={board} />
       <p className="mb-6 flex flex-wrap items-center gap-3 text-caption text-muted-foreground">
         <Badge variant="dot" color={batch.state === "done" ? "green" : "amber"}>
           {batch.state.replace("_", " ")}
@@ -53,52 +52,72 @@ export function Board() {
         ) : null}
       </p>
 
-      <Section title="What is true about the product">
-        <Card>
-          {truthSheet === null ? (
-            <p className="text-caption text-muted-foreground">No truth sheet yet.</p>
-          ) : (
-            <>
-              <p className="text-caption text-muted-foreground">Truth sheet version {truthSheet.version}</p>
-              <p className="mt-2 text-body">{truthSheet.shape}</p>
-              <p className="mt-1 text-body">{truthSheet.packaging}</p>
-              {truthSheet.measures.length > 0 ? (
-                <ul className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-caption">
-                  {truthSheet.measures.map((measure) => (
-                    <li key={measure.name}>
-                      {measure.name}: {measure.value} {measure.unit}
-                      {measure.status === "unverified" ? <span className="ml-1.5 text-muted-foreground">unverified</span> : null}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </>
-          )}
-        </Card>
-      </Section>
-
-      {picking === "open" ? null : (
-        <div className="mt-10">
-          <Banner status="info">
-            <BannerTitle>
-              {picking === "not_yet"
-                ? "Not ready for your pick yet. Your agent is still making or checking the drafts."
-                : "This batch is finished. Its picks are closed."}
-            </BannerTitle>
-          </Banner>
-        </div>
-      )}
+      <Fold title="What is true about the product">
+        {truthSheet === null ? (
+          <p className="px-2 text-caption text-muted-foreground">No truth sheet yet.</p>
+        ) : (
+          <div className="px-2">
+            <p className="text-caption text-muted-foreground">Truth sheet version {truthSheet.version}</p>
+            <p className="mt-2 text-body">{truthSheet.shape}</p>
+            <p className="mt-1 text-body">{truthSheet.packaging}</p>
+            {truthSheet.measures.length > 0 ? (
+              <ul className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-caption">
+                {truthSheet.measures.map((measure) => (
+                  <li key={measure.name}>
+                    {measure.name}: {measure.value} {measure.unit}
+                    {measure.status === "unverified" ? <span className="ml-1.5 text-muted-foreground">unverified</span> : null}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        )}
+      </Fold>
 
       {ideas.length === 0 ? <Empty>No idea is saved for this batch yet.</Empty> : null}
       {ideas.map((entry, index) => (
-        <IdeaSection key={entry.idea.id} batchId={batch.id} entry={entry} number={index + 1} canPick={picking === "open"} onSaved={reload} />
+        <IdeaSection key={entry.idea.id} batchId={batch.id} entry={entry} number={index + 1} canPick={picking === "open" && batch.purpose !== "outreach"} asked={!batch.test} onSaved={reload} />
       ))}
       {["finals", "finished", "done"].includes(batch.state) ? <DoneGate board={board} /> : null}
     </>
   );
 }
 
-function IdeaSection({ batchId, entry, number, canPick, onSaved }: { batchId: string; entry: Entry; number: number; canPick: boolean; onSaved: () => Promise<void> }) {
+/** What the board asks of its reader now, or who acts next. An outreach batch and a test batch ask nothing here. */
+function BoardStep({ board: { batch, picking, ideas } }: { board: BoardData }) {
+  const owner = useMe().role === "owner";
+  // A yes the agent asks for in chat (a cost, the words, the Meta text) is not in the board's own state: the read of what waits has it.
+  const line = useAttention().value?.batches.find((entry) => entry.batch.id === batch.id);
+  if (owner && line?.who === "owner" && line.chat) return <Step who="you">{line.text} You answer your agent in chat.</Step>;
+  if (picking === "closed") return <Step who="nobody">This batch is finished. Its picks are closed.</Step>;
+  if (picking === "not_yet") return <Step who="agent">Not ready for your pick yet. Your agent is still making or checking the drafts.</Step>;
+  if (batch.test) return <Step who="agent">A test batch: the tester chooses in your place.</Step>;
+  if (batch.purpose === "outreach") {
+    return (
+      <Step who="nobody">
+        An outreach batch: its drafts are picked on the brand's page in Outreach, not here.{" "}
+        {owner && batch.prospectId ? (
+          <Link to={`/outreach/prospects/${batch.prospectId}`} className="underline underline-offset-4 hover:text-foreground">
+            Open the brand's page
+          </Link>
+        ) : null}
+      </Step>
+    );
+  }
+  const asked = ideas.filter((entry) => entry.drafts.length > 0);
+  const left = asked.filter((entry) => !entry.pick).length;
+  if (left === 0 && !asked.some((entry) => entry.pick?.imageId)) return <Step who="agent">You passed on every idea, so no final is made. The agent reads why you passed.</Step>;
+  if (left === 0) return <Step who="agent">Every pick is made. The agent makes the finals next.</Step>;
+  if (!owner) return <Step who="nobody">Waits for the owner's pick.</Step>;
+  return (
+    <Step who="you" left={`${left} of ${asked.length} left`}>
+      Pick one draft for each idea, or pass on all of them, and say why in your own words.
+    </Step>
+  );
+}
+
+/** `canPick` is false where the board takes no pick (an outreach batch is picked on the brand's page); `asked` is false in a test batch, where the tester picks. */
+function IdeaSection({ batchId, entry, number, canPick, asked, onSaved }: { batchId: string; entry: Entry; number: number; canPick: boolean; asked: boolean; onSaved: () => Promise<void> }) {
   const picks = useMe().role === "owner" && canPick;
   const { idea, copy, drafts, pick, rank, finals } = entry;
   const [chosen, setChosen] = useState<string | null | undefined>();
@@ -124,7 +143,10 @@ function IdeaSection({ batchId, entry, number, canPick, onSaved }: { batchId: st
   }
 
   return (
-    <Section title={`Idea ${number}: ${idea.title}`}>
+    <Section
+      title={`Idea ${number}: ${idea.title}`}
+      mark={pick ? <Badge color={pick.imageId ? "green" : "gray"}>{pick.imageId ? "Picked" : "Passed"}</Badge> : picks && asked && drafts.length > 0 ? <Badge variant="dot" color="amber">Waits for your pick</Badge> : null}
+    >
       <Card>
         <p className="text-body">{idea.visual}</p>
         {copy ? (
