@@ -355,6 +355,64 @@ export interface ConceptPick {
   at: string;
 }
 
+/** The eight points of a finished final of a concept ad. One that fails keeps the final out of a pack. */
+export const FINAL_POINTS = ["concept", "productTruth", "brandIdentity", "copyAccuracy", "food", "composition", "craft", "renderChecklist"] as const;
+export type FinalPoint = (typeof FINAL_POINTS)[number];
+
+/** The agent's look at one finished final with its words, at full size and at phone size. */
+export interface FinalPoints {
+  /** The picture the owner would send: the final after its finish, with its words. */
+  imageId: string;
+  ideaId: string;
+  points: Record<FinalPoint, { passed: boolean; note: string }>;
+  by: string;
+  at: string;
+}
+
+/** What one draft of a concept changes against the other two. Each is a few plain words. */
+export const DRAFT_AXES = ["composition", "productPosition", "scale", "camera", "light", "environment", "negativeSpace", "staging"] as const;
+export type DraftAxis = (typeof DRAFT_AXES)[number];
+/** The axes that change what the picture is, not only how it is lit: each pair of drafts differs on one of them. */
+export const MAIN_AXES: readonly DraftAxis[] = ["composition", "camera", "scale"];
+
+export const RISKS = ["low", "medium", "high"] as const;
+export type Risk = (typeof RISKS)[number];
+
+/** Where the words stand on the picture. The logo is small at the head of the column. */
+export const LOCKUPS = ["flush_left", "flush_right", "top_band_left"] as const;
+export type Lockup = (typeof LOCKUPS)[number];
+
+/** One of the three drafts of a concept: the question it asks the owner, and how it answers each axis. */
+export interface DraftPlan {
+  number: number;
+  question: string;
+  axes: Record<DraftAxis, string>;
+}
+
+/** How one picked concept will look: decided before any draft is paid for. */
+export interface ConceptDirection {
+  ideaId: string;
+  /** Why this look says the concept. */
+  why: string;
+  /** How hard the picture is for the model to make right. */
+  risk: Risk;
+  riskReason?: string;
+  /** What the three drafts share: the stage, the colour, the light. */
+  look: string;
+  lockup: Lockup;
+  drafts: DraftPlan[];
+  /** The version of the direction in which this concept's plan last changed. Its drafts are the ones made from that version on. */
+  since?: number;
+}
+
+/** The direction of a batch of concept ads. Every save is a new version. */
+export interface Direction {
+  concepts: ConceptDirection[];
+  version: number;
+  at: string;
+  by: string;
+}
+
 /** The concept board: every concept of a batch with its roughs and the critic's review, for the owner's pick of three. */
 export interface ConceptBoard {
   batch: Batch;
@@ -631,6 +689,15 @@ export interface Render {
   prompt: string;
   /** A draft's skeleton, or the picked draft of a final. */
   fromId?: string;
+  /** A draft of a concept ad: which of the direction's three drafts it is, and the version of that direction. */
+  draft?: number;
+  directionVersion?: number;
+  /** A failed render that fal charged for all the same. Its price stays in what its stage came to. */
+  billed?: true;
+  /** The earlier draft of the same number that this one is made again for, because its picture was rejected. */
+  redoOf?: string;
+  /** The pack photo the model was given, by its name ("pack-2"), when the render named one. The pack checks measure against it. */
+  pack?: string;
   /** The price held for it in the ledger, in US dollars. */
   usd: number;
   /** The picture it made. */
@@ -675,8 +742,10 @@ export interface Pick {
 }
 
 export interface BoardDraft {
-  /** 1 to 3, in the order the drafts were sent. It is a name, not a rank. */
+  /** 1 to 3, in the order the drafts were sent; for a concept ad, the draft's number in the direction. It is a name, not a rank. */
   number: number;
+  /** A draft of a concept ad: the one question the direction says this draft asks the owner. */
+  question?: string;
   /** The picture as the model made it. A pick names this one. */
   image: BatchImage;
   /** The picture that counts: the newest repair of it (a reprint or a swap), or the picture itself. */

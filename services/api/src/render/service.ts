@@ -1,5 +1,6 @@
 import type { Batch, BatchImage, Idea, Render, RenderKind } from "@a11-wild/shared";
 import { hasWords, requireMove, StateError, stepAfter } from "../batch/state.js";
+import type { DirectionStore } from "../direction/store.js";
 import type { BatchStore } from "../batch/store.js";
 import type { BrandStore } from "../brand/store.js";
 import { estimateUsd, type FalClient } from "../fal/client.js";
@@ -8,7 +9,7 @@ import { Refusal } from "../mcp/registry.js";
 import type { Pictures } from "../pictures/store.js";
 import { GateError, type GateStage, type SpendGate } from "../spend/gate.js";
 import { NotBilledError, type SpendLedger } from "../spend/ledger.js";
-import { toUsd } from "../spend/money.js";
+import { toMicro, toUsd } from "../spend/money.js";
 import { RENDER_RULES, wordsAsked } from "./prompt-guard.js";
 import { publicRender, type RenderStore, type StoredRender } from "./store.js";
 
@@ -36,6 +37,8 @@ const REFERENCE_LINK_SECONDS = 3600;
 export interface FinalRule {
   /** Refuses unless the owner picked this draft and it has no D item. Returns how many finals the batch will make, and the picture the final is made from: the draft, or its repair. */
   allow(batch: Batch, ideaId: string, draft: BatchImage): Promise<{ finals: number; source: BatchImage }>;
+  /** Why a draft's picture is rejected by its checks, or nothing when it is not. */
+  rejection(batchId: string, imageId: string): Promise<string | undefined>;
 }
 
 export interface RenderRequest {
@@ -45,6 +48,8 @@ export interface RenderRequest {
   prompt: string;
   /** A draft's skeleton, or the picked draft of a final. */
   fromId?: string;
+  /** A draft of a concept ad: which of the direction's three drafts it is. */
+  draft?: number;
   /** Other pictures the model sees: keys of the product's photos or the brand's logo. */
   /** Names of the product's photos and the brand's logo: "logo", "pack-1", "food-2". Never a key. */
   references: string[];
@@ -56,6 +61,7 @@ export interface RenderView extends Render {
 }
 
 interface Deps {
+  directions: DirectionStore;
   batches: BatchStore;
   brands: BrandStore;
   images: ImageStore;
@@ -69,6 +75,11 @@ interface Deps {
 
 const STAGE: Record<RenderKind, GateStage> = { rough: "roughs", draft: "drafts", final: "finals" };
 const live = (render: Render) => render.status !== "failed";
+/** What the failed renders of one kind were charged all the same, and the places of the stage they hold. A charged rough keeps its place among the roughs of the batch; a draft or a final is sent again. */
+function billedOf(all: StoredRender[], kind: RenderKind): { micro: number; places: number } {
+  const charged = all.filter((render) => render.kind === kind && render.billed);
+  return { micro: charged.reduce((sum, render) => sum + render.reservation.micro, 0), places: kind === "rough" ? charged.length : 0 };
+}
 
 /** Turns an idea and a skeleton into drafts and finals, each at a price the owner's gate has passed. */
 export class RenderService {
@@ -92,7 +103,7 @@ export class RenderService {
    * The owner's rule R26 for one stage. The first render of a stage goes alone and gives the price;
    * the rest wait for that price, and for the owner's yes when the stage comes to US$1 or more.
    */
-  private async passGate(batch: Batch, kind: RenderKind, sent: StoredRender[]): Promise<Batch> {
+  private async passGate(batch: Batch, kind: RenderKind, sent: StoredRender[], next: { usedMicro: number; micro: number; billed: { micro: number; places: number } }): Promise<Batch> {
     const { gate, batches } = this.deps;
     const stage = STAGE[kind];
     if (!(await gate.peek(batch.id, stage))) {
@@ -102,11 +113,11 @@ export class RenderService {
         throw new GateError(`The first of the ${stage} is out to read the price. Read it with render_status until it is done, then send the rest.`);
       }
       // The price was not saved when the first render ended. Save it now from that render.
-      await gate.price(batch.id, stage, { firstUsd: first.usd, count: first.stageCount });
+      await gate.price(batch.id, stage, { firstUsd: first.usd, count: first.stageCount, billed: next.billed });
     }
     if (kind === "draft" && batch.state === draftsFrom(batch)) batch = await batches.move(batch, "priced", "render_submit");
     try {
-      await gate.check(batch.id, stage);
+      await gate.check(batch.id, stage, { sent: sent.length + next.billed.places, usedMicro: next.usedMicro, micro: next.micro });
     } catch (error) {
       if (error instanceof GateError && batch.state === "priced") await batches.move(batch, "waiting_spend", "render_submit");
       throw error;
@@ -137,11 +148,17 @@ export class RenderService {
 
     const [product, brand, all] = await Promise.all([brands.product(batch.productId), brands.brand(batch.brandId), renders.list(batch.id)]);
     const sent = all.filter((render) => render.kind === input.kind && live(render));
-    const mine = sent.filter((render) => render.ideaId === idea.id);
+    const redone = new Set(sent.map((render) => render.redoOf));
+    // A draft that was made again does not count: its redo stands in its place.
+    let mine = sent.filter((render) => render.ideaId === idea.id && !redone.has(render.id));
     let from: BatchImage | undefined;
     /** The picture the model sees in place of `from`: a picked draft's repair. */
     let source: BatchImage | undefined;
     let count: number;
+    /** A draft of a concept ad starts from its rough: the picture the critic and the owner judged the concept by. */
+    let rough: BatchImage | undefined;
+    let directionVersion: number | undefined;
+    let redoOf: string | undefined;
 
     if (input.kind === "rough") {
       if (!["ideas", "reviewed"].includes(batch.state)) requireMove(batch, "ideas", "render_submit");
@@ -160,7 +177,37 @@ export class RenderService {
         requireMove(batch, "drafting", "render_submit");
       }
       realPhotos();
-      if (mine.length >= DRAFTS_PER_IDEA) throw new Refusal(`Idea ${idea.id} has its ${DRAFTS_PER_IDEA} drafts. A draft that failed can be sent again; one that is done cannot.`);
+      if (batch.kind === "v3") {
+        const direction = await this.deps.directions.get(batch.id);
+        const plan = direction?.concepts.find((concept) => concept.ideaId === idea.id);
+        if (!direction || !plan) throw new Refusal(`Concept ${idea.id} has no direction. Save it first (direction_save): a draft answers one of its three questions.`);
+        // A concept whose direction was lowered starts again: the drafts of its earlier direction do not count.
+        mine = mine.filter((render) => (render.directionVersion ?? 0) >= (plan.since ?? 0));
+        const asked = plan.drafts.find((draft) => draft.number === input.draft);
+        if (!asked) throw new Refusal(`Say which draft of the direction this is: draft ${plan.drafts.map((draft) => draft.number).join(", ")} of ${idea.id} (direction_get gives each one's question and axes).`);
+        const before = mine.find((render) => render.draft === asked.number);
+        if (before) {
+          const already = `Draft ${asked.number} of ${idea.id} ("${asked.question}") is already sent.`;
+          if (before.status !== "done") throw new Refusal(`${already} Read it with render_status.`);
+          if (before.redoOf) {
+            throw new Refusal(`${already} It has had its one redo. With fewer than two drafts of ${idea.id} that pass their checks, save a new direction with a lower risk (direction_save).`);
+          }
+          const fault = await finals.rejection(batch.id, before.id);
+          if (!fault) throw new Refusal(`${already} A draft is made again once, and only when its checks reject it (a D item, or two F items).`);
+          redoOf = before.id;
+        }
+        directionVersion = direction.version;
+        rough = (await images.list(batch.id, "rough")).filter((image) => image.ideaId === idea.id).at(-1);
+        // Real photos first: the model sees the real photo of each thing the concept shows, round a skeleton or not.
+        const unsent = (idea.shows ?? []).filter((name) => !input.references.includes(name));
+        if (unsent.length > 0) throw new Refusal(`Real photos first: concept ${idea.id} shows ${unsent.join(", ")}. Give the real photo of each one in references.`);
+        if (!rough && !input.fromId) {
+          throw new Refusal(`Concept ${idea.id} has no rough, so its draft starts from a plan of the real photos. Build one (skeleton_make, with the real photo of each thing it shows) and give its id as fromId.`);
+        }
+      } else if (input.draft !== undefined) {
+        throw new Refusal("Only a draft of a concept ad (v3) has a number from its direction.");
+      }
+      if (mine.length - (redoOf ? 1 : 0) >= DRAFTS_PER_IDEA) throw new Refusal(`Idea ${idea.id} has its ${DRAFTS_PER_IDEA} drafts. A draft that failed can be sent again; one that is done cannot.`);
       const hasPack = product.photos.some((photo) => photo.kind === "pack");
       if (input.fromId) {
         from = await images.get(batch.id, input.fromId);
@@ -168,7 +215,8 @@ export class RenderService {
         if (mine.some((render) => render.fromId === from?.id)) {
           throw new Refusal("R23: each draft of an idea comes from its own skeleton. This skeleton already has a draft of this idea. Make another skeleton, with another camera, crop or scale.");
         }
-      } else if (hasPack) {
+      } else if (hasPack && batch.kind !== "v3") {
+        // A concept ad draws the product from its real photos by default, so that it can be held, turned or opened. pack_check then measures its shape.
         throw new Refusal("R29: this product has a pack photo, so each draft is built round a skeleton that holds the real pack. Make one with skeleton_make and give its id as fromId.");
       }
       count = (await batches.ideas(batch.id)).length * DRAFTS_PER_IDEA;
@@ -183,26 +231,30 @@ export class RenderService {
       if (mine.length >= FINALS_PER_IDEA) throw new Refusal(`Idea ${idea.id} has had ${FINALS_PER_IDEA} finals. Tell the owner before more are made.`);
     }
 
+    const pack = input.references.find((name) => name.startsWith("pack-"));
     const named = input.references.map((name) => {
       const [kind, number] = name.split("-");
       const picture = kind === "logo" ? brand.logo : photoNamed(product, name);
       if (!picture) throw new Refusal(`This ${kind === "logo" ? "brand has no logo" : `product has no ${kind} photo ${number}`}. A reference picture is the brand's logo ("logo") or one of this product's photos ("pack-1", "food-1", "prop-1").`);
       return picture.key;
     });
-    const keys = [...new Set([...(from ? [(source ?? from).key] : []), ...named])];
-    if (keys.length > REFERENCES_MAX) throw new Refusal(`A render takes ${REFERENCES_MAX} reference pictures or fewer.`);
+    const keys = [...new Set([...(from ? [(source ?? from).key] : []), ...(rough ? [rough.key] : []), ...named])];
+    // The picture a render is built round and the rough of a concept go to the model on top of the real photos, so that neither takes the place of one.
+    if (new Set(named).size > REFERENCES_MAX) throw new Refusal(`A render takes ${REFERENCES_MAX} reference pictures or fewer.`);
 
     if (input.kind === "rough") {
       const full = await renders.claimRough(batch.id, idea.id, { concept: ROUGHS_PER_CONCEPT, batch: ROUGHS_PER_BATCH });
       if (full === "concept") throw new Refusal(`Concept ${idea.id} has its ${ROUGHS_PER_CONCEPT} roughs. A rough is a first look, not a draft: show what there is.`);
       if (full === "batch") throw new Refusal(`This batch has its ${ROUGHS_PER_BATCH} roughs. A rough is a first look: the critic and the owner judge the concepts from what there is.`);
     }
-    let usd: number;
+    const usd = estimateUsd(input.kind, keys.length);
     let reservation;
     let job;
     try {
-      batch = await this.passGate(batch, input.kind, sent);
-      usd = estimateUsd(input.kind, keys.length);
+      // What the stage came to so far: every render that stands, and every failed one that fal charged for.
+      const billed = billedOf(all, input.kind);
+      const usedMicro = billed.micro + sent.reduce((sum, render) => sum + render.reservation.micro, 0);
+      batch = await this.passGate(batch, input.kind, sent, { usedMicro, micro: toMicro(usd), billed });
       reservation = await ledger.reserve({ service: "fal", kind: input.kind, ref: `${idea.id}: ${idea.title}`, batchId: batch.id, usd });
     } catch (error) {
       if (input.kind === "rough") await renders.releaseRough(batch.id, idea.id);
@@ -225,6 +277,9 @@ export class RenderService {
       kind: input.kind,
       prompt: input.prompt.trim(),
       ...(from ? { fromId: from.id } : {}),
+      ...(directionVersion !== undefined && input.draft !== undefined ? { draft: input.draft, directionVersion } : {}),
+      ...(redoOf ? { redoOf } : {}),
+      ...(pack ? { pack } : {}),
       usd,
       fal: job,
       reservation,
@@ -248,7 +303,7 @@ export class RenderService {
 
     if (result.state === "failed") {
       // Only a sure refusal gives the money back. A picture that fal made and the studio could not copy was still billed.
-      if (await renders.end(render, { status: "failed", error: result.error })) {
+      if (await renders.end(render, { status: "failed", error: result.error, ...(result.refund ? {} : { billed: true as const }) })) {
         await (result.refund ? ledger.release(render.reservation) : ledger.settle(render.reservation));
         // A rough that was not billed gives its place back.
         if (render.kind === "rough" && result.refund) await renders.releaseRough(batchId, render.ideaId);
@@ -265,7 +320,7 @@ export class RenderService {
       const stage = STAGE[render.kind];
       if (!(await gate.peek(batchId, stage))) {
         const batch = await batches.get(batchId);
-        const state = await gate.price(batchId, stage, { firstUsd: toUsd(render.reservation.micro), count: render.stageCount });
+        const state = await gate.price(batchId, stage, { firstUsd: toUsd(render.reservation.micro), count: render.stageCount, billed: billedOf(await renders.list(batchId), render.kind) });
         if (render.kind === "draft" && batch.state === draftsFrom(batch)) await batches.move(batch, "priced", "render_status");
         const done = await renders.get(batchId, renderId);
         return this.view(

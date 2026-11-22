@@ -71,7 +71,7 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
         plan: plan
           .optional()
           .describe(
-            'Each pack at its own place. cx, base and height are shares of the canvas; side is up, L or R (lying); rot is a small turn in degrees. A product may be another real photo of this product in place of the pack: photo "food-2" or "prop-1" (a real slice of each flavour, a real prop), cut from its plain backdrop.',
+            'Each pack at its own place. cx, base and height are shares of the canvas; side is up, L or R (lying); rot is a small turn in degrees. A product may be another real photo of this product in place of the pack: photo "food-2" or "prop-1" (a real slice of each flavour, a real prop), cut from its plain backdrop. A product with no pack photo (a cake, a dish) is built from such photos alone: every item names one.',
           ),
         vary: z
           .object({ regions: z.array(box).min(1).max(6), seed: z.number().int().min(0).max(100000).default(7) })
@@ -93,7 +93,7 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
     defineTool({
       name: "pack_check",
       description:
-        "Measures whether the pack in a picture is as tall and as wide as the real pack, within 2%. Free. Run it on every draft and every final of a product with a pack photo: the batch does not move on without it. The pack needs a plain stage of one colour round it; when it stands on something, give a box that ends at its base. A fail is saved on the picture as D11, and only a later pass of this tool on the same pack of the same picture clears it. A picture with more than one pack: measure each, with its pack number. The reply is a job: pixel_status gives the measure.",
+        "Measures whether the pack in a picture is as tall and as wide as the real pack, within 2%. Free. Run it on every draft and every final of a product with a pack photo: the batch does not move on without it. The real pack is the product's first pack photo, or the pack photo the picture's render named when the model drew it with no skeleton. The pack needs a plain stage of one colour round it; when it stands on something, give a box that ends at its base. A fail is saved on the picture as D11, and only a later pass of this tool on the same pack of the same picture clears it. A picture with more than one pack: measure each, with its pack number. The reply is a job: pixel_status gives the measure.",
       input: {
         batchId: id,
         imageId,
@@ -180,7 +180,7 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
     defineTool({
       name: "type_set",
       description:
-        "Sets the words the owner approved, and the brand's real logo, on a draft or a final of a batch with words (v2), in the brand's own font. Free. The words come from copy_approve: you cannot type them here. Run it on every draft before the owner sees it, and on every final after photo_finish; a draft or a final without it does not count. Set it again after a repair, or after the owner changes the words. The tool stops when the words do not fit, sit too close to an edge, the logo or the product, or run over a sharp colour or shadow edge: move the area, or render the backdrop under the words as one plain tone. Use ' | ' in the approved headline to break lines; keep one logo size and place, and one headline top, on every ad of the batch. It makes a new picture; read it with pixel_status, look at it at phone size, and save that look with checks_save under the new picture's id: the blind critic ranks, and the owner picks, the picture with its words.",
+        "Sets the words the owner approved, and the brand's real logo, on a draft or a final of a batch with words (v2 or v3), in the brand's own font. In a concept ad (v3) the words stand where the direction says (flush left, flush right, or a band at the top with the words on its left), and the logo heads the column on its edge unless you give logoX. Free. The words come from copy_approve: you cannot type them here. Run it on every draft before the owner sees it, and on every final after photo_finish; a draft or a final without it does not count. Set it again after a repair, or after the owner changes the words. The tool stops when the words do not fit, sit too close to an edge, the logo or the product, or run over a sharp colour or shadow edge: move the area, or render the backdrop under the words as one plain tone. Use ' | ' in the approved headline to break lines; keep one logo size and place, and one headline top, on every ad of the batch. It makes a new picture; read it with pixel_status, look at it at phone size, and save that look with checks_save under the new picture's id: the blind critic ranks, and the owner picks, the picture with its words.",
       input: {
         batchId: id,
         imageId: id.describe("A draft or a final of this batch, or a repair of one."),

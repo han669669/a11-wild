@@ -6,7 +6,7 @@ import type { BatchKind } from "@a11-wild/shared";
  * Change the text only with the owner's say, add a line to docs/decisions.md,
  * and raise RULES_VERSION so that every client reads the rules again.
  */
-export const RULES_VERSION = "2026-11-22.7";
+export const RULES_VERSION = "2026-11-22.10";
 
 /** `main` runs the batch. `writer` writes the ideas and the words. `art_director` makes and checks the pictures. `critic` judges blind. */
 export const RULE_ROLES = ["main", "writer", "art_director", "critic"] as const;
@@ -81,6 +81,7 @@ export const HOUSE_RULES: readonly HouseRule[] = [
   {
     id: "drafts",
     roles: ["main", "art_director"],
+    kinds: ["v1", "v2"],
     text: "Make three drafts for each idea, each from its own skeleton. Change the camera, the crop and the scale, not only the backdrop.",
   },
   {
@@ -140,6 +141,24 @@ export const HOUSE_RULES: readonly HouseRule[] = [
     roles: ALL,
     kinds: CONCEPTS,
     text: "The owner picks the three concepts himself, of any funnel stage (concept_pick). Show him every concept with its rough, its words and the critic's notes first (concept_board, or the concept board in the dashboard), not only the ones the critic recommends. The critic advises and never chooses. His pick of a concept is not his yes to its words: the words are approved after it (copy_approve).",
+  },
+  {
+    id: "v3-direction",
+    roles: MAKERS,
+    kinds: CONCEPTS,
+    text: "After the owner's yes to the words and before any draft, save the direction of each picked concept (direction_save): why the look says the concept, its risk, what the three drafts share, where the words stand, and the three drafts. Each draft asks the owner one question and answers eight axes: composition, product position, scale, camera, light, environment, negative space, staging. Each pair of drafts differs on three axes or more, and one of them is composition, camera or scale. The stage is the brand's own colour unless the concept needs a place. The words stand where the picture leaves room, not always on the same side. A held or opened product, a hand, a liquid and many items are high risk: say why the concept is worth it and name the lower-risk way.",
+  },
+  {
+    id: "v3-drafts",
+    roles: MAKERS,
+    kinds: CONCEPTS,
+    text: "A draft of a concept ad answers one draft of the direction (render_submit with draft 1, 2 or 3). The studio gives the model the concept's rough first, then the real photos you name: name the real photo of each thing the concept shows, with a skeleton too. A concept with no rough starts from a plan of its real photos (skeleton_make). Change only what that draft's question asks. The model draws the product from its real photos, so measure each draft with pack_check before it counts; a skeleton that holds the real pack is the fallback when the shape or the print comes out wrong. A draft that its checks reject (a D item, or two F items) is made again once, with the same number and a prompt that names the fault. With fewer than two drafts of a concept that pass after that, save a new direction with a lower risk for that concept (direction_save takes it while the drafts are made, and leaves the other concepts as they are); its three drafts start again. Do not send a third.",
+  },
+  {
+    id: "v3-finals",
+    roles: MAKERS,
+    kinds: CONCEPTS,
+    text: "A final of a concept ad is the picture the owner would send: after photo_finish and type_set. Look at it twice, at full size and at phone size (about 320 wide), and save the eight points (final_points_save): concept, product truth, brand identity, copy accuracy, food, composition, craft, render checklist. Say what you saw for a point that fails. A final with a failed point is not delivered and never enters a pack: make it again, or tell the owner. When the owner changes his mind about a concept he passed on, save his newer words (pick_save): the newer verdict stands.",
   },
   {
     id: "concept",

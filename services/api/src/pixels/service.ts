@@ -11,14 +11,17 @@ import type { CheckStore } from "../checks/store.js";
 import type { ImageStore } from "../images/store.js";
 import { Refusal } from "../mcp/registry.js";
 import type { Pictures } from "../pictures/store.js";
+import type { RenderStore } from "../render/store.js";
 import type { PixelRunner } from "./runner.js";
+import { lockupLayout } from "../direction/lockup.js";
+import type { DirectionStore } from "../direction/store.js";
 import { type JobStore, jobView, type StoredJob } from "./store.js";
 
 /** A job with no result after this long did not run to its end. */
 const JOB_MINUTES = 10;
 const RESULT_BYTES = 20_000;
 const RENDERED: ImageKind[] = ["draft", "final", ...REPAIR_KINDS];
-const SKELETON_STATES = ["ideas", "judged", "worded", "priced", "waiting_spend", "drafting"];
+const SKELETON_STATES = ["ideas", "judged", "worded", "directed", "priced", "waiting_spend", "drafting"];
 
 interface Deps {
   batches: BatchStore;
@@ -26,9 +29,11 @@ interface Deps {
   images: ImageStore;
   checks: CheckStore;
   board: BoardService;
+  renders: RenderStore;
   jobs: JobStore;
   pictures: Pictures;
   copy: CopyStore;
+  directions: DirectionStore;
   /** Missing where the pixel function is not deployed. */
   runner: PixelRunner | undefined;
   now: () => Date;
@@ -110,7 +115,13 @@ export class PixelService {
     if (!(await batches.ideas(batch.id)).some((idea) => idea.id === input.ideaId)) throw new Refusal(`This batch has no idea ${input.ideaId}.`);
     if (!input.placement.plan && !input.placement.bg) throw new Refusal("A skeleton needs the canvas colour (bg), or a plan that has one.");
     const placement = input.placement.plan ? { ...input.placement, plan: await this.planPhotos(batch.productId, planColours(input.placement.plan)) } : input.placement;
-    return this.start("skeleton", batch.id, { ...placement, packKey: await this.packKey(batch.id) }, { out: { kind: "skeleton", ideaId: input.ideaId } });
+    const pack = (await this.deps.brands.product(batch.productId)).photos.find((photo) => photo.kind === "pack");
+    // A product with no pack (a cake, a dish) is still built from real photos: each item of the plan names one.
+    const named = (input.placement.plan as { products?: { photo?: string }[] } | undefined)?.products?.every((entry) => entry.photo);
+    if (!pack && !named) {
+      throw new Refusal('Real photos first: this product has no pack photo, so the skeleton is a plan in which each item names a saved real photo of the product ("food-1", "prop-1"). Save the photos with product_save.');
+    }
+    return this.start("skeleton", batch.id, { ...placement, ...(pack ? { packKey: pack.key } : {}) }, { out: { kind: "skeleton", ideaId: input.ideaId } });
   }
 
   /** A plan product that names another real photo of the product ("food-2", "prop-1") gets that photo's key. An agent never types a key. */
@@ -152,7 +163,25 @@ export class PixelService {
   /** The pack photo, cut out the same way as for the picture's skeleton: its tuning and its box are carried to each later tool. */
   private async packOf(batchId: string, image: BatchImage): Promise<Record<string, unknown>> {
     const { cutout, box } = await this.skeletonOf(batchId, image);
-    return { packKey: await this.packKey(batchId), ...(cutout ? { cutout } : {}), ...(box ? { box } : {}) };
+    return { packKey: (await this.drawnFrom(batchId, image)) ?? (await this.packKey(batchId)), ...(cutout ? { cutout } : {}), ...(box ? { box } : {}) };
+  }
+
+  /** The pack photo the model drew a picture from, when the picture has no skeleton: the pack its render named. */
+  private async drawnFrom(batchId: string, image: BatchImage): Promise<string | undefined> {
+    const { batches, brands, images, renders } = this.deps;
+    const all = await renders.list(batchId);
+    let at: BatchImage | undefined = image.rootId ? await images.get(batchId, image.rootId) : image;
+    // A final is made from its draft, and a repair from its picture: the first one the model drew alone names the pack.
+    for (let step = 0; at && step < 6; step += 1) {
+      const render = all.find((other) => other.id === at!.id);
+      if (!render) return undefined;
+      if (!render.fromId) {
+        return render.pack ? photoNamed(await brands.product((await batches.get(batchId)).productId), render.pack)?.key : undefined;
+      }
+      at = await images.get(batchId, render.fromId);
+      if (at.kind === "skeleton") return undefined;
+    }
+    return undefined;
   }
 
   private async planOf(batchId: string, image: BatchImage): Promise<unknown> {
@@ -265,11 +294,15 @@ export class PixelService {
       throw new Refusal(`The studio holds no font file of "${input.subFamily}" for this brand. Save it with font_save, or leave subFamily out and the subline takes the headline font.`);
     }
     if (input.logo && !brand.logo) throw new Refusal("This brand has no saved logo. Save one with brand_save, or send logo false and tell the owner the ad has no logo yet.");
+    // The words of a concept ad stand where its direction says: the place follows the picture, not a habit.
+    const plan = batch.kind === "v3" ? (await this.deps.directions.get(input.batchId))?.concepts.find((concept) => concept.ideaId === root.ideaId) : undefined;
+    if (batch.kind === "v3" && !plan) throw new Refusal(`Concept ${root.ideaId} has no direction, so the studio does not know where its words stand. Save it first (direction_save).`);
+    const layout = plan && root.ideaId ? lockupLayout(plan.lockup, root.ideaId, input.layout) : input.layout;
     return this.start(
       "headline",
       input.batchId,
       {
-        ...input.layout,
+        ...layout,
         headline: words.headline,
         subline: words.subline,
         ...(words.footnote ? { footnote: words.footnote } : {}),

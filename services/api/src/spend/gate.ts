@@ -14,6 +14,8 @@ export class GateError extends Refusal {}
 interface GateItem extends Item {
   count: number;
   estimateMicro: number;
+  /** The price of the first item, which the estimate counts for each one not yet sent. */
+  eachMicro?: number;
   approvedMicro?: number;
   approvedBy?: string;
   approvedAt?: string;
@@ -50,11 +52,14 @@ export class SpendGate {
     };
   }
 
-  /** Saves the estimate for a stage from the real price of its first item. */
-  async price(batchId: string, stage: GateStage, first: { firstUsd: number; count: number }): Promise<GateState> {
+  /**
+   * Saves the estimate for a stage from the real price of its first item. `billed` is what failed items
+   * before it were charged, and how many of the stage's places they hold: a place held is not sent again.
+   */
+  async price(batchId: string, stage: GateStage, first: { firstUsd: number; count: number; billed?: { micro: number; places: number } }): Promise<GateState> {
     const [pk, sk] = key(batchId, stage);
     const earlier = await this.table.get<GateItem>(pk, sk);
-    const item: GateItem = { ...earlier, pk, sk, count: first.count, estimateMicro: toMicro(first.firstUsd * first.count) };
+    const item: GateItem = { ...earlier, pk, sk, count: first.count, estimateMicro: toMicro(first.firstUsd * (first.count - (first.billed?.places ?? 0))) + (first.billed?.micro ?? 0), eachMicro: toMicro(first.firstUsd) };
     await this.table.put(item);
     return this.view(item);
   }
@@ -106,11 +111,31 @@ export class SpendGate {
     return item ? this.view(item) : undefined;
   }
 
-  /** Passes when the rest of the stage may be sent. Throws a GateError that says what is missing. */
-  async check(batchId: string, stage: GateStage): Promise<GateState> {
-    const item = await this.table.get<GateItem>(...key(batchId, stage));
+  /**
+   * Passes when the next item of the stage may be sent. Throws a GateError that says what is missing.
+   * `next` is the item about to be sent, with how many the stage has sent and what the stage came to
+   * so far. The estimate is then what it came to, this item, and the first one's price for each of the
+   * rest. One more item than it counted (a redo, the drafts of a lowered direction), a dearer item (more
+   * reference pictures) or a failed one that was charged makes it larger, and a larger estimate is a new
+   * question for the owner. An item that was refused and never sent leaves nothing behind in it.
+   */
+  async check(batchId: string, stage: GateStage, next?: { sent: number; usedMicro: number; micro: number }): Promise<GateState> {
+    let item = await this.table.get<GateItem>(...key(batchId, stage));
     if (!item) {
       throw new GateError(`Send the first of the ${stage} alone, to read the real price. The rest wait for that price.`);
+    }
+    if (next && item.count > 0) {
+      const count = Math.max(item.count, next.sent + 1);
+      // An estimate saved before each item's price was kept: its price is the estimate over its count, kept from now on.
+      const eachMicro = item.eachMicro ?? Math.round(item.estimateMicro / item.count);
+      const rest = (count - next.sent - 1) * eachMicro;
+      const projected = Math.round(next.usedMicro + next.micro + rest);
+      // A micro-dollar of rounding for each item is not another estimate.
+      const moved = Math.abs(projected - item.estimateMicro) > count;
+      if (count > item.count || moved) {
+        item = { ...item, count, eachMicro, estimateMicro: moved ? projected : item.estimateMicro };
+        await this.table.put(item);
+      }
     }
     const state = this.view(item);
     if (state.needsYes && !state.approvedBy) {
