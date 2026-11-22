@@ -107,6 +107,83 @@ describe("an outreach batch", () => {
     expect(report.conditions.find((entry: { name: string }) => entry.name === "picks")).toMatchObject({ passed: false, evidence: expect.stringMatching(/2 drafts are picked/) });
   });
 
+  describe("the judgement of its ideas", () => {
+    const judge = async (cut: string[]) => {
+      const packet = await callTool(studio, "critic_open", { batchId, step: "ideas", freshHelper: true });
+      if (!packet.ok) return packet;
+      const ideas = IDEAS.map((ideaId) => ({ ideaId, verdict: cut.includes(ideaId) ? "cut" : "keep", reason: "As a fresh helper saw it." }));
+      return callTool(studio, "critic_pick", { ...rules, batchId, ticket: packet.value.ticket, ideas });
+    };
+    const withIdeas = async (create: object) => {
+      batchId = (await batchAtTruth(studio, create)).batchId;
+      await callTool(studio, "ideas_save", { ...rules, batchId, ideas: [idea(1), idea(2), idea(3)] });
+    };
+    const state = async () => (await callTool(studio, "batch_get", { batchId })).value.batch.state;
+
+    it("goes on with one kept idea: it makes one ad, so a cut idea starts no new round", async () => {
+      await withIdeas({ prospectId: PROSPECT });
+      const reply = await judge(["idea-1", "idea-3"]);
+      expect(reply.value).toMatchObject({ state: "judged", kept: ["idea-2"], cut: [{ ideaId: "idea-1" }, { ideaId: "idea-3" }], nextStep: expect.stringMatching(/starts no other critic/) });
+      expect((await studio.services.batches.ideas(batchId)).map((entry) => entry.id)).toEqual(["idea-2"]);
+    });
+
+    it("is judged twice at most: the studio refuses a third critic, and the brand is parked", async () => {
+      await withIdeas({ prospectId: PROSPECT });
+      const first = await judge(IDEAS);
+      expect(first.value).toMatchObject({ state: "ideas", nextStep: expect.stringMatching(/round 1 of 2.*once more/) });
+      await callTool(studio, "ideas_save", { ...rules, batchId, ideas: [idea(4), idea(5), idea(6)] });
+      const second = await judge(IDEAS);
+      expect(second.value).toMatchObject({ state: "ideas", nextStep: expect.stringMatching(/round 2 of 2, the last.*parks the brand/) });
+      await callTool(studio, "ideas_save", { ...rules, batchId, ideas: [idea(7), idea(8), idea(9)] });
+      const third = await judge([]);
+      expect(third).toMatchObject({ ok: false, error: expect.stringMatching(/judged 2 times.*Park it/) });
+      expect(await state()).toBe("ideas");
+    });
+
+    it("owes drafts only to the idea the agent took: two kept ideas, one ad", async () => {
+      await withIdeas({ prospectId: PROSPECT });
+      expect((await judge(["idea-3"])).value).toMatchObject({ state: "judged", kept: ["idea-1", "idea-2"] });
+      drafts = {};
+      for (let n = 0; n < 3; n++) {
+        const imageId = await render("idea-2", "draft");
+        await check(imageId);
+        drafts["idea-2"] ??= imageId;
+      }
+      expect((await rankDrafts(studio, batchId)).ok).toBe(true);
+      await callTool(studio, "board_show", { batchId });
+      studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
+      expect(await state()).toBe("waiting_pick");
+      await pick("idea-2", drafts["idea-2"]!);
+      await pick("idea-1", null);
+      const imageId = await render("idea-2", "final", drafts["idea-2"]);
+      await check(imageId);
+      const job = await callTool(studio, "photo_finish", { ...rules, batchId, imageId });
+      await callTool(studio, "pixel_status", { batchId, jobId: job.value.id });
+      expect((await callTool(studio, "batch_done", { batchId })).value).toMatchObject({ done: true, batch: { state: "done" } });
+    });
+
+    it("counts the limit when the judgement comes too: three packets opened together give two judgements", async () => {
+      await withIdeas({ prospectId: PROSPECT });
+      const tickets: string[] = [];
+      for (let n = 0; n < 3; n++) tickets.push((await callTool(studio, "critic_open", { batchId, step: "ideas", freshHelper: true })).value.ticket);
+      const cutAll = (ticket: string) => callTool(studio, "critic_pick", { ...rules, batchId, ticket, ideas: IDEAS.map((ideaId) => ({ ideaId, verdict: "cut", reason: "As a fresh helper saw it." })) });
+      expect((await cutAll(tickets[0]!)).ok).toBe(true);
+      expect((await cutAll(tickets[1]!)).ok).toBe(true);
+      expect(await cutAll(tickets[2]!)).toMatchObject({ ok: false, error: expect.stringMatching(/judged 2 times.*Park it/) });
+      expect((await callTool(studio, "batch_get", { batchId })).value.batch.state).toBe("ideas");
+    });
+
+    it("leaves a client's batch as it was: every idea is kept before it goes on, and the studio counts no limit", async () => {
+      await withIdeas({});
+      for (let round = 0; round < 3; round++) {
+        const reply = await judge(["idea-1"]);
+        expect(reply.value).toMatchObject({ state: "ideas", nextStep: expect.stringMatching(/writes a new idea in place of each one/) });
+      }
+      expect((await judge([])).value).toMatchObject({ state: "judged" });
+      expect(await studio.services.batches.ideas(batchId)).toHaveLength(3);
+    });
+  });
+
   it("spends from the campaign and not from the month", async () => {
     await batchAtBoard({ prospectId: PROSPECT });
     const spend = (await callTool(studio, "spend_get", { batchId })).value;
