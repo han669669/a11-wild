@@ -256,6 +256,78 @@ describe("a v2 outreach batch: the burst", () => {
     expect(await view()).toMatchObject({ words: false });
   });
 
+  it("sets the words on a draft that only the pack measure faults: the owner may pick it, with a warning", async () => {
+    await outreachBurst();
+    await choose();
+    const ideas = await selected();
+    await approve(ideas);
+    await callTool(studio, "font_save", { brandId, family: "Archivo", weight: 800 });
+    const made: string[] = [];
+    for (const entry of ideas) {
+      for (let n = 0; n < 3; n++) {
+        const imageId = await render(entry.id, "draft", await skeleton(entry.id));
+        await checked(imageId);
+        made.push(imageId);
+      }
+    }
+    const [wide, ...rest] = made as [string, ...string[]];
+    await studio.services.checks.measure(batchId, wide, "pack_check", { code: "D11", note: "render H/W 0.955 (486 x 509 px); packshot H/W 1.000; difference -4.5%; FAIL at 2%" });
+    for (const imageId of rest) await typeSet(imageId);
+    // The measure rejects nothing here, so this draft is an ad like the others: it waits for its words.
+    expect(await callTool(studio, "outreach_show", { batchId })).toMatchObject({ ok: false, error: expect.stringMatching(/shown when each one is made, checked and carries its words/) });
+    await typeSet(wide);
+    expect((await callTool(studio, "outreach_show", { batchId })).value).toMatchObject({ drafts: 9, canBePicked: 9 });
+    const [files, optOuts] = await Promise.all([studio.services.outreach.store.all(), studio.services.outreach.store.optOuts()]);
+    const view = await studio.services.outreach.picks.view(files.find((file) => file.profile.id === "00001")!, optOuts);
+    const warned = view!.drafts.filter((draft) => draft.warning);
+    expect(warned).toHaveLength(1);
+    expect(warned[0]).toMatchObject({ imageId: wide, warning: "The pack is drawn 5% wider than in its photo. The limit is 2%." });
+    expect(warned[0]!.blocked).toBeUndefined();
+  });
+
+  it("blocks no draft for what the agent saw on its words, and carries that note to the attached ad", async () => {
+    await outreachBurst();
+    await choose();
+    const ideas = await selected();
+    await approve(ideas);
+    await callTool(studio, "font_save", { brandId, family: "Archivo", weight: 800 });
+    const made: string[] = [];
+    for (const entry of ideas) {
+      for (let n = 0; n < 3; n++) {
+        const imageId = await render(entry.id, "draft", await skeleton(entry.id));
+        await checked(imageId);
+        made.push(imageId);
+      }
+    }
+    const [over, ...rest] = made as [string, ...string[]];
+    for (const imageId of rest) await typeSet(imageId);
+    const look = (imageId: string, items: object[]) => callTool(studio, "checks_save", { ...rules, batchId, imageId, items });
+    // The agent sees a D item on the draft with its words: in a client's batch that sends the type back, here it is a note.
+    const set = await typeSet(over, {}, false);
+    const seen = await look(set.value.image.id, [{ code: "D1", note: "The headline runs over the pack." }]);
+    expect(seen.value).toMatchObject({ state: "checked", note: expect.stringMatching(/a check rejects nothing/) });
+    expect((await callTool(studio, "outreach_show", { batchId })).value).toMatchObject({ drafts: 9, canBePicked: 9 });
+    const picks = studio.services.outreach.picks;
+    const [files, optOuts] = await Promise.all([studio.services.outreach.store.all(), studio.services.outreach.store.optOuts()]);
+    const draft = (await picks.view(files.find((file) => file.profile.id === "00001")!, optOuts))!.drafts.find((entry) => entry.imageId === over)!;
+    expect(draft.blocked).toBeUndefined();
+    expect(draft.warning).toBe("The agent saw: The headline runs over the pack.");
+
+    // He picks it. What the agent sees on the final with its words goes with the ad, beside what it saw on the bare final.
+    studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
+    await picks.pick("00001", over, "owner@studio.example");
+    const final = await render(ideas[0]!.id, "final", over);
+    await checked(final);
+    await look(final, [{ code: "F2", note: "The shadow under the pack is hard." }]);
+    const finish = await callTool(studio, "photo_finish", { ...rules, batchId, imageId: final });
+    await callTool(studio, "pixel_status", { batchId, jobId: finish.value.id });
+    const worded = await typeSet(final, {}, false);
+    await look(worded.value.image.id, [{ code: "D1", note: "The headline runs over the pack." }]);
+    expect((await callTool(studio, "batch_done", { batchId })).value).toMatchObject({ done: true });
+    const attached = (await callTool(studio, "outreach_attach", { batchId, why: "The pouch on its rock." })).value;
+    expect(attached.ad).toMatchObject({ picked: true, warning: "The agent saw: The shadow under the pack is hard. The agent saw: The headline runs over the pack." });
+  });
+
   it("is judged twice at most when the critic refuses every stage", async () => {
     await outreachBurst();
     expect((await choose([...STAGES])).reply.value).toMatchObject({ state: "ideas", nextStep: expect.stringMatching(/round 1 of 2/) });

@@ -1166,6 +1166,8 @@ export interface OutreachAd {
   key: string;
   /** One line from the agent: what the ad shows and why it fits the brand. */
   why: string;
+  /** What the checks found in this final, in plain words: it blocked nothing, and the owner reads it before he sends. */
+  warning?: string;
   at: string;
 }
 
@@ -1370,8 +1372,10 @@ export interface OutreachCandidate {
   /** The picture a pick names. */
   imageId: string;
   viewUrl: string;
-  /** Why this draft cannot be picked: a check it failed. */
+  /** Why this draft cannot be picked yet: it has no words, or he refused its full-size version. Never a check. */
   blocked?: string;
+  /** What the checks found in this draft, in plain words: it blocks nothing, and the owner reads it before he picks. */
+  warning?: string;
 }
 
 /** Every draft the studio made for a prospect's newest outreach batch, and what the owner chose. */

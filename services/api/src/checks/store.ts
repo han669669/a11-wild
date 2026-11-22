@@ -1,4 +1,4 @@
-import type { CheckItem, ImageChecks } from "@a11-wild/shared";
+import type { Batch, CheckItem, ImageChecks } from "@a11-wild/shared";
 import { type Item, type Table } from "../store/table.js";
 import { isDefect } from "./codes.js";
 
@@ -39,6 +39,20 @@ export const defectOf = (checks: ImageChecks | undefined): CheckItem | undefined
 /** One defect rejects a picture, and so do two faults. */
 export const rejected = (checks: ImageChecks | undefined): boolean =>
   !!checks && (!!defectOf(checks) || checks.items.filter((item) => !isDefect(item.code)).length >= 2);
+
+/** The tool that measures a pack's shape against its photo. A product with a pack photo needs it on every draft and every final. */
+export const PACK_CHECK = "pack_check";
+
+/**
+ * The checks that can reject a picture of this batch. In an outreach batch none can: the owner sees every draft on the brand's page
+ * and picks among all of them himself (his decisions of 22-11-2026), so there each item is a note beside the picture and rejects nothing.
+ * In every other batch the checks reject as they are.
+ */
+export const judgedIn = (batch: Pick<Batch, "purpose">, checks: ImageChecks | undefined): ImageChecks | undefined =>
+  batch.purpose === "outreach" && checks ? { ...checks, items: [] } : checks;
+
+/** What the checks found in a picture of an outreach batch: the owner reads each item beside the picture. Nothing in any other batch, where they reject. */
+export const notesIn = (batch: Pick<Batch, "purpose">, checks: ImageChecks | undefined): CheckItem[] => (batch.purpose === "outreach" ? (checks?.items ?? []) : []);
 
 /** The D and F items of each draft and final. What a tool measured and what an agent saw are kept apart. */
 export class CheckStore {
