@@ -36,6 +36,8 @@ export interface SpendLine {
   batchId?: string;
   usd: number;
   status: "reserved" | "spent" | "released";
+  /** The call belongs to the outreach campaign: it is in the campaign's total, not in the month's. */
+  campaign?: true;
 }
 
 export interface SpendSummary {
@@ -46,6 +48,8 @@ export interface SpendSummary {
   batchCapUsd: number;
   batchId?: string;
   batchUsd?: number;
+  /** The outreach campaign: counted apart from the month, against its own cap. */
+  campaign: { usd: number; capUsd: number; batchCapUsd: number };
   lines: SpendLine[];
 }
 
@@ -264,6 +268,10 @@ export interface Batch {
   kind: BatchKind;
   /** A batch made to try the studio, set at its start and never after. The picks and the approvals in it are the tester's: they teach the studio nothing, and the batch is never a deliverable. */
   test?: true;
+  /** A batch that makes one ad for a brand of the outreach list, set at its start and never after. The agent chooses in the owner's place in it, so it teaches the studio nothing; it is done with one final, and it makes no client pack. */
+  purpose?: "outreach";
+  /** The prospect an outreach batch makes its ad for. */
+  prospectId?: string;
   brandId: string;
   productId: string;
   /** `static_4x5` is the one picture the studio makes. Any other format gets a text spec. */
@@ -965,4 +973,247 @@ export interface Reference {
   picture: PictureRef;
   addedAt: string;
   savedBy: string;
+}
+
+/** The spend tiers of the owner's outreach list, by live Meta ads. */
+export const OUTREACH_TIERS = ["20+", "5-19", "<5"] as const;
+export type OutreachTier = (typeof OUTREACH_TIERS)[number];
+
+export const OUTREACH_STAGES = ["new", "no_route", "needs_service_ad", "ad_waits", "ready", "contacted", "replied", "in_talks", "client", "lost", "parked", "opted_out"] as const;
+export type OutreachStage = (typeof OUTREACH_STAGES)[number];
+
+export type OutreachChannel = "whatsapp" | "email";
+/** The three messages of the sequence: the first message, follow-up 1, follow-up 2. */
+export type OutreachStep = 0 | 1 | 2;
+
+/** One brand of the owner's outreach list, as the list gives it. Only the load writes it. */
+export interface Prospect {
+  id: string;
+  /** Its number in the list: the owner's order of priority. */
+  n: number;
+  brand: string;
+  sector: string;
+  liveAds: number;
+  tier: OutreachTier;
+  /** The day of its newest ad, as YYYY-MM-DD. */
+  newestAd?: string;
+  bestRoute?: string;
+  secondRoute?: string;
+  /** WhatsApp numbers: digits only, with the country code. */
+  whatsapp: string[];
+  /** A verified address, in lower case. */
+  email?: string;
+  phone?: string;
+  instagram?: string;
+  decisionMaker?: string;
+  dmTitle?: string;
+  linkedin?: string;
+  /** Made to try the pages. It is left out of every number and every limit, and it can be removed. */
+  test?: true;
+  loadedAt: string;
+}
+
+/** What an agent may read of a prospect: nothing that reaches a person. */
+export interface ProspectBrief {
+  id: string;
+  n: number;
+  brand: string;
+  sector: string;
+  liveAds: number;
+  tier: OutreachTier;
+  newestAd?: string;
+  instagram?: string;
+}
+
+/** A finished outreach ad, attached to its prospect. */
+export interface OutreachAd {
+  /** 1 for the prospect's first ad. */
+  n: number;
+  batchId: string;
+  imageId: string;
+  kind: BatchKind;
+  /** Where the studio's own copy of the final sits in the private store. */
+  key: string;
+  /** One line from the agent: what the ad shows and why it fits the brand. */
+  why: string;
+  at: string;
+}
+
+/** A message the owner sent by hand and marked as sent, with the exact text. */
+export interface OutreachSend {
+  step: OutreachStep;
+  /** The Singapore day, as YYYY-MM-DD. */
+  day: string;
+  channel: OutreachChannel;
+  title: string;
+  text: string;
+  at: string;
+}
+
+export type OutreachEventBody =
+  | { type: "kind"; kind: "product" | "service" }
+  /** `auto` takes a set stage away again: the stage then comes from the history. */
+  | { type: "stage"; stage: "in_talks" | "client" | "lost" | "parked" | "auto"; reason?: string }
+  | { type: "ad_yes"; ad: number }
+  | { type: "ad_no"; ad: number; ownerSaid: string }
+  | { type: "reply"; reply: "more" | "no" | "other"; text?: string }
+  | { type: "answered" }
+  | { type: "optout" }
+  | { type: "unsent"; step: OutreachStep }
+  | { type: "note"; text: string }
+  | { type: "channel"; channel: OutreachChannel }
+  /** The owner chose to send to a prospect that shares its contact with an earlier one. */
+  | { type: "chosen" };
+
+export type OutreachEvent = OutreachEventBody & { id: string; at: string; by: "owner" | "agent" };
+
+/** A prospect with everything that happened to it. */
+export interface ProspectFile {
+  profile: Prospect;
+  ads: OutreachAd[];
+  sends: OutreachSend[];
+  events: OutreachEvent[];
+}
+
+/** One message of the owner's sequence: two versions of its title, and its text. `{Brand}` is the only placeholder. */
+export interface OutreachTemplate {
+  titles: [string, string];
+  body: string;
+}
+
+/** The owner's three messages, in his words. Only he changes them. */
+export interface OutreachTemplates {
+  steps: [OutreachTemplate, OutreachTemplate, OutreachTemplate];
+  savedAt: string;
+}
+
+/** A message with the brand's name filled in, and the link that opens it in WhatsApp or the mail program. */
+export interface OutreachMessage {
+  title: string;
+  text: string;
+  /** Missing when the brand has no checked contact for its channel. */
+  href?: string;
+}
+
+/** One prospect as a line of a list. It holds no number and no address. */
+export interface ProspectRow {
+  id: string;
+  n: number;
+  brand: string;
+  sector: string;
+  liveAds: number;
+  tier: OutreachTier;
+  stage: OutreachStage;
+  channel?: OutreachChannel;
+  /** True when a new ad waits for the owner's yes or no. */
+  adWaits: boolean;
+  /** The next message of the sequence and the day it is due. */
+  next?: { step: OutreachStep; due: string };
+  /** The brand earlier in the list that has the same number or address. */
+  sameContactAs?: string;
+  test?: true;
+}
+
+/** An outreach ad with a short-lived address of its picture. */
+export interface OutreachAdView extends OutreachAd {
+  viewUrl: string;
+  /** The same picture as a file to save. */
+  downloadUrl: string;
+  verdict?: "yes" | "no";
+}
+
+/** One line of the Today page: a brand, its ad and the message to send. */
+export interface TodayLine {
+  prospect: ProspectRow;
+  /** The ad the message carries, or the ad that waits for a yes or a no. */
+  ad?: OutreachAdView;
+  /** The message this line is about. Missing for an ad that waits. */
+  step?: OutreachStep;
+  /** Both versions of the message, with the link of the brand's channel. */
+  messages?: [OutreachMessage, OutreachMessage];
+  /** The reply that is owed an answer. */
+  reply?: { text?: string; at: string };
+}
+
+export interface TodayPage {
+  /** The Singapore day, as YYYY-MM-DD. */
+  day: string;
+  sendingDay: boolean;
+  nextSendingDay: string;
+  /** The daily number of first messages, and how many are marked as sent today. */
+  daily: number;
+  firstsSent: number;
+  /** False until the owner's message text is loaded. */
+  templates: boolean;
+  owed: TodayLine[];
+  followUps: TodayLine[];
+  firsts: TodayLine[];
+  adsWaiting: TodayLine[];
+}
+
+/** A count of prospects, also by spend tier and by the channel of the brand. */
+export interface OutreachCount {
+  all: number;
+  byTier: Record<OutreachTier, number>;
+  byChannel: Record<OutreachChannel, number>;
+}
+
+/** The numbers of the campaign. A test prospect is in none of them. */
+export interface OutreachNumbers {
+  prospects: number;
+  sent: OutreachCount;
+  replied: OutreachCount;
+  saidMore: OutreachCount;
+  optedOut: OutreachCount;
+  clients: OutreachCount;
+}
+
+export interface ProspectsPage {
+  numbers: OutreachNumbers;
+  /** Every sector of the list, for the filter. */
+  sectors: string[];
+  /** The prospects the search and the filters leave, in list order. */
+  rows: ProspectRow[];
+}
+
+/** How to reach a prospect. Only the owner's pages get it. A link is there only when the value passed its check. */
+export interface ProspectContact {
+  whatsapp: { number: string; href?: string }[];
+  email?: { address: string; href?: string };
+  phone?: string;
+  instagram?: { name: string; href?: string };
+  decisionMaker?: string;
+  dmTitle?: string;
+  linkedin?: { text: string; href?: string };
+  bestRoute?: string;
+  secondRoute?: string;
+}
+
+/** One prospect with everything about it, for the owner. */
+export interface ProspectPage {
+  prospect: ProspectRow;
+  newestAd?: string;
+  sells?: "product" | "service";
+  contact: ProspectContact;
+  /** Newest first. */
+  ads: OutreachAdView[];
+  sends: OutreachSend[];
+  events: OutreachEvent[];
+  /** The Singapore day: a mark of today can be taken back. */
+  day: string;
+  /** The message that can be sent now, in both versions. */
+  message?: { step: OutreachStep; messages: [OutreachMessage, OutreachMessage] };
+  /** Today is not a sending day and a message waits: the next sending day, when it can be sent. */
+  messageFrom?: string;
+  /** A reply that waits for the owner's answer. */
+  owed?: { text?: string; at: string };
+}
+
+export interface TemplatesPage {
+  templates?: OutreachTemplates;
+  daily: number;
+  dailyMin: number;
+  dailyMax: number;
+  /** The one placeholder a message may hold. */
+  placeholder: string;
 }

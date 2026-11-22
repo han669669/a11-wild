@@ -11,6 +11,7 @@ import type { CriticStore } from "../../critic/store.js";
 import type { FactStore } from "../../facts/store.js";
 import { BURST_MAX, BURST_MIN, burstFaults, ELEMENTS_MAX, HEADLINE_WORDS_MAX, ideaFaults, IDEAS_PER_BATCH, PER_STAGE_MIN, photoNames, SUBLINE_WORDS_MAX, WORDS_MAX } from "../../ideas/checks.js";
 import type { TruthStore } from "../../truth/store.js";
+import type { OutreachDesk } from "../../outreach/desk.js";
 import { defineTool, Refusal, type ToolDefinition } from "../registry.js";
 
 export interface BatchToolDeps {
@@ -23,6 +24,8 @@ export interface BatchToolDeps {
   done: DoneGate;
   copy: CopyStore;
   briefs: BriefStore;
+  /** Says whether a prospect needs an ad, before an outreach batch is started for it. */
+  desk: Pick<OutreachDesk, "checkNew">;
 }
 
 const id = z.string().min(1).max(64);
@@ -32,7 +35,7 @@ const test = (what: string) => z.strictObject({ passed: z.boolean(), note: line(
 const CANNOT_RENDER =
   "The studio makes one kind of picture: a static 4:5 ad. For this format the step it cannot do is rendering. It keeps the facts, the truth sheet, the ideas and a text spec.";
 
-export function batchTools({ batches, brands, facts, truth, reads, critic, done, copy, briefs }: BatchToolDeps): ToolDefinition[] {
+export function batchTools({ batches, brands, facts, truth, reads, critic, done, copy, briefs, desk }: BatchToolDeps): ToolDefinition[] {
   /** What a session needs to go on with a batch, from its id alone. */
   async function view(batch: Batch) {
     // A batch that saved a sheet keeps that version. A batch that has not yet sees the product's newest.
@@ -81,6 +84,11 @@ export function batchTools({ batches, brands, facts, truth, reads, critic, done,
         format: z.enum(["static_4x5", "other"]).default("static_4x5"),
         formatNote: line(200).optional().describe('The format in the owner\'s words, when format is other: "9:16 story".'),
         label: line(80).optional(),
+        prospectId: id
+          .optional()
+          .describe(
+            "Only for an outreach ad: the prospect the ad is made for, from outreach_next. It cannot be changed later. In an outreach batch the agent approves the words and picks the concepts and the draft in the owner's place, by his standing instruction: those choices stay out of the taste log and out of the calibration. The batch makes one ad and no client pack, its spend counts against the outreach campaign's cap, and the ad waits for the owner's yes on his outreach page before he can send it.",
+          ),
         test: z
           .boolean()
           .default(false)
@@ -89,13 +97,18 @@ export function batchTools({ batches, brands, facts, truth, reads, critic, done,
           ),
       },
       writes: true,
-      handler: async ({ kind, brandId, productId, format, formatNote, label, test }, context) => {
+      handler: async ({ kind, brandId, productId, format, formatNote, label, test, prospectId }, context) => {
+        // Asked first, so a member learns nothing of the list from the answers below.
+        if (prospectId && context.user.role !== "owner") throw new Refusal("Only the owner's session makes an outreach batch.");
+        if (test && prospectId) throw new Refusal("A batch is a test or an outreach batch, not both.");
+        if (prospectId && format === "other") throw new Refusal("An outreach ad is a static 4:5 picture.");
         if (kind === "v3" && format === "other") throw new Refusal("A concept ad (v3) is a static 4:5 picture. For another format, start a v1 or v2 batch: it ends with a text spec.");
         await brands.brand(brandId);
         const product = await brands.product(productId);
         if (product.brandId !== brandId) throw new Refusal("That product belongs to another brand. brand_list gives each brand's products.");
         if (format === "other" && !formatNote) throw new Refusal("Give formatNote: the format in the owner's words.");
-        const batch = await batches.create({ kind, brandId, productId, format, createdBy: context.user.email, ...(test ? { test: true as const } : {}), ...(formatNote ? { formatNote } : {}), ...(label ? { label } : {}) });
+        if (prospectId) await desk.checkNew(prospectId);
+        const batch = await batches.create({ kind, brandId, productId, format, createdBy: context.user.email, ...(test ? { test: true as const } : {}), ...(prospectId ? { purpose: "outreach" as const, prospectId } : {}), ...(formatNote ? { formatNote } : {}), ...(label ? { label } : {}) });
         return { ...(await view(batch)), ...(format === "other" ? { note: CANNOT_RENDER } : {}) };
       },
     }),
