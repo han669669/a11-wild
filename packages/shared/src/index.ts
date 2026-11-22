@@ -56,6 +56,15 @@ export interface PictureRef {
   sourceUrl: string;
 }
 
+/** One font file of a brand, in the private store. */
+export interface FontFile {
+  family: string;
+  weight: number;
+  key: string;
+  /** Where the file was copied from. */
+  sourceUrl: string;
+}
+
 export const PALETTE_ROLES = ["primary", "secondary", "accent", "background", "text"] as const;
 export type PaletteRole = (typeof PALETTE_ROLES)[number];
 
@@ -67,6 +76,8 @@ export interface BrandKit {
   logo: PictureRef | null;
   palette: { role: PaletteRole; hex: string; note?: string }[];
   fonts: string[];
+  /** The font files the studio holds for this brand: the words of an ad are set in them. */
+  fontFiles?: FontFile[];
   /** How the brand speaks, in the owner's words. */
   voice?: string;
   /** Words and claims the brand never uses. */
@@ -80,8 +91,10 @@ export interface BrandKit {
 }
 
 export interface ProductPhoto extends PictureRef {
-  /** `pack` shows the product as sold. `food` shows the brand's own photo of the food itself. */
-  kind: "pack" | "food";
+  /** `pack` shows the product as sold. `food` shows the brand's own photo of the food itself. `prop` is a real photo of another thing a picture shows. */
+  kind: "pack" | "food" | "prop";
+  /** What the photo shows, when the product has more than one of its kind: "mango slice", "a real chilli padi". */
+  what?: string;
 }
 
 export interface Product {
@@ -155,6 +168,8 @@ export const BATCH_STATES = [
   "truth",
   "ideas",
   "judged",
+  /** The owner approved the words. Only a batch whose kind has words passes through it. */
+  "worded",
   "priced",
   "waiting_spend",
   "drafting",
@@ -167,8 +182,18 @@ export const BATCH_STATES = [
 ] as const;
 export type BatchState = (typeof BATCH_STATES)[number];
 
+/** `v1`: the picture carries the logo and no words. `v2` and `v3`: a headline and a subline are set on it. */
+export const BATCH_KINDS = ["v1", "v2", "v3"] as const;
+export type BatchKind = (typeof BATCH_KINDS)[number];
+
+export const FUNNEL_STAGES = ["tof", "mof", "bof"] as const;
+/** Top, middle and bottom of the funnel. */
+export type FunnelStage = (typeof FUNNEL_STAGES)[number];
+
 export interface Batch {
   id: string;
+  /** The kind of ad the batch makes. The owner names it at the start. */
+  kind: BatchKind;
   brandId: string;
   productId: string;
   /** `static_4x5` is the one picture the studio makes. Any other format gets a text spec. */
@@ -236,6 +261,40 @@ export interface Idea {
   coverTest: IdeaTest;
   /** Does it stay clear of every kill reason? */
   killTest: IdeaTest;
+  /** The funnel stage the ad is for. An idea of a kind with words has one. */
+  stage?: FunnelStage;
+  /** The words set on the picture. An idea of a kind with words has both. */
+  headline?: string;
+  subline?: string;
+  /** One other headline, as an option for the owner. */
+  altHeadline?: string;
+  /** Each claim the words make, with the saved fact that proves it. */
+  claims?: { text: string; factId: string }[];
+  /** A claim's source line, set small at the bottom of the picture. */
+  footnote?: string;
+  /** The product's real photos of each brand item the picture shows: "pack-1", "food-2". */
+  shows?: string[];
+}
+
+/** The words the owner approved for one idea. They are set on its pictures and reused word for word. */
+export interface ApprovedCopy {
+  ideaId: string;
+  headline: string;
+  subline: string;
+  footnote?: string;
+  /** What the owner said when he approved, in his own words. */
+  ownerSaid: string;
+  /** 1 for the first approval. Each change he approves adds one. */
+  version: number;
+  at: string;
+  by: string;
+}
+
+/** The blind critic's choice of the idea for one funnel stage, or its refusal of every idea of that stage. */
+export interface StagePick {
+  stage: FunnelStage;
+  ideaId: string | null;
+  reason: string;
 }
 
 /** A picture with a link that opens it for a few minutes. */
@@ -272,7 +331,23 @@ export interface TastePage {
 }
 
 /** What a picture of a batch is: the skeleton a draft is built round, a draft, a final, or what a pixel tool made from one. */
-export type ImageKind = "skeleton" | "draft" | "final" | "reprint" | "swap" | "finish" | "food_crop";
+export type ImageKind =
+  | "skeleton"
+  | "draft"
+  | "final"
+  | "reprint"
+  | "swap"
+  | "finish"
+  | "food_crop"
+  /** A picture with the approved words and the real logo set on it. */
+  | "typeset"
+  /** A repair of a draft or a final: food colour, the pack's light, a box's print. */
+  | "grade"
+  | "relight"
+  | "box_print"
+  /** The pack photo padded to 4:5, and the open pack built from the model's edit of it. */
+  | "pack_pad"
+  | "pack_open";
 
 /** A picture that a batch owns. It lives in the private picture store. */
 export interface BatchImage {
@@ -285,6 +360,8 @@ export interface BatchImage {
   fromId?: string;
   /** The draft or the final that a repair, a finish or a food crop stands for. */
   rootId?: string;
+  /** For a picture with the words set on it: the version of the approved words it carries. */
+  wordsVersion?: number;
   createdAt: string;
 }
 
@@ -356,9 +433,24 @@ export interface BoardDraft {
   checks: ImageChecks | null;
   /** A final after the real-camera finish: the picture that is delivered. */
   finish?: { image: BatchImage; viewUrl: string };
+  /** The picture with the approved words and the real logo set on it (an ad with words): what the owner judges, and what is delivered. */
+  words?: { image: BatchImage; viewUrl: string; /** The agent's look at the picture with its words. Null until it is saved. */ checks: ImageChecks | null };
 }
 
-export type PixelTool = "skeleton" | "reprint" | "swap" | "pack_check" | "cap_check" | "photo_finish" | "food_crop";
+export type PixelTool =
+  | "skeleton"
+  | "reprint"
+  | "swap"
+  | "pack_check"
+  | "cap_check"
+  | "photo_finish"
+  | "food_crop"
+  | "headline"
+  | "food_grade"
+  | "relight"
+  | "box_print"
+  | "pack_pad"
+  | "pack_open";
 
 /** One run of a pixel tool, from the moment it is sent. */
 export interface PixelJob {
@@ -389,6 +481,8 @@ export interface Board {
   truthSheet: TruthSheet | null;
   ideas: {
     idea: Idea;
+    /** The words the owner approved for this idea (an ad with words). */
+    copy?: ApprovedCopy;
     drafts: BoardDraft[];
     pick: Pick | null;
     /** The blind critic's rank of this idea's drafts. Null until the owner has picked or passed, so that it cannot lead him. */
@@ -400,7 +494,7 @@ export interface Board {
 /** The blind critic's order of one idea's drafts, best first, with a reason for each place. */
 export interface CriticRank {
   ideaId: string;
-  /** shownId is the picture the critic looked at: the draft, or its newest repair. The server sets it. */
+  /** shownId is the picture the critic looked at: the draft or its newest repair, and in an ad with words that picture with its words. The server sets it. */
   order: { imageId: string; shownId: string; reason: string }[];
   at: string;
 }
@@ -429,7 +523,7 @@ export interface CalibrationPage {
 
 /** One condition of the done gate, with what the studio measured. */
 export interface DoneCondition {
-  name: "picks" | "finals";
+  name: "picks" | "finals" | "words";
   /** The condition in the owner's words. */
   asks: string;
   passed: boolean;
@@ -442,4 +536,21 @@ export interface DoneReport {
   conditions: DoneCondition[];
   /** What the studio cannot measure. The owner judges these himself. */
   strangerTest: string[];
+}
+
+/** An ad the owner holds up as the bar. A writer and a critic look at it before they judge new work. */
+export interface Reference {
+  id: string;
+  /** The kinds of ad it is a reference for. */
+  kinds: BatchKind[];
+  brand: string;
+  /** The ad's headline, or a short name for an ad with no words. */
+  title: string;
+  /** What the ad does, in one or two lines. */
+  why: string;
+  /** True for an example of "usable", not a template: new work is free to go elsewhere. */
+  loose?: boolean;
+  picture: PictureRef;
+  addedAt: string;
+  savedBy: string;
 }

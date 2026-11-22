@@ -47,7 +47,12 @@ export function Brand() {
                   ))}
             </dd>
             <dt className="text-muted-foreground">Fonts</dt>
-            <dd>{brand.fonts.length === 0 ? "None chosen" : brand.fonts.join(", ")}</dd>
+            <dd>
+              {brand.fonts.length === 0 ? "None chosen" : brand.fonts.join(", ")}
+              {brand.fontFiles && brand.fontFiles.length > 0 ? (
+                <span className="block text-muted-foreground">Files held: {brand.fontFiles.map((file) => `${file.family} ${file.weight}`).join(", ")}</span>
+              ) : null}
+            </dd>
             {brand.voice ? (
               <>
                 <dt className="text-muted-foreground">Voice</dt>
@@ -125,7 +130,7 @@ function ProductSection({ entry }: { entry: BrandPage["products"][number] }) {
               {product.photos.map((photo) => (
                 <li key={photo.key} className="w-28">
                   <img src={photo.viewUrl} alt={`${product.name}, ${photo.kind} photo`} className="aspect-square w-full rounded-lg bg-(--tint) object-contain" />
-                  <span className="mt-1 block text-caption text-muted-foreground">{photo.kind === "pack" ? "As sold" : "The food"}</span>
+                  <span className="mt-1 block text-caption text-muted-foreground">{photo.what ?? (photo.kind === "pack" ? "As sold" : photo.kind === "food" ? "The food" : "A prop")}</span>
                 </li>
               ))}
             </ul>

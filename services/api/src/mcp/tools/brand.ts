@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { PALETTE_ROLES, type ProductPhoto } from "@a11-wild/shared";
 import { brandExtract, fetchText } from "../../brand/extract.js";
+import { copyFont } from "../../brand/fonts.js";
 import type { BrandStore } from "../../brand/store.js";
 import type { ParallelClient } from "../../parallel/client.js";
 import { copyPicture, type Pictures } from "../../pictures/store.js";
@@ -17,7 +18,8 @@ export interface BrandToolDeps {
 
 const httpsUrl = z.string().max(2000).describe("An https address on a public host.");
 const id = z.string().min(1).max(64);
-const PHOTOS_MAX = 6;
+/** A product with many variants needs a real photo of each one (the owner, 22-11-2026: real photos first, for everything). */
+const PHOTOS_MAX = 16;
 
 /** Picture addresses in a page's text, as Markdown or as plain links. */
 function pictureLinks(text: string): string[] {
@@ -27,6 +29,27 @@ function pictureLinks(text: string): string[] {
 
 export function brandTools({ brands, parallel, pictures, net }: BrandToolDeps): ToolDefinition[] {
   return [
+    defineTool({
+      name: "font_save",
+      description:
+        "Saves one font file of a brand, so the studio can set an ad's words in the brand's own font (type_set). Free. Without url, the family comes from Google Fonts at that weight. For a brand font that is not there, give url: the file the brand's own site serves (its @font-face address, a .woff2, .woff, .ttf or .otf). Save the headline weight (the heaviest) and the subline weight (one lighter, never Light). Never save another family in place of the brand's own without the owner's yes.",
+      input: {
+        brandId: id,
+        family: z.string().min(1).max(60).describe("The family name, as the brand kit has it."),
+        weight: z.number().int().min(100).max(1000).describe("The weight: 400 is regular, 700 is bold, 900 is the heaviest."),
+        url: httpsUrl.optional().describe("The font file on the brand's own site. Leave it out for a Google Fonts family."),
+      },
+      writes: true,
+      handler: async ({ brandId, family, weight, url }, context) => {
+        const brand = await brands.brand(brandId);
+        const file = await copyFont({ brandId, family, weight, ...(url ? { url } : {}) }, net, pictures);
+        const others = (brand.fontFiles ?? []).filter((other) => !(other.family.toLowerCase() === file.family.toLowerCase() && other.weight === weight));
+        if (others.length >= 8) throw new Refusal("A brand keeps 8 font files or fewer.");
+        const { createdAt: _createdAt, ...kit } = brand;
+        const saved = await brands.saveBrand({ ...kit, fontFiles: [...others, file], savedBy: context.user.email });
+        return { brandId, saved: { family: file.family, weight: file.weight, sourceUrl: file.sourceUrl }, fontFiles: (saved.fontFiles ?? []).map(({ family: name, weight: at }) => ({ family: name, weight: at })) };
+      },
+    }),
     defineTool({
       name: "brand_list",
       description:
@@ -123,7 +146,7 @@ export function brandTools({ brands, parallel, pictures, net }: BrandToolDeps): 
     defineTool({
       name: "product_save",
       description:
-        "Saves a product of a saved brand with the pictures the owner chose. Each picture must be a candidate of the product_extract or image_search named in fromId. kind is pack for the product as sold, food for the brand's own photo of the food itself. The studio copies each picture into its private store.",
+        "Saves a product of a saved brand with the pictures the owner chose. Each picture must be a candidate of the product_extract or image_search named in fromId. kind is pack for the product as sold, food for the brand's own photo of the food itself, prop for a real photo of another thing an ad will show (a real lemon, a real cake server). Save a real photo of every variant and every thing a picture will show: a draft is refused when one is missing. The studio copies each picture into its private store.",
       input: {
         brandId: id,
         extractId: id.describe("The extractId that product_extract returned for the product's page."),
@@ -132,7 +155,8 @@ export function brandTools({ brands, parallel, pictures, net }: BrandToolDeps): 
           .array(
             z.strictObject({
               url: httpsUrl,
-              kind: z.enum(["pack", "food"]),
+              kind: z.enum(["pack", "food", "prop"]),
+              what: z.string().min(1).max(120).optional().describe('What the photo shows, when the product has several of its kind: "mango slice". Give it for each variant and each prop.'),
               fromId: id.optional().describe("The extractId or searchId that offered this picture. Leave it out for the product's own extract."),
             }),
           )
@@ -154,7 +178,7 @@ export function brandTools({ brands, parallel, pictures, net }: BrandToolDeps): 
         const stored: ProductPhoto[] = [];
         for (const photo of photos) {
           const copy = await copyPicture({ url: photo.url, folder: `products/${productId}`, what: "The picture" }, net, pictures);
-          stored.push({ key: copy.key, sourceUrl: copy.sourceUrl, kind: photo.kind });
+          stored.push({ key: copy.key, sourceUrl: copy.sourceUrl, kind: photo.kind, ...(photo.what ? { what: photo.what } : {}) });
         }
         return {
           product: await brands.saveProduct({ id: productId, brandId, name, url: offer.url, photos: stored, savedBy: context.user.email }),

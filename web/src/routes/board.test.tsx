@@ -23,7 +23,7 @@ const idea = (n: number) => ({
   killTest: { passed: true, note: "Real pack." },
 });
 const board = (overrides: Partial<BoardData> = {}): BoardData => ({
-  batch: { id: "b1", brandId: "br1", productId: "p1", format: "static_4x5", state: "waiting_pick", truthVersion: 2, createdAt: at, updatedAt: at, createdBy: "owner@example.com" },
+  batch: { id: "b1", kind: "v1", brandId: "br1", productId: "p1", format: "static_4x5", state: "waiting_pick", truthVersion: 2, createdAt: at, updatedAt: at, createdBy: "owner@example.com" },
   picking: "open",
   brand: { id: "br1", name: "WonGi" },
   product: { id: "p1", name: "Seaweed crisps" },
@@ -87,6 +87,19 @@ describe("Pick board", () => {
     await userEvent.type(within(first).getByLabelText("Why draft 3, in your own words"), "calm");
     await userEvent.click(within(first).getByRole("button", { name: "Save the pick" }));
     await waitFor(() => expect(sent).toEqual([{ ideaId: "idea-1", imageId: "idea-1-d3", ownerSaid: "calm" }]));
+  });
+
+  it("shows an ad with words as it is delivered: the picture with the approved words, and the words as text", async () => {
+    const withWords = { ...draft("idea-1", 1), words: { image: { ...draft("idea-1", 1).image, id: "idea-1-t1", kind: "typeset" as const }, viewUrl: "https://pictures.example/typeset-1.jpg", checks: { imageId: "idea-1-t1", looked: true, items: [{ code: "F3" as const, note: "The subline sits close to the pack." }], savedAt: at } } };
+    const copy = { ideaId: "idea-1", headline: "ONCE YOU | START.", subline: "You cannot stop.", ownerSaid: "yes", version: 1, at, by: "owner@example.com" };
+    show(board({ batch: { ...board().batch, kind: "v2" }, ideas: [{ idea: idea(1), copy, drafts: [withWords, draft("idea-1", 2)], pick: null, rank: null, finals: [] }] }));
+    expect(await screen.findByText("ONCE YOU START.")).toBeInTheDocument();
+    expect(screen.getByText("You cannot stop.")).toBeInTheDocument();
+    expect(screen.getByText("Headline ad")).toBeInTheDocument();
+    expect(screen.getByAltText("Rock 1, draft 1")).toHaveAttribute("src", "https://pictures.example/typeset-1.jpg");
+    expect(screen.getAllByText("Words set")).toHaveLength(1);
+    // What was found in the picture with its words is shown beside it.
+    expect(screen.getByText("The subline sits close to the pack.")).toBeInTheDocument();
   });
 
   it("saves a pass on all three, and shows a saved pick in the owner's words", async () => {
