@@ -1103,7 +1103,7 @@ export interface Reference {
 export const OUTREACH_TIERS = ["20+", "5-19", "<5"] as const;
 export type OutreachTier = (typeof OUTREACH_TIERS)[number];
 
-export const OUTREACH_STAGES = ["new", "no_route", "needs_service_ad", "ad_waits", "ready", "contacted", "replied", "in_talks", "client", "lost", "parked", "opted_out"] as const;
+export const OUTREACH_STAGES = ["new", "no_route", "needs_service_ad", "pick_waits", "pick_made", "ad_waits", "ready", "contacted", "replied", "in_talks", "client", "lost", "parked", "opted_out"] as const;
 export type OutreachStage = (typeof OUTREACH_STAGES)[number];
 
 export type OutreachChannel = "whatsapp" | "email";
@@ -1160,6 +1160,8 @@ export interface OutreachAd {
   kind?: BatchKind;
   /** Set when the owner uploaded the picture from his computer. His upload is his yes. */
   from?: "owner";
+  /** Set when the ad is the final of the draft the owner picked on the prospect's page. His pick is his yes. */
+  picked?: true;
   /** Where the studio's own copy of the final sits in the private store. */
   key: string;
   /** One line from the agent: what the ad shows and why it fits the brand. */
@@ -1190,6 +1192,14 @@ export type OutreachEventBody =
   | { type: "stage"; stage: "in_talks" | "client" | "lost" | "parked" | "auto"; reason?: string }
   | { type: "ad_yes"; ad: number }
   | { type: "ad_no"; ad: number; ownerSaid: string }
+  /** The drafts of an outreach batch are ready for the owner's look on the prospect's page. */
+  | { type: "candidates"; batchId: string; /** How many drafts he can pick from. */ drafts: number }
+  /** The owner chose the draft to send. The agent then makes its final. */
+  | { type: "pick"; batchId: string; ideaId: string; imageId: string }
+  /** The owner wants none of the drafts of a batch. It counts as a no. */
+  | { type: "none"; batchId: string; ownerSaid: string }
+  /** The owner wants one draft with other words. The agent sets them and shows the drafts again. */
+  | { type: "words"; batchId: string; ideaId: string; imageId: string; ownerSaid: string }
   | { type: "reply"; reply: "more" | "no" | "other"; text?: string }
   | { type: "answered" }
   | { type: "optout" }
@@ -1267,6 +1277,8 @@ export interface TodayLine {
   messages?: [OutreachMessage, OutreachMessage];
   /** The reply that is owed an answer. */
   reply?: { text?: string; at: string };
+  /** How many drafts wait for the owner's pick on the prospect's page. */
+  drafts?: number;
 }
 
 export interface TodayPage {
@@ -1284,6 +1296,8 @@ export interface TodayPage {
   followUps: TodayLine[];
   firsts: TodayLine[];
   adsWaiting: TodayLine[];
+  /** The brands whose drafts wait for the owner's pick. */
+  picks: TodayLine[];
 }
 
 /** A count of prospects, also by spend tier and by the channel of the brand. */
@@ -1340,6 +1354,42 @@ export interface ProspectPage {
   message?: { step: OutreachStep; messages: [OutreachMessage, OutreachMessage] };
   /** A reply that waits for the owner's answer. */
   owed?: { text?: string; at: string };
+  /** Every draft made for the brand, for the owner's pick. Missing when no outreach batch has drafts. */
+  candidates?: OutreachCandidates;
+}
+
+/** One draft of an outreach batch as the owner sees it on the prospect's page. */
+export interface OutreachCandidate {
+  ideaId: string;
+  title: string;
+  /** The words on the picture (an ad with words). */
+  headline?: string;
+  subline?: string;
+  /** The draft's number within its idea. A name, not a rank. */
+  number: number;
+  /** The picture a pick names. */
+  imageId: string;
+  viewUrl: string;
+  /** Why this draft cannot be picked: a check it failed. */
+  blocked?: string;
+}
+
+/** Every draft the studio made for a prospect's newest outreach batch, and what the owner chose. */
+export interface OutreachCandidates {
+  batchId: string;
+  /** True when the pictures carry words and no full-size ad is made of them yet, so "other words" can be asked. */
+  words: boolean;
+  /** True when these drafts wait for his pick now, so "none of these" can be said. */
+  waits: boolean;
+  /** True when the agent owes him work on these drafts: the final of his pick, or the other words. */
+  agentOwes: boolean;
+  /** `open`: the owner can choose. `agent`: his choice is saved and the agent's work is owed. `closed`: the first message is sent, or the brand takes no ad. */
+  choosing: "open" | "agent" | "closed";
+  /** The draft he picked. */
+  picked?: { ideaId: string; imageId: string };
+  /** The words he asked for, not set yet. */
+  wordsAsked?: { imageId: string; ownerSaid: string };
+  drafts: OutreachCandidate[];
 }
 
 export interface TemplatesPage {
@@ -1368,7 +1418,7 @@ export interface BatchLine {
   chat?: true;
 }
 
-export const ATTENTION_KINDS = ["replies", "ads", "follow_ups", "firsts", "change_requests", "taste", "connections"] as const;
+export const ATTENTION_KINDS = ["replies", "ad_picks", "ads", "follow_ups", "firsts", "change_requests", "taste", "connections"] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 
 /** A group of things that wait for the owner outside the batches, with the page where he acts. */

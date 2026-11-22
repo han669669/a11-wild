@@ -1,6 +1,7 @@
 import { OWN_PICTURE_MAX_BYTES, OWN_PICTURE_TYPES, type OutreachEvent, type OwnPictureType, type ProspectPage } from "@a11-wild/shared";
 import { type FormEvent, useCallback, useState } from "react";
 import { useNavigate, useParams } from "react-router";
+import { Candidates } from "@/components/candidates";
 import { FIELD } from "@/components/canon-card";
 import { Loading, OutLink } from "@/components/loading";
 import { AdPicture, AdVerdict, BrandLine, CHANNELS, Failure, MessageCard, OutreachTabs, STAGES, STEPS, TAP, useWrite } from "@/components/outreach";
@@ -34,6 +35,12 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
   const newest = ads[0];
   const out = prospect.stage === "opted_out";
   const lastSend = sends.at(-1);
+  const picking = prospect.stage === "pick_waits";
+  const drafts = page.candidates ? (
+    <Section title={picking ? "Pick the ad to send" : "Every draft for this brand"} count={page.candidates.drafts.length}>
+      <Candidates id={prospect.id} brand={prospect.brand} candidates={page.candidates} done={done} />
+    </Section>
+  ) : null;
 
   return (
     <>
@@ -68,6 +75,8 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
         </Section>
       ) : null}
 
+      {picking ? drafts : null}
+
       {page.message && !out ? (
         <Section title="The message to send now">
           <Card>
@@ -79,7 +88,7 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
       <Section title="Ads" count={ads.length}>
         {out ? null : <OwnPicture id={prospect.id} done={done} />}
         {ads.length === 0 ? (
-          <Empty>No ad yet. The agent makes one, and it then waits here for your yes or no. Or upload your own above.</Empty>
+          <Empty>{page.candidates ? "No finished ad yet. The agent makes the full-size version of the draft you pick. Or upload your own above." : "No ad yet. The agent makes drafts, and you pick the one to send here. Or upload your own above."}</Empty>
         ) : (
           <ul className="grid gap-3">
             {ads.map((ad) => (
@@ -90,9 +99,10 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
                     <p className="flex flex-wrap items-center gap-2 text-caption text-muted-foreground">
                       Ad {ad.n} · {when(ad.at)}
                       {ad.from === "owner" ? <Badge color="blue">Your upload</Badge> : null}
-                      {ad.verdict ? <Badge color={ad.verdict === "yes" ? "green" : "gray"}>{ad.verdict === "yes" ? "You said yes" : "You said no"}</Badge> : null}
+                      {ad.verdict ? <Badge color={ad.verdict === "yes" ? "green" : "gray"}>{ad.verdict === "no" ? "You said no" : ad.picked ? "Your pick, full size" : "You said yes"}</Badge> : null}
                     </p>
                     {!ad.verdict && ad.n === newest?.n && !out ? <AdVerdict prospect={prospect} ad={ad} done={done} /> : null}
+                    {ad.picked && ad.verdict === "yes" && ad.n === newest?.n && !out && !sends.some((send) => send.at >= ad.at) ? <AdVerdict prospect={prospect} ad={ad} done={done} takeBack /> : null}
                     <a href={ad.downloadUrl} className="text-body underline underline-offset-4">
                       Save the picture
                     </a>
@@ -103,6 +113,8 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
           </ul>
         )}
       </Section>
+
+      {picking ? null : drafts}
 
       <Section title="How to reach it">
         <Card>
@@ -319,6 +331,10 @@ const SAID: { [K in OutreachEvent["type"]]: (event: Extract<OutreachEvent, { typ
   stage: (event) => (event.stage === "auto" ? "Stage set back to its own." : `Stage set to ${STAGES[event.stage].label}${event.reason ? `: ${event.reason}` : "."}`),
   ad_yes: (event) => `Yes to ad ${event.ad}.`,
   ad_no: (event) => `No to ad ${event.ad}: ${event.ownerSaid}`,
+  candidates: () => "The agent's drafts are ready for your pick.",
+  pick: () => "You picked the draft to send. The agent makes its full-size version.",
+  none: (event) => `None of the drafts: ${event.ownerSaid}`,
+  words: (event) => `Other words for one draft: ${event.ownerSaid}`,
   reply: (event) => `Reply: ${event.reply === "more" ? "they said more" : event.reply === "no" ? "they said no" : "another reply"}${event.text ? `. "${event.text}"` : "."}`,
   answered: () => "You answered the reply.",
   optout: () => "Opted out.",

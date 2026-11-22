@@ -12,6 +12,8 @@ export const STAGES: Record<OutreachStage, { label: string; color: "green" | "am
   new: { label: "New", color: "gray" },
   no_route: { label: "No route", color: "gray" },
   needs_service_ad: { label: "Needs a service ad", color: "gray" },
+  pick_waits: { label: "Pick an ad", color: "amber" },
+  pick_made: { label: "Waits for the agent", color: "gray" },
   ad_waits: { label: "Ad waits for you", color: "amber" },
   ready: { label: "Ready to send", color: "green" },
   contacted: { label: "Contacted", color: "green" },
@@ -108,7 +110,7 @@ export function Failure({ error }: { error: string | undefined }) {
 }
 
 /** The owner's yes or no to an ad. A no needs his words: the next ad is made from them. */
-export function AdVerdict({ prospect, ad, done }: { prospect: ProspectRow; ad: OutreachAdView; done: (page: ProspectPage) => void }) {
+export function AdVerdict({ prospect, ad, done, takeBack }: { prospect: ProspectRow; ad: OutreachAdView; done: (page: ProspectPage) => void; /** The full-size ad of his own pick: it has his yes, and he can only take that back. */ takeBack?: boolean }) {
   const { write, busy, error } = useWrite(prospect.id, done);
   const [no, setNo] = useState(false);
   const [said, setSaid] = useState("");
@@ -123,7 +125,7 @@ export function AdVerdict({ prospect, ad, done }: { prospect: ProspectRow; ad: O
       {no ? (
         <form onSubmit={sayNo} className="grid gap-3">
           <label className="grid gap-1.5 text-caption text-muted-foreground">
-            What is wrong with it, in your own words
+            {takeBack ? "What is wrong with the full-size version, in one line? You go back to the drafts." : "What is wrong with it, in your own words"}
             <input value={said} onChange={(event) => setSaid(event.target.value)} className={`${FIELD} text-foreground`} required />
           </label>
           <div className="flex flex-wrap gap-2">
@@ -135,6 +137,12 @@ export function AdVerdict({ prospect, ad, done }: { prospect: ProspectRow; ad: O
             </Button>
           </div>
         </form>
+      ) : takeBack ? (
+        <div>
+          <Button type="button" variant="secondary" className={TAP} onClick={() => setNo(true)}>
+            Not this after all
+          </Button>
+        </div>
       ) : (
         <div className="flex flex-wrap gap-2">
           <Button type="button" className={TAP} loading={busy === "ad"} onClick={() => write({ action: "ad", body: { ad: ad.n, yes: true } })}>

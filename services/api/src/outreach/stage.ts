@@ -14,12 +14,73 @@ function last<T extends OutreachEvent["type"]>(events: OutreachEvent[], type: T)
     .at(-1);
 }
 
-/** The owner's yes or no to one ad: the newest one counts. */
+/** The owner's yes or no to one ad: the newest one counts. The final of the draft he picked has his yes until he says no to it. */
 export function verdictOf(file: ProspectFile, ad: OutreachAd): EventOf<"ad_yes"> | EventOf<"ad_no"> | undefined {
-  return byTime(file.events)
+  const said = byTime(file.events)
     .filter((event): event is EventOf<"ad_yes"> | EventOf<"ad_no"> => (event.type === "ad_yes" || event.type === "ad_no") && event.ad === ad.n)
     .at(-1);
+  return said ?? (ad.picked ? { type: "ad_yes", ad: ad.n, id: `pick-${ad.n}`, at: ad.at, by: "owner" } : undefined);
 }
+
+type Choice = EventOf<"pick"> | EventOf<"none"> | EventOf<"words">;
+
+const choices = (file: ProspectFile, batchId?: string): Choice[] =>
+  byTime(file.events).filter((event): event is Choice => (event.type === "pick" || event.type === "none" || event.type === "words") && (batchId === undefined || event.batchId === batchId));
+
+/** The ad made of a pick: the ad of the pick's batch that was attached after it and before his next pick in that batch. */
+function adOfPick(file: ProspectFile, pick: EventOf<"pick">): OutreachAd | undefined {
+  const next = choices(file, pick.batchId).find((event) => event.type === "pick" && event.at > pick.at);
+  return [...file.ads].sort((a, b) => a.n - b.n).find((ad) => ad.batchId === pick.batchId && ad.at >= pick.at && (!next || ad.at < next.at));
+}
+
+/** The drafts of a batch whose full-size ad the owner refused: he does not pick those again. */
+export const refusedDrafts = (file: ProspectFile, batchId: string): Set<string> =>
+  new Set(
+    choices(file, batchId).flatMap((event) => {
+      if (event.type !== "pick") return [];
+      const ad = adOfPick(file, event);
+      return ad && verdictOf(file, ad)?.type === "ad_no" ? [event.imageId] : [];
+    }),
+  );
+
+/** True when the owner put his own picture on the page at or after a moment, and his yes on it stands. It answers the drafts in place of a pick. */
+const ownPictureSince = (file: ProspectFile, at: string): boolean => file.ads.some((ad) => ad.from === "owner" && ad.at >= at && verdictOf(file, ad)?.type === "ad_yes");
+
+/**
+ * The drafts that wait for the owner's pick: the newest ones shown, with no answer of his after them.
+ * A pick whose final he then refused is no answer any more: he chooses among the drafts again.
+ */
+export function candidatesWait(file: ProspectFile): EventOf<"candidates"> | undefined {
+  const shown = last(file.events, "candidates");
+  if (!shown) return undefined;
+  const answer = choices(file, shown.batchId).filter((event) => event.at >= shown.at).at(-1);
+  if (ownPictureSince(file, (answer ?? shown).at)) return undefined;
+  if (!answer) return shown;
+  if (answer.type !== "pick") return undefined;
+  const ad = adOfPick(file, answer);
+  return ad && verdictOf(file, ad)?.type === "ad_no" ? shown : undefined;
+}
+
+/**
+ * What the agent owes the owner after his choice: the final of the draft he picked, or the drafts again with the words he asked for.
+ * A pick is owed until an ad of its batch is attached after it; other words are owed until the drafts are shown again.
+ * This reads the timeline only. `owedNow` is the one to ask before any work: it knows a brand that takes no ad.
+ */
+export function owedByAgent(file: ProspectFile): EventOf<"pick"> | EventOf<"words"> | undefined {
+  const choice = choices(file).at(-1);
+  if (!choice || choice.type === "none") return undefined;
+  // His own picture after his choice wins: the agent makes nothing more for that choice.
+  if (ownPictureSince(file, choice.at)) return undefined;
+  if (choice.type === "pick") return adOfPick(file, choice) ? undefined : choice;
+  return file.events.some((event) => event.type === "candidates" && event.batchId === choice.batchId && event.at >= choice.at) ? undefined : choice;
+}
+
+/**
+ * Each no of the owner that uses up a try, oldest first: a no to an ad the agent chose, or to all the drafts of a batch.
+ * A no to the final of his own pick uses none: he goes back to the drafts.
+ */
+export const refusals = (file: ProspectFile): (EventOf<"ad_no"> | EventOf<"none">)[] =>
+  byTime(file.events).filter((event): event is EventOf<"ad_no"> | EventOf<"none"> => event.type === "none" || (event.type === "ad_no" && !file.ads.find((ad) => ad.n === event.ad)?.picked));
 
 export const newestAd = (file: ProspectFile): OutreachAd | undefined => [...file.ads].sort((a, b) => a.n - b.n).at(-1);
 
@@ -75,11 +136,21 @@ export function stageOf(file: ProspectFile, optOuts: ReadonlySet<string>): Outre
   if (last(file.events, "kind")?.kind === "service" && ad?.from !== "owner") return "needs_service_ad";
   if (!hasRoute(file.profile)) return "no_route";
   const verdict = ad && verdictOf(file, ad);
+  // His own picture is ready to send whatever the drafts wait for.
+  if (ad?.from === "owner" && verdict?.type === "ad_yes") return "ready";
+  if (owedByAgent(file)) return "pick_made";
   if (ad && !verdict) return "ad_waits";
+  if (candidatesWait(file)) return "pick_waits";
   if (verdict?.type === "ad_yes") return "ready";
-  if (file.events.filter((event) => event.type === "ad_no").length >= AD_TRIES) return "parked";
+  if (refusals(file).length >= AD_TRIES) return "parked";
   return "new";
 }
+
+/** The stages at which a brand takes no ad: nothing is chosen for it and nothing is made. */
+export const TAKES_NO_AD: readonly OutreachStage[] = ["opted_out", "lost", "parked", "no_route", "needs_service_ad"];
+
+/** What the agent owes the owner now. Nothing for a brand that takes no ad: he parked it, lost it, or it opted out after his choice. */
+export const owedNow = (file: ProspectFile, optOuts: ReadonlySet<string>): EventOf<"pick"> | EventOf<"words"> | undefined => (TAKES_NO_AD.includes(stageOf(file, optOuts)) ? undefined : owedByAgent(file));
 
 /**
  * Why the agent should make an ad for this prospect now, or nothing when it should not:
@@ -87,7 +158,7 @@ export function stageOf(file: ProspectFile, optOuts: ReadonlySet<string>): Outre
  */
 export function wantsAd(file: ProspectFile, optOuts: ReadonlySet<string>): { why: "more" | "first" | "again"; ownerSaid?: string } | undefined {
   const stage = stageOf(file, optOuts);
-  if (adWaits(file)) return undefined;
+  if (adWaits(file) || candidatesWait(file) || owedByAgent(file)) return undefined;
   const more = byTime(file.events)
     .filter((event): event is EventOf<"reply"> => event.type === "reply" && event.reply === "more")
     .at(-1);
@@ -95,12 +166,13 @@ export function wantsAd(file: ProspectFile, optOuts: ReadonlySet<string>): { why
     // One more ad for each "more", and a second try when the owner said no to it.
     const since = file.ads.filter((ad) => ad.at > more.at);
     const refused = since.filter((ad) => verdictOf(file, ad)?.type === "ad_no");
-    if (since.length - refused.length > 0 || refused.length >= AD_TRIES) return undefined;
-    const no = refused.at(-1) && verdictOf(file, refused.at(-1)!);
-    return { why: "more", ...(no?.type === "ad_no" ? { ownerSaid: no.ownerSaid } : {}) };
+    const tries = refusals(file).filter((no) => no.at > more.at);
+    if (since.length - refused.length > 0 || tries.length >= AD_TRIES) return undefined;
+    const no = tries.at(-1);
+    return { why: "more", ...(no ? { ownerSaid: no.ownerSaid } : {}) };
   }
   if (stage !== "new") return undefined;
-  const no = last(file.events, "ad_no");
+  const no = refusals(file).at(-1);
   return no ? { why: "again", ownerSaid: no.ownerSaid } : { why: "first" };
 }
 
