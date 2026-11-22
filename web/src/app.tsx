@@ -12,6 +12,8 @@ import { Concepts } from "@/routes/concepts";
 import { Connections } from "@/routes/connections";
 import { Home } from "@/routes/home";
 import { Outreach } from "@/routes/outreach";
+import { Client } from "@/routes/client";
+import { Clients } from "@/routes/clients";
 import { Pack } from "@/routes/pack";
 import { Packs } from "@/routes/packs";
 import { Prospect } from "@/routes/prospect";
@@ -28,6 +30,7 @@ export function App() {
   return (
     <Routes>
       <Route path="c/:token" element={<Pack />} />
+      <Route path="client/:token" element={<Client />} />
       <Route path="*" element={<Dashboard />} />
     </Routes>
   );
@@ -66,6 +69,7 @@ function Dashboard() {
           <Route path="outreach/messages" element={<Templates />} />
           <Route path="taste" element={<Taste />} />
           <Route path="packs" element={<Packs />} />
+          <Route path="clients" element={<Clients />} />
           <Route path="calibration" element={<Calibration />} />
           <Route path="spend" element={<Spend />} />
           <Route path="connections" element={<Connections />} />

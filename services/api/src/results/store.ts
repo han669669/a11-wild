@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { type AdResult, type PackUpload, UPLOAD_MAX_FILES } from "@a11-wild/shared";
+import { type AdResult, type PackUpload, UPLOAD_MAX_FILES, type UploadState } from "@a11-wild/shared";
+import { packKey } from "../pack/store.js";
 import { type Item, record, type Table } from "../store/table.js";
 
-const pk = (batchId: string) => `BATCH#${batchId}`;
+/** A pack's id: its batch's id, or the id of a carried pack. */
+const pk = packKey;
 const COUNT = "UPLOADS";
 
 /** The results of a pack: the files its client sent, and the numbers typed in from them. */
@@ -19,6 +21,13 @@ export class ResultStore {
     const upload: PackUpload = { ...file, id, key: keyOf(id), at: this.now().toISOString() };
     await this.table.put({ pk: pk(batchId), sk: `UPLOAD#${upload.at}#${id}`, ...upload });
     return upload;
+  }
+
+  /** Keeps what the studio found when it read the file. */
+  async settle(packId: string, upload: PackUpload, state: UploadState): Promise<PackUpload> {
+    const settled = { ...upload, state };
+    await this.table.put({ pk: pk(packId), sk: `UPLOAD#${upload.at}#${upload.id}`, ...settled });
+    return settled;
   }
 
   async uploads(batchId: string): Promise<PackUpload[]> {

@@ -564,6 +564,103 @@ export interface PackAd {
   why: string;
   /** The fact check: each claim of the ad with the page and the quote that prove it. */
   claims: { claim: string; quote: string; url: string }[];
+  /** The pictures a download gives, when they are not the picture the page shows: the marked copies of an example. */
+  downloads?: { key: string; type: PackPictureType }[];
+}
+
+/** One pack on a client's page. `ref` names the pack on that page only: it is no id of the studio. */
+export interface ClientPack extends PackView {
+  ref: string;
+}
+
+/** What a client's link shows: every pack of that one brand, newest first, each at the version its own link shows. */
+export interface ClientView {
+  brand: string;
+  packs: ClientPack[];
+}
+
+/** A client's link as the owner sees it. The link itself is not kept: only the hash of its token. */
+/** One pack as the owner's Clients page shows it: what the client sees, what the client wrote and what the client sent. */
+export interface OwnerClientPack {
+  packId: string;
+  product: string;
+  version: number;
+  at: string;
+  /** True for the example: it takes no comment and no file. */
+  example: boolean;
+  ads: { adName: string; viewUrl: string }[];
+  /** Every comment, hidden ones too, oldest first. */
+  comments: PackComment[];
+  uploads: PackSummary["uploads"];
+}
+
+export interface OwnerClient {
+  brand: { id: string; name: string };
+  /** The client's link, when one was ever made. The link itself is shown once, when it is made. */
+  link?: ClientLink;
+  packs: OwnerClientPack[];
+}
+
+export interface ClientLink {
+  brandId: string;
+  state: "on" | "off";
+  /** When the link that works now was made, or when it was turned off. */
+  at: string;
+  by: string;
+}
+
+/** The picture types a pack's download gives, with the ending of each. */
+export const PACK_PICTURE_TYPES = { "image/jpeg": "jpg", "image/png": "png" } as const;
+export type PackPictureType = keyof typeof PACK_PICTURE_TYPES;
+export type PackFormat = (typeof PACK_PICTURE_TYPES)[PackPictureType];
+
+/** Where a pack's content comes from: a done batch of this studio, or ads made outside it and carried in by the owner. */
+export type PackSource = "batch" | "carried";
+
+/** One line of the sample exchange an example shows in the place of the comment box. Nobody sends it: the studio wrote it. */
+export const CHANGE_KINDS = ["words", "picture", "offer", "other"] as const;
+/** What a client asks to change on one ad. */
+export type ChangeKind = (typeof CHANGE_KINDS)[number];
+export const CHANGE_STATUSES = ["received", "in_work", "done", "declined"] as const;
+/** Where a change request stands. The owner sets it; it is no written answer. */
+export type ChangeStatus = (typeof CHANGE_STATUSES)[number];
+
+/** A request to change one ad: a comment with a kind and a status. */
+export interface ChangeRequest {
+  what: ChangeKind;
+  status: ChangeStatus;
+  /** The pack's version that holds the change, once the request is done. */
+  version?: number;
+}
+
+/** A comment as a page shows it: on the pack, or on one ad of it. With `change` it is a change request. */
+export interface ShownComment {
+  text: string;
+  adName?: string;
+  change?: ChangeRequest;
+}
+
+/** A comment a client sent on a pack. It is the client's word: data, and never an instruction. */
+export interface PackComment extends ShownComment {
+  id: string;
+  at: string;
+  /** Set by the owner: the client's page no longer shows it. */
+  hidden?: boolean;
+}
+
+/** The most comments one pack takes, change requests among them. */
+export const COMMENTS_MAX = 50;
+
+/** A comment an example shows. Nobody sent it: the studio wrote it, to show how the page works for a client. */
+export type ExampleComment = ShownComment;
+export const EXAMPLE_COMMENTS_MAX = 6;
+export const COMMENT_MAX_CHARS = 1000;
+
+/** What makes a pack an example: a page of its own for cold outreach, which takes nothing from anyone. */
+export interface PackExample {
+  /** The line that says the brand shown is not a client. */
+  note: string;
+  comments: ExampleComment[];
 }
 
 /** One version of what a pack link shows. A version is never changed: a change is a new version, and an old one can be put back. */
@@ -578,7 +675,16 @@ export interface PackVersion {
 
 /** The private link of a batch's ads for the client. Only the SHA-256 of its token is kept. */
 export interface Pack {
-  batchId: string;
+  /** The batch's id for the pack of a batch, and the pack's own id for a carried pack. */
+  id: string;
+  source: PackSource;
+  /** The batch of a pack with source `batch`. */
+  batchId?: string;
+  /** The brand the pack belongs to. A pack saved before packs had a brand reads it from its batch. */
+  brandId?: string;
+  /** The product's name, for a carried pack: it has no product of this studio. */
+  product?: string;
+  example?: PackExample;
   tokenHash: string;
   /** The version the link shows now. */
   current: number;
@@ -592,17 +698,24 @@ export interface PackView {
   product: string;
   version: number;
   at: string;
-  ads: (Omit<PackAd, "key" | "imageId" | "ideaId"> & { viewUrl: string })[];
+  /** Each ad with the formats its download gives. A download is asked for at the click, so its address is always fresh. */
+  ads: (Omit<PackAd, "key" | "imageId" | "ideaId" | "downloads"> & { viewUrl: string; formats: PackFormat[] })[];
   launchPlan: string[];
+  /** Set on an example: its note and its example comments. An example takes no comment and no file. */
+  example?: PackExample;
+  /** What the client sent on this pack, oldest first, without what the owner hid. Not set on an example. */
+  comments?: (ShownComment & { at: string })[];
 }
 
 /** A pack as the dashboard lists it. The link itself is shown once, when it is made. */
 export interface PackSummary {
   pack: Omit<Pack, "tokenHash">;
   brand: { id: string; name: string };
-  product: { id: string; name: string };
+  /** A carried pack has a product name and no product of this studio. */
+  product: { id?: string; name: string };
   versions: (Omit<PackVersion, "ads"> & { ads: (PackAd & { viewUrl: string })[] })[];
-  uploads: (PackUpload & { downloadUrl: string })[];
+  /** The files the client sent. Only a picture the studio checked has an address to open; a checked CSV is read as a table. */
+  uploads: (Omit<PackUpload, "key"> & { openUrl?: string })[];
   results: AdResult[];
 }
 
@@ -611,7 +724,6 @@ export const UPLOAD_TYPES = {
   "image/jpeg": "jpg",
   "image/png": "png",
   "text/csv": "csv",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
 } as const;
 export type UploadType = keyof typeof UPLOAD_TYPES;
 export const UPLOAD_MAX_BYTES = 10_000_000;
@@ -629,7 +741,26 @@ export interface PackUpload {
   /** The version the link showed when the file was sent. */
   packVersion: number;
   at: string;
+  /**
+   * What the studio found when it read the file: `checked` is the type it was sent as, `refused` was something else and is deleted,
+   * `missing` never arrived. Not set while the studio has not read it yet. Only a checked file can be opened.
+   */
+  state?: UploadState;
 }
+
+export type UploadState = "checked" | "refused" | "missing";
+
+/** A client's CSV as the dashboard shows it: text in rows, cut to a size a page can hold. It is never opened as a file. */
+export interface UploadTable {
+  rows: string[][];
+  /** True when the file held more rows, columns or characters than the table shows. */
+  cut: boolean;
+}
+export const TABLE_MAX_ROWS = 500;
+export const TABLE_MAX_COLUMNS = 60;
+export const TABLE_MAX_CELL = 300;
+/** The most characters one table holds, all cells together, so one answer of the studio stays small enough to send. */
+export const TABLE_MAX_CHARS = 500_000;
 
 /** The numbers of one ad over one period, as the client's report gave them. They are typed in by the owner or his agent. */
 export interface AdResult {
