@@ -262,23 +262,43 @@ describe("the owner's pick on the prospect page", () => {
     const [first] = await screen.findAllByRole("button", { name: /^Draft \d of/ });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await userEvent.click(first!);
-    const viewer = within(screen.getByRole("dialog", { name: "Picture, large" }));
-    expect(viewer.getByText("1 of 4")).toBeInTheDocument();
+    const viewer = within(screen.getByRole("dialog", { name: "Picture 1 of 4, large" }));
+    expect(viewer.getByText("1 / 4")).toBeInTheDocument();
     expect(viewer.getByRole("img", { name: 'Draft 1 of "One fork tap and it crumbles." for Koi Tea' })).toHaveAttribute("src", "https://pictures.example/idea-1-1.jpg");
-    expect(viewer.getByText("Baked this morning in Katong.")).toBeInTheDocument();
+    // The first picture has nothing before it, and the last nothing after: the row does not go round.
+    expect(viewer.queryByRole("button", { name: "Previous picture" })).not.toBeInTheDocument();
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(viewer.getByText("1 / 4")).toBeInTheDocument();
     await userEvent.keyboard("{ArrowRight}{ArrowRight}");
-    expect(viewer.getByText("3 of 4")).toBeInTheDocument();
-    // Large, the note is given in full, with whose call it is.
-    expect(viewer.getByText("The agent saw: The box is too tall. It is your call.")).toBeInTheDocument();
+    expect(viewer.getByText("3 / 4")).toBeInTheDocument();
+    // Large, what the checks found is one line above the one button.
+    expect(viewer.getByText("The checks found: The agent saw: The box is too tall.")).toBeInTheDocument();
     expect(viewer.getByRole("button", { name: "Pick this one" })).toBeInTheDocument();
     await userEvent.click(viewer.getByRole("button", { name: "Next picture" }));
+    expect(viewer.getByText("4 / 4")).toBeInTheDocument();
     expect(viewer.getByText("Not ready to pick: Its words are not set yet.")).toBeInTheDocument();
-    await userEvent.click(viewer.getByRole("button", { name: "Next picture" }));
-    expect(viewer.getByText("1 of 4")).toBeInTheDocument();
-    await userEvent.keyboard("{ArrowLeft}");
-    expect(viewer.getByText("4 of 4")).toBeInTheDocument();
+    expect(viewer.queryByRole("button", { name: "Pick this one" })).not.toBeInTheDocument();
+    expect(viewer.queryByRole("button", { name: "Next picture" })).not.toBeInTheDocument();
     await userEvent.click(viewer.getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("img", { name: /^Draft \d of/ })).toHaveLength(4);
+  });
+
+  it("closes at the first Close also after the page took an earlier large picture away", async () => {
+    stubApi({ [GET]: () => ({ body: waiting() }) });
+    open();
+    const drafts = await screen.findAllByRole("button", { name: /^Draft \d of/ });
+    await userEvent.click(drafts[2]!);
+    // "Other words" takes the large picture away itself, with no Close and no Back of the reader.
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Other words" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    // Its step in the history is given back, so a later Back does not open nothing.
+    await waitFor(() => expect((window.history.state as { viewer?: boolean } | null)?.viewer).toBeUndefined());
+    await userEvent.click(drafts[0]!);
+    // The second large picture has a step of its own, so the browser's Back closes it too.
+    expect((window.history.state as { viewer?: boolean } | null)?.viewer).toBe(true);
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(screen.getAllByRole("img", { name: /^Draft \d of/ })).toHaveLength(4);
   });
 
