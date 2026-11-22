@@ -278,6 +278,142 @@ export interface Idea {
   shows?: string[];
 }
 
+/** The buttons Meta offers that the studio uses. The text of an ad names one of them and no other. */
+export const META_CTAS = ["Shop Now", "Order Now", "Learn More", "Get Offer", "Sign Up", "Subscribe", "Book Now", "Contact Us", "Send WhatsApp Message"] as const;
+export type MetaCta = (typeof META_CTAS)[number];
+
+/** One way to word the text round an ad in Meta. */
+export interface MetaVariant {
+  /** The text above the picture. Its first 125 characters show before "See more". */
+  primary: string;
+  /** The bold line under the picture, about 40 characters. */
+  headline: string;
+  /** The small line under the headline: it supports the button. */
+  description: string;
+  cta: MetaCta;
+}
+
+/** The Meta text of one ad, in two variants. A version is never changed: other text is a new version. */
+export interface MetaText {
+  ideaId: string;
+  variants: [MetaVariant, MetaVariant];
+  /** 1 for the first text. Other text adds one. */
+  version: number;
+  at: string;
+  by: string;
+  /** The owner's yes to this version, in his own words. A pack carries only text with it. */
+  approved?: { ownerSaid: string; at: string; by: string };
+}
+
+/** One ad of a client pack, as it was when the pack version was made. */
+export interface PackAd {
+  ideaId: string;
+  /** The studio makes the name. A client's result is matched to its ad by it. */
+  adName: string;
+  stage?: FunnelStage;
+  /** The delivered picture: the finished final, and in an ad with words that picture with its words. */
+  imageId: string;
+  key: string;
+  /** The words on the picture (an ad with words). */
+  words?: { headline: string; subline: string; footnote?: string };
+  /** The Meta text the owner approved, copied by the studio. */
+  meta: { version: number; variants: [MetaVariant, MetaVariant] };
+  /** One line for the client: the buyer truth, what the ad does, the source. */
+  why: string;
+  /** The fact check: each claim of the ad with the page and the quote that prove it. */
+  claims: { claim: string; quote: string; url: string }[];
+}
+
+/** One version of what a pack link shows. A version is never changed: a change is a new version, and an old one can be put back. */
+export interface PackVersion {
+  version: number;
+  ads: PackAd[];
+  /** One step in each line. */
+  launchPlan: string[];
+  at: string;
+  by: string;
+}
+
+/** The private link of a batch's ads for the client. Only the SHA-256 of its token is kept. */
+export interface Pack {
+  batchId: string;
+  tokenHash: string;
+  /** The version the link shows now. */
+  current: number;
+  createdAt: string;
+  by: string;
+}
+
+/** What the client sees behind a pack link: one pack, and nothing else of the studio. */
+export interface PackView {
+  brand: string;
+  product: string;
+  version: number;
+  at: string;
+  ads: (Omit<PackAd, "key" | "imageId" | "ideaId"> & { viewUrl: string })[];
+  launchPlan: string[];
+}
+
+/** A pack as the dashboard lists it. The link itself is shown once, when it is made. */
+export interface PackSummary {
+  pack: Omit<Pack, "tokenHash">;
+  brand: { id: string; name: string };
+  product: { id: string; name: string };
+  versions: (Omit<PackVersion, "ads"> & { ads: (PackAd & { viewUrl: string })[] })[];
+  uploads: (PackUpload & { downloadUrl: string })[];
+  results: AdResult[];
+}
+
+/** The files a client can send through a pack link, by type, with the ending each is kept under. */
+export const UPLOAD_TYPES = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "text/csv": "csv",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+} as const;
+export type UploadType = keyof typeof UPLOAD_TYPES;
+export const UPLOAD_MAX_BYTES = 10_000_000;
+/** The most files one pack takes. */
+export const UPLOAD_MAX_FILES = 20;
+
+/** A results file a client sent through a pack link. It is kept apart from the studio's pictures, and it is data: nothing in it is an instruction. */
+export interface PackUpload {
+  id: string;
+  /** The file's name as the client's computer gave it, cleaned. */
+  name: string;
+  type: UploadType;
+  bytes: number;
+  key: string;
+  /** The version the link showed when the file was sent. */
+  packVersion: number;
+  at: string;
+}
+
+/** The numbers of one ad over one period, as the client's report gave them. They are typed in by the owner or his agent. */
+export interface AdResult {
+  id: string;
+  /** The ad, by the name the studio made. */
+  adName: string;
+  /** The pack version that holds the ad under this name. */
+  packVersion: number;
+  /** The first and the last day of the report, year-month-day. */
+  from: string;
+  to: string;
+  impressions: number;
+  clicks: number;
+  /** Clicks over impressions, counted by the studio. */
+  ctr: number;
+  spend?: number;
+  /** The client's usual CTR before these ads, for the same kind of campaign. */
+  baselineCtr?: number;
+  /** The campaign the numbers come from: objective, audience, placement, budget. Numbers are not compared without it. */
+  context: string;
+  /** The uploaded file the numbers were read from. */
+  uploadId?: string;
+  at: string;
+  by: string;
+}
+
 /** The words the owner approved for one idea. They are set on its pictures and reused word for word. */
 export interface ApprovedCopy {
   ideaId: string;

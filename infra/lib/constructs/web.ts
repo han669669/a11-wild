@@ -20,7 +20,8 @@ const contentSecurityPolicy = (picturesDomainName: string) =>
     "style-src 'self' 'unsafe-inline'",
     `img-src 'self' data: blob: https://${picturesDomainName}`,
     "font-src 'self'",
-    "connect-src 'self'",
+    // The pack page sends a client's results file to a signed link of the picture store.
+    `connect-src 'self' https://${picturesDomainName}`,
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -62,6 +63,8 @@ export class Web extends Construct {
         referrerPolicy: { referrerPolicy: cloudfront.HeadersReferrerPolicy.NO_REFERRER, override: true },
         contentSecurityPolicy: { contentSecurityPolicy: contentSecurityPolicy(props.picturesDomainName), override: true },
       },
+      // Nothing here is for a search engine: the dashboard is private, and a client's pack page is opened by its link alone.
+      customHeadersBehavior: { customHeaders: [{ header: "X-Robots-Tag", value: "noindex, nofollow", override: true }] },
     });
 
     // Dashboard routes such as /connections have no file; they all load index.html.
