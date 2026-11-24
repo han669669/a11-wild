@@ -6,16 +6,45 @@ import { toMicro } from "../spend/money.js";
 
 const BASE = "https://api.parallel.ai";
 
-/** Parallel's list prices in US dollars for one request, read from its pricing page on 22-11-2026. */
+/** Parallel's list prices in US dollars for one request, read from its pricing page on 24-11-2026. */
 export const PRICES = {
   extractUrl: 0.001,
   search: { fast: 0.001, advanced: 0.005 },
+  /** Each result a search asks for beyond the first ten. */
+  searchExtraResult: 0.001,
   images: { fast: 0.001, advanced: 0.005 },
   task: { lite: 0.005, base: 0.01, core: 0.025, pro: 0.1 },
+  decisions: 0.001,
+  shopping: 0.005,
+  places: { fast: 0.001, advanced: 0.005 },
+  /** One request, with up to 100 results. */
+  entitySearch: 0.005,
+  /** One run, and each match it finds. `pro` (US$10 a run) is left out: it is over a batch's cap. */
+  findAll: { preview: { run: 0.1, match: 0 }, base: { run: 0.25, match: 0.03 }, core: { run: 2, match: 0.15 } },
+  /** One execution of a monitor. */
+  monitor: { lite: 0.003, base: 0.01 },
 } as const;
 
 export type SearchMode = keyof typeof PRICES.search;
 export type TaskProcessor = keyof typeof PRICES.task;
+export type FindAllGenerator = keyof typeof PRICES.findAll;
+export type MonitorProcessor = keyof typeof PRICES.monitor;
+export type EntityType = "companies" | "people";
+
+/** The hours between two executions of a monitor. */
+export const MONITOR_HOURS = { "1h": 1, "6h": 6, "12h": 12, "1d": 24, "7d": 168 } as const;
+export type MonitorFrequency = keyof typeof MONITOR_HOURS;
+
+/**
+ * The executions a monitor of this life can run: the one at its start, and one for each interval.
+ * One more day is counted, because the daily job that cancels it can come up to a day after its end.
+ */
+export const monitorExecutions = (frequency: MonitorFrequency, days: number): number => 1 + Math.ceil(((days + 1) * 24) / MONITOR_HOURS[frequency]);
+
+export const findAllUsd = (generator: FindAllGenerator, matchLimit: number): number => {
+  const price = PRICES.findAll[generator];
+  return Math.round((price.run + price.match * matchLimit) * 1e6) / 1e6;
+};
 
 /** Parallel did not give a usable answer and the outcome is not known, so the call stays counted. */
 export class ProviderError extends Refusal {}
@@ -49,8 +78,100 @@ export interface TaskRun {
   basis?: unknown;
 }
 
+/** One named field of a research answer. */
+export interface TaskField {
+  name: string;
+  description: string;
+}
+
+export interface SearchFilters {
+  /** From 10 to 20. Each result over ten has its own price. */
+  maxResults?: number;
+  /** Only pages published on or after this day, as YYYY-MM-DD. */
+  afterDate?: string;
+  includeDomains?: string[];
+  excludeDomains?: string[];
+}
+
+export interface DecisionQuestion {
+  name: string;
+  type: "noul" | "choice" | "score";
+  instructions: string;
+  /** noul: optional `true` and `false`. choice: its options. score: its levels, lowest first. */
+  criteria?: Record<string, string>;
+}
+
+export interface Decisions {
+  /** By the question's name. noul: a probability from 0 to 1. A refusal has only its type. */
+  answers: Record<string, unknown>;
+  /** The pages behind the whole call. */
+  citations: { url: string; title: string | null; excerpts: string[] }[];
+}
+
+export interface ShopResult {
+  url: string;
+  title: string | null;
+  merchant: string | null;
+  brand: string | null;
+  description: string | null;
+  price: number | null;
+  currency: string | null;
+  originalPrice: number | null;
+  rating: number | null;
+  reviewCount: number | null;
+  imageUrl: string | null;
+  condition: string | null;
+  availability: string | null;
+}
+
+export interface PlaceResult {
+  name: string;
+  url: string | null;
+  address: string | null;
+  phone: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  rating: string | null;
+  description: string | null;
+  openNow: boolean | null;
+}
+
+export interface Entity {
+  name: string;
+  url: string | null;
+  description: string | null;
+}
+
+export interface FindAllPlan {
+  objective: string;
+  entityType: string;
+  conditions: { name: string; description: string }[];
+  /** The generator Parallel suggests. */
+  generator: string | null;
+}
+
+export interface FindAllRun {
+  findAllId: string;
+  status: string;
+  active: boolean;
+  generated: number;
+  matched: number;
+  /** Why a finished run ended. */
+  ended?: string;
+  /** Present when the result was read. */
+  candidates?: { name: string; url: string | null; description: string | null; match: string; output: unknown; basis: unknown }[];
+}
+
+export interface Monitor {
+  monitorId: string;
+  status: string;
+}
+
 const str = (value: unknown): string | null => (typeof value === "string" && value ? value : null);
 const num = (value: unknown): number | null => (typeof value === "number" ? value : null);
+const numeric = (value: unknown): number | null => (typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value)) ? Number(value) : null);
+const record = (value: unknown): Record<string, unknown> => (typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {});
+const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
 const list = (value: unknown): Record<string, unknown>[] =>
   Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null) : [];
 
@@ -133,13 +254,21 @@ export class ParallelClient {
     });
   }
 
-  async search(input: { objective: string; queries: string[]; mode?: SearchMode; batchId?: string }): Promise<SearchResult[]> {
+  async search(input: { objective: string; queries: string[]; mode?: SearchMode; batchId?: string } & SearchFilters): Promise<SearchResult[]> {
     const mode = input.mode ?? "fast";
-    return this.paid("search", input.objective, PRICES.search[mode], input.batchId, async () => {
+    const policy = {
+      ...(input.includeDomains?.length ? { include_domains: input.includeDomains } : {}),
+      ...(input.excludeDomains?.length ? { exclude_domains: input.excludeDomains } : {}),
+      ...(input.afterDate ? { after_date: input.afterDate } : {}),
+    };
+    const settings = { ...(input.maxResults ? { max_results: input.maxResults } : {}), ...(Object.keys(policy).length > 0 ? { source_policy: policy } : {}) };
+    const usd = PRICES.search[mode] + PRICES.searchExtraResult * Math.max(0, (input.maxResults ?? 10) - 10);
+    return this.paid("search", input.objective, usd, input.batchId, async () => {
       const reply = await this.send("search", "POST", "/v1/search", {
         objective: input.objective,
         search_queries: input.queries,
         mode,
+        ...(Object.keys(settings).length > 0 ? { advanced_settings: settings } : {}),
       });
       return list(reply.results).flatMap((result): SearchResult[] => {
         const url = str(result.url);
@@ -167,12 +296,24 @@ export class ParallelClient {
   }
 
   /** Starts a research run. Parallel charges one run; reading its result later is free. */
-  async taskStart(input: { question: string; processor: TaskProcessor; batchId?: string }): Promise<TaskRun> {
+  async taskStart(input: { question: string; processor: TaskProcessor; fields?: TaskField[]; batchId?: string }): Promise<TaskRun> {
+    // With fields, the answer comes as one named value for each field, each with its own sources.
+    const schema = input.fields?.length
+      ? {
+          type: "json",
+          json_schema: {
+            type: "object",
+            properties: Object.fromEntries(input.fields.map((field) => [field.name, { type: "string", description: field.description }])),
+            required: input.fields.map((field) => field.name),
+            additionalProperties: false,
+          },
+        }
+      : { type: "text" };
     return this.paid("task", input.question, PRICES.task[input.processor], input.batchId, async () => {
       const reply = await this.send("task", "POST", "/v1/tasks/runs", {
         input: input.question,
         processor: input.processor,
-        task_spec: { output_schema: { type: "text" } },
+        task_spec: { output_schema: schema },
       });
       const runId = str(reply.run_id);
       if (!runId) throw new ProviderError("Parallel started no research run. It stays counted in the ledger.");
@@ -189,5 +330,215 @@ export class ParallelClient {
     const reply = await this.send("task result", "GET", `/v1/tasks/runs/${id}/result`);
     const output = (reply.output ?? {}) as Record<string, unknown>;
     return { runId, status, output: output.content, basis: output.basis };
+  }
+
+  /** Answers typed questions from current web pages: a yes or no as a probability, a choice or a score. */
+  async decide(input: { state: Record<string, unknown>; questions: DecisionQuestion[]; batchId?: string }): Promise<Decisions> {
+    return this.paid("decisions", input.questions[0]?.instructions ?? "", PRICES.decisions, input.batchId, async () => {
+      const reply = await this.send("decisions", "POST", "/v1/decisions", {
+        state: input.state,
+        questions: Object.fromEntries(
+          input.questions.map((question) => [question.name, { type: question.type, instructions: question.instructions, ...(question.criteria ? { criteria: question.criteria } : {}) }]),
+        ),
+      });
+      const citations = list(reply.citations).flatMap((citation) => {
+        const url = str(citation.url);
+        return url ? [{ url, title: str(citation.title), excerpts: strings(citation.excerpts) }] : [];
+      });
+      return { answers: record(reply.answers), citations };
+    });
+  }
+
+  /** Products a shopper can buy, each at one store, with its price in the market's currency. */
+  async shopping(input: {
+    queries: string[];
+    objective?: string;
+    market: string;
+    minPrice?: number;
+    maxPrice?: number;
+    condition?: "new" | "used" | "refurbished" | "any";
+    maxResults?: number;
+    batchId?: string;
+  }): Promise<ShopResult[]> {
+    return this.paid("shopping", input.queries[0] ?? "", PRICES.shopping, input.batchId, async () => {
+      const reply = await this.send("shopping", "POST", "/v1/shopping/search", {
+        search_queries: input.queries,
+        ...(input.objective ? { objective: input.objective } : {}),
+        ...(input.minPrice === undefined ? {} : { min_price: input.minPrice }),
+        ...(input.maxPrice === undefined ? {} : { max_price: input.maxPrice }),
+        ...(input.condition ? { condition: input.condition } : {}),
+        advanced_settings: { location: input.market, ...(input.maxResults ? { max_results: input.maxResults } : {}) },
+      });
+      return list(reply.results).flatMap((result): ShopResult[] => {
+        const url = str(result.url);
+        if (!url) return [];
+        return [
+          {
+            url,
+            title: str(result.title),
+            merchant: str(result.merchant),
+            brand: str(result.brand),
+            description: str(result.description),
+            price: numeric(result.price),
+            currency: str(result.currency),
+            originalPrice: numeric(result.original_price),
+            rating: numeric(result.rating),
+            reviewCount: numeric(result.review_count),
+            imageUrl: str(result.image_url),
+            condition: str(result.condition),
+            availability: str(result.availability),
+          },
+        ];
+      });
+    });
+  }
+
+  /** Places such as a brand's outlets, near one location. */
+  async places(input: { query: string; location: string; mode?: keyof typeof PRICES.places; maxResults?: number; openNow?: boolean; batchId?: string }): Promise<PlaceResult[]> {
+    const mode = input.mode ?? "fast";
+    return this.paid("places", input.query, PRICES.places[mode], input.batchId, async () => {
+      const reply = await this.send("places", "POST", "/v1/places/search", {
+        query: input.query,
+        location: input.location,
+        mode,
+        ...(input.openNow ? { open_now: true } : {}),
+        ...(input.maxResults ? { advanced_settings: { max_results: input.maxResults } } : {}),
+      });
+      return list(reply.results).flatMap((result): PlaceResult[] => {
+        const name = str(result.name);
+        if (!name) return [];
+        return [
+          {
+            name,
+            url: str(result.url),
+            address: str(result.address),
+            phone: str(result.phone),
+            latitude: num(result.latitude),
+            longitude: num(result.longitude),
+            rating: str(result.rating) ?? (num(result.rating)?.toString() ?? null),
+            description: str(result.description),
+            openNow: typeof result.open_now === "boolean" ? result.open_now : null,
+          },
+        ];
+      });
+    });
+  }
+
+  /** A ranked list of companies or people for an objective. Ranked, not checked: each one is a lead. */
+  async entitySearch(input: { entityType: EntityType; objective: string; limit: number; batchId?: string }): Promise<Entity[]> {
+    return this.paid("entity search", input.objective, PRICES.entitySearch, input.batchId, async () => {
+      const reply = await this.send("entity search", "POST", "/v1beta/findall/entity-search", {
+        entity_type: input.entityType,
+        objective: input.objective,
+        match_limit: input.limit,
+      });
+      return list(reply.entities).flatMap((entity): Entity[] => {
+        const name = str(entity.name);
+        return name ? [{ name, url: str(entity.url), description: str(entity.description) }] : [];
+      });
+    });
+  }
+
+  /** Turns an objective into the conditions of a FindAll run. Parallel lists no price for this step. */
+  async findAllPlan(objective: string): Promise<FindAllPlan> {
+    const reply = await this.send("FindAll plan", "POST", "/v1beta/findall/ingest", { objective });
+    const conditions = list(reply.match_conditions).flatMap((condition) => {
+      const name = str(condition.name);
+      const description = str(condition.description);
+      return name && description ? [{ name, description }] : [];
+    });
+    return { objective: str(reply.objective) ?? objective, entityType: str(reply.entity_type) ?? "companies", conditions, generator: str(reply.generator) };
+  }
+
+  /**
+   * Starts a FindAll run. The ledger holds the run's price and the price of every match it may find,
+   * because Parallel charges each match as it finds it and the studio sends no call at that time.
+   */
+  async findAllStart(input: {
+    objective: string;
+    entityType: string;
+    conditions: { name: string; description: string }[];
+    generator: FindAllGenerator;
+    matchLimit: number;
+    batchId?: string;
+  }): Promise<FindAllRun> {
+    return this.paid("findall", input.objective, findAllUsd(input.generator, input.matchLimit), input.batchId, async () => {
+      const reply = await this.send("FindAll", "POST", "/v1beta/findall/runs", {
+        objective: input.objective,
+        entity_type: input.entityType,
+        match_conditions: input.conditions,
+        generator: input.generator,
+        match_limit: input.matchLimit,
+      });
+      const run = this.findAllRun(reply);
+      if (!run) throw new ProviderError("Parallel started no FindAll run. It stays counted in the ledger.");
+      return run;
+    });
+  }
+
+  private findAllRun(reply: Record<string, unknown>): FindAllRun | undefined {
+    const findAllId = str(reply.findall_id);
+    if (!findAllId) return undefined;
+    const status = record(reply.status);
+    const metrics = record(status.metrics);
+    const ended = str(status.termination_reason);
+    return {
+      findAllId,
+      status: str(status.status) ?? "unknown",
+      active: status.is_active === true,
+      generated: num(metrics.generated_candidates_count) ?? 0,
+      matched: num(metrics.matched_candidates_count) ?? 0,
+      ...(ended ? { ended } : {}),
+    };
+  }
+
+  /** The state of a FindAll run with its candidates as they stand. `matchedOnly` leaves out the ones that did not match. */
+  async findAllGet(findAllId: string, matchedOnly = true): Promise<FindAllRun> {
+    const reply = await this.send("FindAll result", "GET", `/v1beta/findall/runs/${encodeURIComponent(findAllId)}/result`);
+    const run = this.findAllRun(record(reply.run)) ?? { findAllId, status: "unknown", active: false, generated: 0, matched: 0 };
+    const candidates = list(reply.candidates).flatMap((candidate) => {
+      const name = str(candidate.name);
+      const match = str(candidate.match_status) ?? "generated";
+      if (!name || (matchedOnly && match !== "matched")) return [];
+      return [{ name, url: str(candidate.url), description: str(candidate.description), match, output: candidate.output ?? null, basis: candidate.basis ?? null }];
+    });
+    return { ...run, candidates };
+  }
+
+  async findAllCancel(findAllId: string): Promise<void> {
+    await this.send("FindAll cancel", "POST", `/v1beta/findall/runs/${encodeURIComponent(findAllId)}/cancel`, {});
+  }
+
+  /**
+   * Starts a monitor that Parallel runs on its own schedule. The ledger holds every execution of its
+   * life at the start, because the studio sends no call when one runs. No webhook: its events are read.
+   */
+  async monitorStart(input: { query: string; frequency: MonitorFrequency; processor: MonitorProcessor; days: number }): Promise<Monitor> {
+    const usd = Math.round(PRICES.monitor[input.processor] * monitorExecutions(input.frequency, input.days) * 1e6) / 1e6;
+    return this.paid("monitor", input.query, usd, undefined, async () => {
+      const reply = await this.send("monitor", "POST", "/v1/monitors", {
+        type: "event_stream",
+        frequency: input.frequency,
+        processor: input.processor,
+        settings: { query: input.query },
+      });
+      const monitorId = str(reply.monitor_id);
+      if (!monitorId) throw new ProviderError("Parallel started no monitor. It stays counted in the ledger.");
+      return { monitorId, status: str(reply.status) ?? "active" };
+    });
+  }
+
+  /** What a monitor found, newest first: each event with its text and the pages behind it. */
+  async monitorEvents(monitorId: string, limit: number): Promise<{ id: string; date: string | null; content: unknown; basis: unknown }[]> {
+    const reply = await this.send("monitor events", "GET", `/v1/monitors/${encodeURIComponent(monitorId)}/events?limit=${limit}`);
+    return list(reply.events).flatMap((event) => {
+      const id = str(event.event_id);
+      const output = record(event.output);
+      return id ? [{ id, date: str(event.event_date), content: output.content ?? null, basis: output.basis ?? null }] : [];
+    });
+  }
+
+  async monitorCancel(monitorId: string): Promise<void> {
+    await this.send("monitor cancel", "POST", `/v1/monitors/${encodeURIComponent(monitorId)}/cancel`, {});
   }
 }

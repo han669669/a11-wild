@@ -24,6 +24,7 @@ import { CommentService, CommentStore } from "../../pack/comments.js";
 import { PackService } from "../../pack/service.js";
 import { PackStore } from "../../pack/store.js";
 import { ParallelClient } from "../../parallel/client.js";
+import { Watches } from "../../parallel/watches.js";
 import { PickStore } from "../../picks/store.js";
 import type { Pictures } from "../../pictures/store.js";
 import type { PixelRunner } from "../../pixels/runner.js";
@@ -55,6 +56,7 @@ import { copyTools } from "./copy.js";
 import { coreTools } from "./core.js";
 import { criticTools } from "./critic.js";
 import { factTools } from "./facts.js";
+import { leadTools } from "./leads.js";
 import { importTools } from "./import.js";
 import { metaTools } from "./meta.js";
 import { clientTools } from "./client.js";
@@ -158,6 +160,7 @@ export function studioTools(parts: StudioParts) {
     ...spendTools({ ledger, gate }),
     ...brandTools({ brands, parallel, pictures, net }),
     ...factTools({ brands, facts, parallel }),
+    ...leadTools({ brands, parallel, watches: new Watches(table, parallel, now) }),
     ...tasteTools({ canon, tasteLog, swipe, reads, references, batches, pictures, net, brands, learning, proposals, brandNotes }),
     ...importTools({ importer }),
     ...batchTools({ batches, brands, facts, truth, reads, critic: criticStore, done, copy, briefs, desk }),
