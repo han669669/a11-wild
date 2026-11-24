@@ -94,6 +94,16 @@ describe("checks", () => {
     expect((await callTool(studio, "board_show", { batchId })).value.batch.state).toBe("waiting_pick");
   });
 
+  it("requires logo_set and its check on every v1 draft when the brand has a saved logo", async () => {
+    const batch = await studio.services.batches.get(batchId);
+    const brand = await studio.services.brands.brand(batch.brandId);
+    await studio.services.brands.saveBrand({ ...brand, logo: { key: "brands/b/logo.png", sourceUrl: "https://cdn.wongi.example/logo.png" } });
+    await checkAll();
+    expect(await state()).toBe("drafting");
+    const lastCheck = await check(drafts["idea-1"]![0]!);
+    expect(lastCheck.value.stillMissing).toEqual(expect.arrayContaining([expect.stringMatching(/logo_set for picture/)]));
+  });
+
   it("refuses checks for a picture that is not a draft or a final, and from a caller that did not read the rules", async () => {
     const skeleton = await studio.services.images.add({ batchId, kind: "skeleton", key: "batches/b/skeletons/s.png" });
     expect(await check(skeleton.id)).toEqual(refused(/is a skeleton/));
