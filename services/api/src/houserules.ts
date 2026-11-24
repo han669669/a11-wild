@@ -73,7 +73,7 @@ export const HOUSE_RULES: readonly HouseRule[] = [
     id: "v1-critic",
     roles: ALL,
     kinds: ["v1"],
-    text: "In client v1 batches, the blind critic advises and never blocks (outreach batches still need at least one kept idea). It judges each idea on four things: original scroll-stop visual wit earned by this product (flag both safe catalog shots and lazy motif-copying from reference ads with no link to the product), on-brand colour and editorial studio light, truthful appetizing food, and a one-second wordless read.",
+    text: "In client v1 batches, the blind critic advises and never blocks (outreach batches still need at least one kept idea). It judges each idea on four things: original scroll-stop visual wit earned by this product (flag both safe catalog shots and generic tropes with no link to this product), on-brand colour and editorial studio light, truthful appetizing food, and a one-second wordless read.",
   },
   {
     id: "v1-logo",
