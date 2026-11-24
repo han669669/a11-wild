@@ -321,6 +321,27 @@ describe("watches", () => {
     expect(parallel.calls.filter((call) => call.url.endsWith("/cancel"))).toEqual([]);
   });
 
+  it("cancels a monitor that carries the studio's name when the studio keeps no watch at all", async () => {
+    const { client: c, made } = monitors();
+    made.push({ monitor_id: "monitor_lost", status: "active", metadata: { studio_watch: "0123456789abcdef01234567" } }, { monitor_id: "monitor_elsewhere", status: "active", metadata: null });
+    expect(await new Watches(table, c, now).stopExpired()).toEqual([]);
+    expect(made.map((monitor) => [monitor.monitor_id, monitor.status])).toEqual([["monitor_lost", "cancelled"], ["monitor_elsewhere", "active"]]);
+  });
+
+  it("leaves a new watch in its place when the answer to an older start comes late, and ends the older one", async () => {
+    const { parallel, client: c, made } = monitors();
+    const owner = new Watches(table, c, now);
+    const slow = paused(parallel.fetchFn, (url) => url.endsWith("/v1/monitors"));
+    // The slow start holds the first place. Before Parallel answers it, that place is freed and a second watch takes it.
+    slow.hold.first = async () => {
+      await table.delete("WATCH", "PLACE#1");
+      await owner.start({ ...WATCH, query: "A second watch" });
+    };
+    await expect(new Watches(table, slow.client, now).start(WATCH)).rejects.toThrow(/Start it again/);
+    expect(await owner.list()).toEqual([expect.objectContaining({ monitorId: "monitor_1", query: "A second watch", status: "active" })]);
+    expect(made.map((monitor) => [monitor.monitor_id, monitor.status])).toEqual([["monitor_1", "active"], ["monitor_2", "cancelled"]]);
+  });
+
   it("keeps a watch active when Parallel does not take the cancel, for the next run", async () => {
     let fail = false;
     const parallel = fakeParallel((call) => (call.url.endsWith("/cancel") && fail ? { status: 500 } : call.url.includes("?") ? { json: { monitors: [{ monitor_id: "monitor_1", metadata: call.body }] } } : { json: { monitor_id: "monitor_1" } }));
