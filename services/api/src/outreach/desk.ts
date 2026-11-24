@@ -1,4 +1,4 @@
-import { OUTREACH_STAGES, type Batch, type OutreachAd, type OutreachStage, type OutreachTier, type ProspectBrief, type ProspectFile } from "@a11-wild/shared";
+import { OUTREACH_STAGES, type Batch, type OutreachAd, type OutreachStage, type OutreachTier, type ProspectBrief, type ProspectContacts, type ProspectFile } from "@a11-wild/shared";
 import type { BatchStore } from "../batch/store.js";
 import type { IdeaFinal } from "../board/service.js";
 import { Refusal } from "../mcp/registry.js";
@@ -40,7 +40,7 @@ interface Deps {
   ledger: SpendLedger;
 }
 
-/** What an agent may read of a prospect: nothing that reaches a person. */
+/** A prospect as the work list names it. Its contacts come from `contacts`. */
 function briefOf(file: ProspectFile): ProspectBrief {
   const { id, n, brand, sector, liveAds, tier, newestAd, instagram } = file.profile;
   return { id, n, brand, sector, liveAds, tier, ...(newestAd ? { newestAd } : {}), ...(instagram ? { instagram } : {}) };
@@ -48,7 +48,7 @@ function briefOf(file: ProspectFile): ProspectBrief {
 
 const inCampaign = (file: ProspectFile): boolean => !file.profile.test && CAMPAIGN.tiers.includes(file.profile.tier);
 
-/** The agent's side of the outreach: which brand needs an ad, and where a finished ad goes. It reads and returns no contact. */
+/** The agent's side of the outreach: which brand needs an ad, where a finished ad goes, and the contacts of the list. */
 export class OutreachDesk {
   constructor(private readonly deps: Deps) {}
 
@@ -194,6 +194,23 @@ export class OutreachDesk {
     const again = (await store.all()).find((entry) => entry.profile.id === file.profile.id)?.ads.filter(same).at(-1);
     if (again) return { ad: shown(again), already: true };
     throw new Refusal("Another ad was attached to this brand at the same moment. Call outreach_attach again.");
+  }
+
+  /**
+   * The contacts of the list, in its order, for an agent in the owner's session (owner, 24-11-2026).
+   * An opted-out prospect comes back with no contact: its opt-out is final.
+   */
+  async contacts(input: { prospectId?: string | undefined; after: number; limit: number }): Promise<{ prospects: ProspectContacts[]; more: boolean }> {
+    const { files, optOuts } = input.prospectId ? await this.file(input.prospectId).then((read) => ({ files: [read.file], optOuts: read.optOuts })) : await this.read();
+    const listed = input.prospectId ? files : files.filter((file) => !file.profile.test && file.profile.n > input.after).sort((a, b) => a.profile.n - b.profile.n);
+    const prospects = listed.slice(0, input.limit).map((file): ProspectContacts => {
+      const stage = stageOf(file, optOuts);
+      if (stage === "opted_out") return { ...briefOf(file), stage };
+      const { bestRoute, secondRoute, whatsapp, email, phone, decisionMaker, dmTitle, linkedin } = file.profile;
+      const known = Object.fromEntries(Object.entries({ bestRoute, secondRoute, email, phone, decisionMaker, dmTitle, linkedin }).filter(([, value]) => value));
+      return { ...briefOf(file), stage, ...known, ...(whatsapp.length > 0 ? { whatsapp } : {}) };
+    });
+    return { prospects, more: listed.length > input.limit };
   }
 
   /** The campaign in numbers. It names no brand and holds no contact. */
