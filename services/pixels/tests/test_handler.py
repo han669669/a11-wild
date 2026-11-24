@@ -288,6 +288,22 @@ class Words(unittest.TestCase):
         self.assertIn("headline needs words", self.words(headline=" ")["error"])
         self.assertIn("align is one of", self.words(align="justify")["error"])
 
+    def test_logo_set_places_real_logo_with_no_words_and_enforces_margins(self):
+        event = {
+            "jobId": "j-logo", "batchId": "b1", "tool": "logo_set",
+            "input": {"renderKey": "batches/b1/finals/f1.jpg", "logoKey": "brands/br1/logo.png", "logoWidth": 0.25, "logoTop": 0.05, "logoColour": "FFFFFF"},
+            "resultKey": "jobs/b1/j-logo.json", "outKey": "batches/b1/pixels/j-logo.jpg",
+        }
+        answer = handler.work(event, self.store)
+        self.assertTrue(answer["ok"], answer)
+        out = np.asarray(Image.open(io.BytesIO(self.store.bytes["batches/b1/pixels/j-logo.jpg"])))
+        self.assertEqual(out.shape, (1000, 800, 3))
+        # The white-recoloured logo sits in the top-centre band (y 50..120, x 300..500) on the dark backdrop.
+        self.assertGreater(out[55:110, 310:490].mean(), 180)
+        # Margin violation (logoTop < 0.04) is refused.
+        bad = dict(event, input=dict(event["input"], logoTop=0.01))
+        self.assertFalse(handler.work(bad, self.store)["ok"])
+
 
 class Repairs(unittest.TestCase):
     def setUp(self):

@@ -179,7 +179,8 @@ export class BoardService implements FinalRule {
     for (let step = 0; at && step < 6; step += 1) {
       const render = all.find((other) => other.id === at!.id);
       if (!render) return true;
-      if (!render.fromId) return render.pack !== undefined;
+      if (render.pack !== undefined) return true;
+      if (!render.fromId) return false;
       at = await images.get(batch.id, render.fromId);
       if (at.kind === "skeleton") return true;
     }
@@ -208,6 +209,19 @@ export class BoardService implements FinalRule {
     const defect = defectOf(judged);
     if (defect) return [`type_set again for picture ${on.id}: with its words it has ${defect.code} (${defect.note})`];
     if (rejected(judged)) return [`type_set again for picture ${on.id}: with its words it has two F items or more`];
+    return [];
+  }
+
+  /** What a v1 picture with its real logo still needs: the logo set, the agent's look at it, and no D item or two F items (advisory in outreach). */
+  private logoNeeds(batch: Batch, on: BatchImage, set: BatchImage | undefined, found: Map<string, ImageChecks>, what: string, out = false): string[] {
+    if (!set) return [`logo_set for picture ${on.id}: the brand's real logo on the ${what}`];
+    const seen = found.get(set.id);
+    if (!seen?.looked) return [`checks_save for picture ${set.id}: the ${what} of ${on.id} with its logo`];
+    if (out) return [];
+    const judged = judgedIn(batch, seen);
+    const defect = defectOf(judged);
+    if (defect) return [`logo_set again for picture ${on.id}: with its logo it has ${defect.code} (${defect.note})`];
+    if (rejected(judged)) return [`logo_set again for picture ${on.id}: with its logo it has two F items or more`];
     return [];
   }
 
@@ -245,6 +259,7 @@ export class BoardService implements FinalRule {
         const finish = finishOf(final, all) as BatchImage;
         const set = hasWords(batch.kind) ? typesetOf(finish, all, approved.find((copy) => copy.ideaId === idea.id)) : logoOf(finish, all);
         if (hasWords(batch.kind)) missing.push(...this.wordNeeds(batch, final, set, found, "finished final"));
+        else if (set) missing.push(...this.logoNeeds(batch, final, set, found, "finished final"));
         // The owner sends the picture with its words, so what the agent saw on that one is his to read too.
         const worded = set ? notesIn(batch, found.get(set.id)) : [];
         if (worded.length > 0) entry.warns = [...warns, ...worded];
@@ -278,8 +293,11 @@ export class BoardService implements FinalRule {
         for (const image of mine) {
           const counted = countedOf(image, all);
           missing.push(...(await this.needs(batch, counted, hasPack, found)));
-          // The owner judges an ad, not a bare photo: each draft carries the approved words and the real logo before he sees it.
-          if (hasWords(batch.kind)) missing.push(...this.wordNeeds(batch, counted, typesetOf(counted, all, words), found, "draft", rejected(judgedIn(batch, found.get(counted.id)))));
+          // The owner judges an ad, not a bare photo: each draft carries the approved words and/or real logo before he sees it.
+          const out = rejected(judgedIn(batch, found.get(counted.id)));
+          const logo = !hasWords(batch.kind) ? logoOf(counted, all) : undefined;
+          if (hasWords(batch.kind)) missing.push(...this.wordNeeds(batch, counted, typesetOf(counted, all, words), found, "draft", out));
+          else if (logo) missing.push(...this.logoNeeds(batch, counted, logo, found, "draft", out));
         }
         // A rank counts while it is of the pictures the owner sees now: a repair made after it, or words set after it, needs a new rank.
         const judged = new Map(ranks.get(idea.id)?.order.map((place) => [place.imageId, place.shownId]));

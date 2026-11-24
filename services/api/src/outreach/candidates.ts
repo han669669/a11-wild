@@ -87,7 +87,7 @@ export class OutreachPicks {
         // A check blocks nothing: only a draft that is not an ad yet, or one whose full-size version he refused, cannot be picked.
         const blocked =
           (hasWords(batch.kind) && !draft.words ? "Its words are not set yet." : undefined) ??
-          (draft.words && !draft.words.checks?.looked ? "Its words are not checked yet." : undefined) ??
+          (draft.words && !draft.words.checks?.looked ? (hasWords(batch.kind) ? "Its words are not checked yet." : "Its logo is not checked yet.") : undefined) ??
           (refused.has(draft.image.id) ? "You said no to its full-size version." : undefined);
         const findings = findingsOf(draft);
         return {
@@ -143,7 +143,13 @@ export class OutreachPicks {
       }
     }
     const canBePicked = view.drafts.filter((draft) => !draft.blocked).length;
-    if (canBePicked === 0) throw new Refusal("No draft of this batch can be shown yet: each waits for its words, or the owner refused its full-size version. Set the words (type_set) and look at each (checks_save), or park the brand with the reason.");
+    if (canBePicked === 0) {
+      throw new Refusal(
+        hasWords(batch.kind)
+          ? "No draft of this batch can be shown yet: each waits for its words, or the owner refused its full-size version. Set the words (type_set) and look at each (checks_save), or park the brand with the reason."
+          : "No draft of this batch can be shown yet: each waits for its logo check, or the owner refused its full-size version. Set the logo (logo_set) and look at each (checks_save), or park the brand with the reason.",
+      );
+    }
     const counts = { drafts: view.drafts.length, canBePicked };
     const note = "The drafts wait for the owner's pick on the prospect's page. Stop work on this brand: pick nothing and make no final. outreach_next names it again when he has chosen.";
     const waiting = candidatesWait(file);
