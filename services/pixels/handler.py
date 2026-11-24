@@ -278,42 +278,34 @@ def measured(code, line):
     return {"line": line, "passed": code == 0}, None
 
 
-def _box_mask(mask_path, pack_size, box_str, out_path):
+def _box_mask(mask_path, box_str, out_path):
     """Crop a packshot mask to `box` for pack_check, padded with a 1px black rim.
 
-    When `mask_path` is a real cutout around the pack, keep pixels in the 4px skeleton/swap PAD margin
-    only where they belong to a foreground region already inside `box` (matching skeleton/swap while
-    excluding detached props outside `box`). When the photo has no cutout separation around `box`
-    (opaque backdrop or edge-to-edge studio photo), fall back to the exact `box` rectangle.
+    On each side of `box`, keep pixels in the 4px skeleton/swap PAD margin only when that side has
+    cutout separation (not solid opaque fill) and belongs to a foreground region already inside `box`.
+    This retains genuine pack edges from skeleton/swap while excluding both detached props and uncut
+    opaque studio backdrops outside `box`.
     """
     x0, y0, x1, y1 = (int(v) for v in box_str.split(","))
-    w, h = pack_size
-    if not (0 <= x0 < x1 <= w and 0 <= y0 < y1 <= h):
-        raise Refused("box must lie inside the pack photo.")
-    if mask_path is None:
-        cropped = Image.new("L", (x1 - x0 + 2, y1 - y0 + 2), 0)
-        cropped.paste(Image.new("L", (x1 - x0, y1 - y0), 255), (1, 1))
-        cropped.save(out_path)
-        return out_path
     pad = product_lock.PAD
     with Image.open(mask_path) as m:
-        if m.size != (w, h):
+        w, h = m.size
+        if not (0 <= x0 < x1 <= w and 0 <= y0 < y1 <= h):
             raise Refused("box must lie inside the pack photo.")
         grey = m.convert("L")
         px0, py0, px1, py1 = max(0, x0 - pad), max(0, y0 - pad), min(w, x1 + pad), min(h, y1 + pad)
         arr = np.asarray(grey.crop((px0, py0, px1, py1))) > 128
-        # If the padded border is still solid foreground (no cutout separation around the pack), use the exact box.
-        border_opaque = arr[0, :].all() and arr[-1, :].all() and arr[:, 0].all() and arr[:, -1].all()
-        if border_opaque:
-            inner = grey.crop((x0, y0, x1, y1))
-            cropped = Image.new("L", (x1 - x0 + 2, y1 - y0 + 2), 0)
-            cropped.paste(inner, (1, 1))
-            cropped.save(out_path)
-            return out_path
+        ix0, iy0, ix1, iy1 = x0 - px0, y0 - py0, x1 - px0, y1 - py0
+        # Clip any padded side whose outer border is still opaque foreground across the box span (uncut studio fill) back to the exact box edge.
+        top = iy0 if py0 < y0 and arr[0, ix0:ix1].mean() >= 0.9 else 0
+        bot = iy1 if py1 > y1 and arr[-1, ix0:ix1].mean() >= 0.9 else arr.shape[0]
+        left = ix0 if px0 < x0 and arr[iy0:iy1, 0].mean() >= 0.9 else 0
+        right = ix1 if px1 > x1 and arr[iy0:iy1, -1].mean() >= 0.9 else arr.shape[1]
+        arr = arr[top:bot, left:right]
+        ix0, iy0, ix1, iy1 = ix0 - left, iy0 - top, ix1 - left, iy1 - top
         # Keep only foreground regions that overlap the inner box, so detached props in the PAD margin are excluded.
         import cv2
-        n_labels, labels = cv2.connectedComponents(arr.astype(np.uint8), connectivity=4)
-        ix0, iy0, ix1, iy1 = x0 - px0, y0 - py0, x1 - px0, y1 - py0
+        _, labels = cv2.connectedComponents(arr.astype(np.uint8), connectivity=4)
         inside_labels = set(np.unique(labels[iy0:iy1, ix0:ix1])) - {0}
         if not inside_labels:
             raise Refused("No product was found inside box.")
@@ -325,21 +317,9 @@ def _box_mask(mask_path, pack_size, box_str, out_path):
 
 
 def check_pack(job):
+    _, mask, box = job.pack()
     if job.input.get("box") is not None:
-        path = job.fetch("packKey")
-        box = numbers(job.input["box"], 4, "box")
-        with Image.open(path) as picture:
-            pack_size = picture.size
-        try:
-            mask, _ = job.cut(path, job.input.get("cutout"), job.input["box"])
-        except Refused as err:
-            if "no backdrop" not in str(err).lower():
-                raise
-            # Edge-to-edge studio photo with no detectable backdrop: measure against the explicit pack box.
-            mask = None
-        mask = _box_mask(mask, pack_size, box, os.path.join(job.folder, "pack_mask_box.png"))
-    else:
-        _, mask, _ = job.pack()
+        mask = _box_mask(mask, box, os.path.join(job.folder, "pack_mask_box.png"))
     render = job.fetch("renderKey")
     four_by_five(render, "The render")
     at = numbers(job.input.get("at"), 2, "at")

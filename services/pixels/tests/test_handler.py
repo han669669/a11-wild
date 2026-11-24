@@ -146,12 +146,10 @@ class Handler(unittest.TestCase):
         with_box = self.job("pack_check", packKey="products/p/square.png", box=[150, 50, 250, 350], renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
         self.assertTrue(with_box["ok"] and with_box["passed"], with_box)
         self.assertIn("packshot H/W 3.000", with_box["line"])
-        # 2. Edge-to-edge opaque studio photo with no detectable backdrop on edges still works when box is given.
-        edge_to_edge = Image.new("RGB", (400, 400), (180, 120, 210))
-        self.store.add("products/p/full.png", edge_to_edge)
-        full_boxed = self.job("pack_check", packKey="products/p/full.png", box=[150, 50, 250, 350], renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
-        self.assertTrue(full_boxed["ok"] and full_boxed["passed"], full_boxed)
-        self.assertIn("packshot H/W 3.000", full_boxed["line"])
+        # 2. Box whose top touches the cleared border while left/right/bottom sit in opaque studio fill still clips the opaque sides to box.
+        top_edge = self.job("pack_check", packKey="products/p/square.png", box=[150, 20, 250, 320], renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
+        self.assertTrue(top_edge["ok"] and top_edge["passed"], top_edge)
+        self.assertIn("packshot H/W 2.990", top_edge["line"])
         # 3. Cutout pack extending 2px into PAD is retained while a detached prop inside PAD is excluded.
         rgba = Image.new("RGBA", (400, 400), (0, 0, 0, 0))
         rgba.paste(Image.new("RGBA", (100, 300), (40, 80, 200, 255)), (150, 50))
