@@ -172,13 +172,14 @@ export class PixelService {
     const all = await renders.list(batchId);
     let at: BatchImage | undefined = image.rootId ? await images.get(batchId, image.rootId) : image;
     // A final is made from its draft, and a repair from its picture: the first one the model drew alone names the pack.
+    let named: string | undefined;
     for (let step = 0; at && step < 6; step += 1) {
       const render = all.find((other) => other.id === at!.id);
       if (!render) return undefined;
-      if (render.pack) {
-        return photoNamed(await brands.product((await batches.get(batchId)).productId), render.pack)?.key;
+      if (!named && render.pack) named = render.pack;
+      if (!render.fromId) {
+        return named ? photoNamed(await brands.product((await batches.get(batchId)).productId), named)?.key : undefined;
       }
-      if (!render.fromId) return undefined;
       at = await images.get(batchId, render.fromId);
       if (at.kind === "skeleton") return undefined;
     }
