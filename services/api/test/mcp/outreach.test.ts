@@ -175,6 +175,28 @@ describe("outreach_contacts", () => {
     expect(JSON.stringify((await callTool(studio, "outreach_contacts", { prospectId: "00002" })).value)).not.toMatch(/6123/);
   });
 
+  it("gives no number of a prospect who opted out as another prospect's WhatsApp number", async () => {
+    // The number is a phone number on the one who opted out and a WhatsApp number on the other.
+    await loadProspects(studio, [row(1, { phone: "+65 8123 4567", email: undefined }), row(2, { whatsapp: "8123 4567 / 8000 0002" }), row(3, { whatsapp: "+65 8123 4567", email: undefined })]);
+    await outreach().sequence.optOut("00001");
+    const { prospects } = (await callTool(studio, "outreach_contacts", {})).value;
+    expect(prospects[1]).toMatchObject({ id: "00002", stage: "new", whatsapp: ["6580000002"] });
+    expect(prospects[2]).toMatchObject({ id: "00003", stage: "new" });
+    expect(prospects[2]).not.toHaveProperty("whatsapp");
+    expect(JSON.stringify(prospects)).not.toMatch(/8123/);
+    expect(JSON.stringify((await callTool(studio, "outreach_contacts", { prospectId: "00003" })).value)).not.toMatch(/8123/);
+  });
+
+  it("keeps a real prospect's number when only a test prospect with that number opted out", async () => {
+    await loadProspects(studio, [row(1, { phone: "+65 8999 0000" })]);
+    const { makeTestProspect } = await import("../../src/outreach/load.js");
+    const test = await makeTestProspect(outreach().store, { brand: "TEST prospect", whatsapp: "+65 8999 0000" }, () => studio.clock.now);
+    await outreach().sequence.optOut(test.id);
+    const { prospects } = (await callTool(studio, "outreach_contacts", {})).value;
+    expect(prospects).toEqual([expect.objectContaining({ id: "00001", stage: "new", phone: "+65 8999 0000" })]);
+    expect((await callTool(studio, "outreach_contacts", { prospectId: test.id })).value.prospects[0]).toEqual(expect.objectContaining({ stage: "opted_out" }));
+  });
+
   it("refuses an unknown prospect without a contact in the refusal", async () => {
     await loadProspects(studio, [row(1, PRIVATE)]);
     const answer = await callTool(studio, "outreach_contacts", { prospectId: "99999" });

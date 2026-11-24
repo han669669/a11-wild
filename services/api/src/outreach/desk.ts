@@ -205,14 +205,15 @@ export class OutreachDesk {
   /**
    * The contacts of the list, in its order, for an agent in the owner's session (owner, 24-11-2026).
    * An opted-out prospect comes back with no contact, its Instagram name included: its opt-out is final.
-   * A phone number of an opted-out prospect is given for no other prospect.
+   * A number of an opted-out prospect is given for no other prospect, as a phone number or as a WhatsApp number.
+   * A test prospect's opt-out stays on the test prospect: it closes no number of a real one.
    */
   async contacts(input: { prospectId?: string | undefined; after: number; limit: number }): Promise<{ prospects: ProspectContacts[]; more: boolean }> {
     const { files: all, optOuts, file: one } = input.prospectId ? await this.file(input.prospectId) : { ...(await this.read()), file: undefined };
     // The register keeps WhatsApp numbers and addresses. A phone number is free text, so it is compared by its digits.
     const closed = new Set([...optOuts].flatMap((key) => (key.startsWith("W#") ? [key.slice(2)] : [])));
     for (const file of all) {
-      if (!optedOut(file, optOuts)) continue;
+      if (file.profile.test || !optedOut(file, optOuts)) continue;
       for (const number of [file.profile.phone ?? "", ...file.profile.whatsapp]) if (digitsOf(number)) closed.add(digitsOf(number));
     }
     const listed = one ? [one] : all.filter((file) => !file.profile.test && file.profile.n > input.after).sort((a, b) => a.profile.n - b.profile.n);
@@ -220,8 +221,10 @@ export class OutreachDesk {
       const stage = stageOf(file, optOuts);
       const { instagram: _instagram, ...named } = briefOf(file);
       if (stage === "opted_out") return { ...named, stage };
-      const { bestRoute, secondRoute, whatsapp, email, decisionMaker, dmTitle, linkedin } = file.profile;
-      const phone = file.profile.phone && closed.has(digitsOf(file.profile.phone)) ? undefined : file.profile.phone;
+      const { bestRoute, secondRoute, email, decisionMaker, dmTitle, linkedin } = file.profile;
+      const open = (number: string): boolean => file.profile.test === true || !closed.has(digitsOf(number));
+      const phone = file.profile.phone && open(file.profile.phone) ? file.profile.phone : undefined;
+      const whatsapp = file.profile.whatsapp.filter(open);
       const known = Object.fromEntries(Object.entries({ bestRoute, secondRoute, email, phone, decisionMaker, dmTitle, linkedin }).filter(([, value]) => value));
       return { ...briefOf(file), stage, ...known, ...(whatsapp.length > 0 ? { whatsapp } : {}) };
     });

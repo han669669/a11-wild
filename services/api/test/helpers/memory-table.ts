@@ -14,9 +14,10 @@ export class MemoryTable implements Table {
     return item ? (structuredClone(item) as T) : undefined;
   }
 
-  async put(item: Item, options: { ifNotExists?: boolean } = {}): Promise<boolean> {
+  async put(item: Item, options: { ifNotExists?: boolean; ifEquals?: { attribute: string; value: string } } = {}): Promise<boolean> {
     const key = this.key(item.pk, item.sk);
     if (options.ifNotExists && this.items.has(key)) return false;
+    if (options.ifEquals && this.items.get(key)?.[options.ifEquals.attribute] !== options.ifEquals.value) return false;
     this.items.set(key, structuredClone(item));
     return true;
   }

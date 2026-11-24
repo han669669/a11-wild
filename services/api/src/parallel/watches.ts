@@ -28,6 +28,8 @@ const PK = "WATCH";
 const place = (n: number): string => `PLACE#${n}`;
 const done = (monitorId: string): string => `DONE#${monitorId}`;
 type WatchItem = Item & Watch & { watchId: string };
+/** A place is used again after a stop. A change to a place is made only while it still holds the watch that was read. */
+const still = (item: WatchItem) => ({ ifEquals: { attribute: "watchId", value: item.watchId } });
 const view = ({ monitorId, query, frequency, processor, startedAt, endsAt, by, status }: WatchItem): Watch => ({ ...(monitorId ? { monitorId } : {}), query, frequency, processor, startedAt, endsAt, by, status });
 
 /**
@@ -105,7 +107,7 @@ export class Watches {
     await this.parallel.monitorCancel(monitorId);
     const stopped: WatchItem = { ...item, sk: done(monitorId), status: "stopped" };
     await this.table.put(stopped);
-    await this.table.delete(PK, item.sk);
+    await this.table.delete(PK, item.sk, still(item));
     return view(stopped);
   }
 
@@ -115,23 +117,22 @@ export class Watches {
    * A monitor with no name of the studio was made elsewhere and is left alone.
    */
   private async reconcile(): Promise<{ adopted: number; dropped: number; orphans: number }> {
-    const all = await this.table.query<WatchItem>(PK);
     const counts = { adopted: 0, dropped: 0, orphans: 0 };
-    if (all.length === 0) return counts;
+    if ((await this.table.query(PK)).length === 0) return counts;
     const running = await this.parallel.monitorList();
+    // Read after Parallel's list. A start writes its record before it asks Parallel, so each monitor of that list that the studio keeps is in this read.
+    const all = await this.table.query<WatchItem>(PK);
     const at = this.now().getTime();
     // A place whose stopped record is written is only left over from a stop that was cut short.
     for (const item of all) {
-      if (item.status !== "stopped" && item.monitorId && all.some((other) => other.status === "stopped" && other.monitorId === item.monitorId)) await this.table.delete(PK, item.sk);
+      if (item.status !== "stopped" && item.monitorId && all.some((other) => other.status === "stopped" && other.monitorId === item.monitorId)) await this.table.delete(PK, item.sk, still(item));
     }
     for (const item of all.filter((entry) => entry.status === "starting")) {
       const found = running.find((monitor) => monitor.watchId === item.watchId);
       if (found) {
-        await this.table.put({ ...item, monitorId: found.monitorId, status: "active" });
-        counts.adopted += 1;
+        if (await this.table.put({ ...item, monitorId: found.monitorId, status: "active" }, still(item))) counts.adopted += 1;
       } else if (at - Date.parse(item.startedAt) > UNCONFIRMED_MS) {
-        await this.table.delete(PK, item.sk);
-        counts.dropped += 1;
+        if (await this.table.delete(PK, item.sk, still(item))) counts.dropped += 1;
       }
     }
     const kept = new Set(all.filter((item) => item.status !== "stopped").map((item) => item.watchId));

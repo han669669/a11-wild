@@ -218,9 +218,9 @@ export class ParallelClient {
       throw new NotBilledError(`Parallel refused the ${kind} request (status ${response.status}). Nothing was charged.`);
     }
     try {
-      // A cancel answers with no body (status 204): that is a yes with nothing to read.
-      const text = response.status === 204 ? "" : await response.text();
-      return text.trim() === "" ? {} : (JSON.parse(text) as Record<string, unknown>);
+      // A cancel answers with no body (status 204): that is a yes with nothing to read. Any other answer with no body cannot be read.
+      if (response.status === 204) return {};
+      return JSON.parse(await response.text()) as Record<string, unknown>;
     } catch {
       throw new ProviderError(`Parallel's answer to the ${kind} request could not be read. It stays counted in the ledger.`);
     }

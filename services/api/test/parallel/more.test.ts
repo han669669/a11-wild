@@ -95,6 +95,13 @@ describe("Parallel client: the newer calls", () => {
     expect(parallel.calls.map((call) => call.url)).toEqual(["https://api.parallel.ai/v1beta/findall/runs/findall_1/cancel", "https://api.parallel.ai/v1/monitors/monitor_1/cancel"]);
   });
 
+  it("does not read an answer with no body as an empty result: the charge stays counted", async () => {
+    const parallel = fakeParallel(() => ({ status: 200, text: "" }));
+    const c = new ParallelClient(testKeys, ledger, parallel.fetchFn);
+    await expect(c.shopping({ queries: ["kaya jar"], market: "sg", maxResults: 5 })).rejects.toThrow(/could not be read/);
+    expect(await spent()).toBeGreaterThan(0);
+  });
+
   it("stops a FindAll run of US$1 or more for the owner's yes, before anything is sent", async () => {
     const { parallel, client: c } = client(() => ({ json: {} }));
     const error = await c.findAllStart({ objective: "Kaya makers", entityType: "companies", conditions: [{ name: "a", description: "Sells kaya." }], generator: "core", matchLimit: 5 }).catch((e: unknown) => e);
@@ -253,6 +260,50 @@ describe("watches", () => {
     // The studio's own lost monitor is cancelled. One made elsewhere under the same key is not touched.
     expect(made.map((monitor) => [monitor.monitor_id, monitor.status])).toEqual([["monitor_1", "active"], ["monitor_lost", "cancelled"], ["monitor_elsewhere", "active"]]);
     expect(other.calls.filter((call) => call.url.endsWith("/cancel")).map((call) => call.url)).toEqual(["https://api.parallel.ai/v1/monitors/monitor_lost/cancel"]);
+  });
+
+  /** A second client on the same stand-in that does something first, one time, right before the request that `when` picks. */
+  const paused = (fetchFn: typeof fetch, when: (url: string) => boolean) => {
+    const hold: { first?: () => Promise<unknown> } = {};
+    const slow = (async (input: string | URL | Request, init?: RequestInit) => {
+      const first = when(String(input)) ? hold.first : undefined;
+      if (first) {
+        delete hold.first;
+        await first();
+      }
+      return fetchFn(input, init);
+    }) as typeof fetch;
+    return { hold, client: new ParallelClient(testKeys, ledger, slow) };
+  };
+
+  it("leaves a new watch in its place when a slower stop of the watch before it ends", async () => {
+    const { parallel, client: c, made } = monitors();
+    const owner = new Watches(table, c, now);
+    await owner.start(WATCH);
+    const slow = paused(parallel.fetchFn, (url) => url.endsWith("/cancel"));
+    // The daily job has read the watch and asks Parallel to cancel it. Before the answer, the owner stops it and starts another, which takes its place.
+    slow.hold.first = async () => {
+      await owner.stop("monitor_1");
+      await owner.start({ ...WATCH, query: "A second watch" });
+    };
+    await new Watches(table, slow.client, now).stop("monitor_1");
+    expect(await owner.list()).toEqual([expect.objectContaining({ monitorId: "monitor_2", query: "A second watch", status: "active" }), expect.objectContaining({ monitorId: "monitor_1", status: "stopped" })]);
+    expect(made.map((monitor) => monitor.status)).toEqual(["cancelled", "active"]);
+    // The second watch still ends.
+    clock = new Date("2026-11-26T04:00:00Z");
+    expect(await owner.stopExpired()).toEqual(["monitor_2"]);
+  });
+
+  it("does not cancel a watch that starts while the daily job reads Parallel's list", async () => {
+    const { parallel, client: c, made } = monitors();
+    const owner = new Watches(table, c, now);
+    await owner.start(WATCH);
+    const slow = paused(parallel.fetchFn, (url) => url.includes("/v1/monitors?"));
+    slow.hold.first = () => owner.start({ ...WATCH, query: "A second watch" });
+    expect(await new Watches(table, slow.client, now).stopExpired()).toEqual([]);
+    expect(made.map((monitor) => monitor.status)).toEqual(["active", "active"]);
+    expect((await owner.list()).map((watch) => watch.status)).toEqual(["active", "active"]);
+    expect(parallel.calls.filter((call) => call.url.endsWith("/cancel"))).toEqual([]);
   });
 
   it("keeps a watch active when Parallel does not take the cancel, for the next run", async () => {
