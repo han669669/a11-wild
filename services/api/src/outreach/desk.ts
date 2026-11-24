@@ -40,6 +40,12 @@ interface Deps {
   ledger: SpendLedger;
 }
 
+/** A number as its digits with the country code, so that "+65 6123 4567" and "61234567" are one number. */
+const digitsOf = (value: string): string => {
+  const digits = value.replace(/\D/g, "");
+  return digits.length === 8 ? `65${digits}` : digits;
+};
+
 /** A prospect as the work list names it. Its contacts come from `contacts`. */
 function briefOf(file: ProspectFile): ProspectBrief {
   const { id, n, brand, sector, liveAds, tier, newestAd, instagram } = file.profile;
@@ -198,15 +204,24 @@ export class OutreachDesk {
 
   /**
    * The contacts of the list, in its order, for an agent in the owner's session (owner, 24-11-2026).
-   * An opted-out prospect comes back with no contact: its opt-out is final.
+   * An opted-out prospect comes back with no contact, its Instagram name included: its opt-out is final.
+   * A phone number of an opted-out prospect is given for no other prospect.
    */
   async contacts(input: { prospectId?: string | undefined; after: number; limit: number }): Promise<{ prospects: ProspectContacts[]; more: boolean }> {
-    const { files, optOuts } = input.prospectId ? await this.file(input.prospectId).then((read) => ({ files: [read.file], optOuts: read.optOuts })) : await this.read();
-    const listed = input.prospectId ? files : files.filter((file) => !file.profile.test && file.profile.n > input.after).sort((a, b) => a.profile.n - b.profile.n);
+    const { files: all, optOuts, file: one } = input.prospectId ? await this.file(input.prospectId) : { ...(await this.read()), file: undefined };
+    // The register keeps WhatsApp numbers and addresses. A phone number is free text, so it is compared by its digits.
+    const closed = new Set([...optOuts].flatMap((key) => (key.startsWith("W#") ? [key.slice(2)] : [])));
+    for (const file of all) {
+      if (!optedOut(file, optOuts)) continue;
+      for (const number of [file.profile.phone ?? "", ...file.profile.whatsapp]) if (digitsOf(number)) closed.add(digitsOf(number));
+    }
+    const listed = one ? [one] : all.filter((file) => !file.profile.test && file.profile.n > input.after).sort((a, b) => a.profile.n - b.profile.n);
     const prospects = listed.slice(0, input.limit).map((file): ProspectContacts => {
       const stage = stageOf(file, optOuts);
-      if (stage === "opted_out") return { ...briefOf(file), stage };
-      const { bestRoute, secondRoute, whatsapp, email, phone, decisionMaker, dmTitle, linkedin } = file.profile;
+      const { instagram: _instagram, ...named } = briefOf(file);
+      if (stage === "opted_out") return { ...named, stage };
+      const { bestRoute, secondRoute, whatsapp, email, decisionMaker, dmTitle, linkedin } = file.profile;
+      const phone = file.profile.phone && closed.has(digitsOf(file.profile.phone)) ? undefined : file.profile.phone;
       const known = Object.fromEntries(Object.entries({ bestRoute, secondRoute, email, phone, decisionMaker, dmTitle, linkedin }).filter(([, value]) => value));
       return { ...briefOf(file), stage, ...known, ...(whatsapp.length > 0 ? { whatsapp } : {}) };
     });

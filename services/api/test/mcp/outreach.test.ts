@@ -163,6 +163,18 @@ describe("outreach_contacts", () => {
     expect(JSON.stringify((await callTool(studio, "outreach_contacts", { prospectId: "00002" })).value)).not.toMatch(LEAKS);
   });
 
+  it("gives no Instagram name of a prospect who opted out, and no phone number of one for another prospect", async () => {
+    await loadProspects(studio, [row(1, { phone: "+65 6123 4567", instagram: "brand1", email: undefined }), row(2, { phone: "6123 4567", instagram: "brand2" }), row(3, { phone: "+65 6999 0000" })]);
+    await outreach().sequence.optOut("00001");
+    const { prospects } = (await callTool(studio, "outreach_contacts", {})).value;
+    expect(prospects[0]).toEqual(expect.objectContaining({ id: "00001", stage: "opted_out" }));
+    expect(JSON.stringify(prospects[0])).not.toMatch(/brand1|6123/);
+    expect(prospects[1]).toMatchObject({ id: "00002", stage: "new", instagram: "brand2", whatsapp: ["6580000002"] });
+    expect(JSON.stringify(prospects[1])).not.toMatch(/6123/);
+    expect(prospects[2]).toMatchObject({ phone: "+65 6999 0000" });
+    expect(JSON.stringify((await callTool(studio, "outreach_contacts", { prospectId: "00002" })).value)).not.toMatch(/6123/);
+  });
+
   it("refuses an unknown prospect without a contact in the refusal", async () => {
     await loadProspects(studio, [row(1, PRIVATE)]);
     const answer = await callTool(studio, "outreach_contacts", { prospectId: "99999" });

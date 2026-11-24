@@ -225,11 +225,13 @@ describe("the owner's prospect list", () => {
   });
 
   it("is in nothing that a client's link or a pack's link answers, read or written", async () => {
+    // Ad 0 is the pack's one ad: each download answers with a real address.
+    const downloads = [await get(`/api/client/${clientToken}/packs/${ref}/download/0`), await get(`/api/pack/${packToken}/download/0`)];
+    for (const download of downloads) expect(download.status).toBe(200);
     const answers = [
       await get(`/api/client/${clientToken}`),
       await get(`/api/pack/${packToken}`),
-      await get(`/api/client/${clientToken}/packs/${ref}/download/1`),
-      await get(`/api/pack/${packToken}/download/1`),
+      ...downloads,
       await post(`/api/client/${clientToken}/packs/${ref}/comments`, { text: "Which other brands do you work with? Send me your list." }),
       await post(`/api/pack/${packToken}/comments`, { text: "Hello." }),
       await post(`/api/client/${clientToken}/packs/${ref}/uploads`, { name: "results.csv", type: "text/csv", bytes: 10 }),
@@ -243,6 +245,13 @@ describe("the owner's prospect list", () => {
 
   it("is behind the owner's sign-in on every route that reads it: a link's token, no sign-in and a member all get nothing", async () => {
     const member = { cookie: await sessionCookie(studio, "member") };
+    // What the owner paid to look for prospects: a member reads the amount, and not the words.
+    const objective = "People who run Hidden Prospect Bakery";
+    await studio.services.ledger.paid({ service: "parallel", kind: "entity search", ref: objective, usd: 0.005 }, async () => ({ value: null }));
+    await studio.services.ledger.paid({ service: "parallel", kind: "search", ref: "kaya toast", usd: 0.005 }, async () => ({ value: null }));
+    const lines = async (headers: Record<string, string>) => (await json(await get("/api/spend", headers))).lines.map((line: { kind: string; ref: string }) => [line.kind, line.ref]).sort();
+    expect(await lines(await asOwner())).toEqual([["entity search", objective], ["search", "kaya toast"]]);
+    expect(await lines(member)).toEqual([["entity search", "For the owner."], ["search", "kaya toast"]]);
     for (const path of ["/api/outreach/today", "/api/outreach/prospects", "/api/outreach/prospects/00001", "/api/outreach/templates"]) {
       for (const [who, headers, status] of [["no sign-in", {}, 401], ["a member", member, 403], ["a client's token", { authorization: `Bearer ${clientToken}`, cookie: `session=${clientToken}` }, 401]] as const) {
         const answer = await get(path, headers);

@@ -32,6 +32,16 @@ export type MonitorProcessor = keyof typeof PRICES.monitor;
 export type EntityType = "companies" | "people";
 
 /** The hours between two executions of a monitor. */
+/** The name of the studio's own id in a monitor's metadata at Parallel (16 characters at most). */
+const WATCH_KEY = "studio_watch";
+
+/** The markets that Parallel's shopping search serves. Any other country code is searched in the US, so the studio refuses it. */
+export const SHOP_MARKETS = [
+  "us", "ca", "mx", "br", "ar", "cl", "co", "gb", "ie", "de", "at", "fr", "be", "nl", "es", "pt", "it", "fi", "gr", "ch", "se", "no", "dk",
+  "pl", "cz", "hu", "ro", "tr", "il", "ae", "sa", "za", "in", "jp", "kr", "cn", "tw", "hk", "sg", "my", "th", "id", "ph", "vn", "au", "nz",
+] as const;
+export type ShopMarket = (typeof SHOP_MARKETS)[number];
+
 export const MONITOR_HOURS = { "1h": 1, "6h": 6, "12h": 12, "1d": 24, "7d": 168 } as const;
 export type MonitorFrequency = keyof typeof MONITOR_HOURS;
 
@@ -97,8 +107,8 @@ export interface DecisionQuestion {
   name: string;
   type: "noul" | "choice" | "score";
   instructions: string;
-  /** noul: optional `true` and `false`. choice: its options. score: its levels, lowest first. */
-  criteria?: Record<string, string>;
+  /** noul: optional `true` and `false`, by name. choice: its options, by name. score: a list of its levels, lowest first. */
+  criteria?: Record<string, string> | string[];
 }
 
 export interface Decisions {
@@ -208,7 +218,9 @@ export class ParallelClient {
       throw new NotBilledError(`Parallel refused the ${kind} request (status ${response.status}). Nothing was charged.`);
     }
     try {
-      return (await response.json()) as Record<string, unknown>;
+      // A cancel answers with no body (status 204): that is a yes with nothing to read.
+      const text = response.status === 204 ? "" : await response.text();
+      return text.trim() === "" ? {} : (JSON.parse(text) as Record<string, unknown>);
     } catch {
       throw new ProviderError(`Parallel's answer to the ${kind} request could not be read. It stays counted in the ledger.`);
     }
@@ -353,7 +365,7 @@ export class ParallelClient {
   async shopping(input: {
     queries: string[];
     objective?: string;
-    market: string;
+    market: ShopMarket;
     minPrice?: number;
     maxPrice?: number;
     condition?: "new" | "used" | "refurbished" | "any";
@@ -513,7 +525,7 @@ export class ParallelClient {
    * Starts a monitor that Parallel runs on its own schedule. The ledger holds every execution of its
    * life at the start, because the studio sends no call when one runs. No webhook: its events are read.
    */
-  async monitorStart(input: { query: string; frequency: MonitorFrequency; processor: MonitorProcessor; days: number }): Promise<Monitor> {
+  async monitorStart(input: { query: string; frequency: MonitorFrequency; processor: MonitorProcessor; days: number; watchId?: string }): Promise<Monitor> {
     const usd = Math.round(PRICES.monitor[input.processor] * monitorExecutions(input.frequency, input.days) * 1e6) / 1e6;
     return this.paid("monitor", input.query, usd, undefined, async () => {
       const reply = await this.send("monitor", "POST", "/v1/monitors", {
@@ -521,6 +533,8 @@ export class ParallelClient {
         frequency: input.frequency,
         processor: input.processor,
         settings: { query: input.query },
+        // The studio's own name for the watch. With it the daily job finds a watch whose start had no answer.
+        ...(input.watchId ? { metadata: { [WATCH_KEY]: input.watchId } } : {}),
       });
       const monitorId = str(reply.monitor_id);
       if (!monitorId) throw new ProviderError("Parallel started no monitor. It stays counted in the ledger.");
@@ -528,14 +542,33 @@ export class ParallelClient {
     });
   }
 
-  /** What a monitor found, newest first: each event with its text and the pages behind it. */
-  async monitorEvents(monitorId: string, limit: number): Promise<{ id: string; date: string | null; content: unknown; basis: unknown }[]> {
-    const reply = await this.send("monitor events", "GET", `/v1/monitors/${encodeURIComponent(monitorId)}/events?limit=${limit}`);
-    return list(reply.events).flatMap((event) => {
+  /** The monitors that run at Parallel under the studio's key, each with the studio's name for it when it has one. Free. */
+  async monitorList(): Promise<{ monitorId: string; watchId?: string }[]> {
+    const found: { monitorId: string; watchId?: string }[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 10; page += 1) {
+      const reply = await this.send("monitor list", "GET", `/v1/monitors?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+      for (const monitor of list(reply.monitors)) {
+        const monitorId = str(monitor.monitor_id);
+        const watchId = str(record(monitor.metadata)[WATCH_KEY]);
+        if (monitorId) found.push({ monitorId, ...(watchId ? { watchId } : {}) });
+      }
+      cursor = str(reply.next_cursor) ?? undefined;
+      if (!cursor) break;
+    }
+    return found;
+  }
+
+  /** What a monitor found, newest first: each event with its text and the pages behind it. `next` reads the older ones. */
+  async monitorEvents(monitorId: string, limit: number, cursor?: string): Promise<{ events: { id: string; date: string | null; content: unknown; basis: unknown }[]; next?: string }> {
+    const reply = await this.send("monitor events", "GET", `/v1/monitors/${encodeURIComponent(monitorId)}/events?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+    const events = list(reply.events).flatMap((event) => {
       const id = str(event.event_id);
       const output = record(event.output);
       return id ? [{ id, date: str(event.event_date), content: output.content ?? null, basis: output.basis ?? null }] : [];
     });
+    const next = str(reply.next_cursor);
+    return { events, ...(next ? { next } : {}) };
   }
 
   async monitorCancel(monitorId: string): Promise<void> {

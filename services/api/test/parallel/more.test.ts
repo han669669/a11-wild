@@ -87,6 +87,14 @@ describe("Parallel client: the newer calls", () => {
     expect(await spent()).toBe(0.85);
   });
 
+  it("takes a cancel's empty answer (status 204) as a yes", async () => {
+    const parallel = fakeParallel(() => ({ status: 204, text: "" }));
+    const c = new ParallelClient(testKeys, ledger, parallel.fetchFn);
+    await expect(c.findAllCancel("findall_1")).resolves.toBeUndefined();
+    await expect(c.monitorCancel("monitor_1")).resolves.toBeUndefined();
+    expect(parallel.calls.map((call) => call.url)).toEqual(["https://api.parallel.ai/v1beta/findall/runs/findall_1/cancel", "https://api.parallel.ai/v1/monitors/monitor_1/cancel"]);
+  });
+
   it("stops a FindAll run of US$1 or more for the owner's yes, before anything is sent", async () => {
     const { parallel, client: c } = client(() => ({ json: {} }));
     const error = await c.findAllStart({ objective: "Kaya makers", entityType: "companies", conditions: [{ name: "a", description: "Sells kaya." }], generator: "core", matchLimit: 5 }).catch((e: unknown) => e);
@@ -105,10 +113,24 @@ describe("Parallel client: the newer calls", () => {
 });
 
 describe("watches", () => {
-  const monitors = () => {
+  /** A stand-in that keeps the monitors it made, with the studio's name for each, as Parallel does. */
+  const monitors = (lose: { reply?: boolean } = {}) => {
     let n = 0;
-    return client((call) => (call.url.endsWith("/v1/monitors") ? { json: { monitor_id: `monitor_${++n}`, status: "active" } } : call.url.includes("/events") ? { json: { events: [{ event_id: "e1", event_date: "2026-11-25", output: { content: "A launch.", basis: [] } }, { event_type: "completion" }] } } : { json: {} }));
+    const made: { monitor_id: string; status: string; metadata: unknown }[] = [];
+    const answer = (call: ParallelCall) => {
+      if (call.method === "POST" && call.url.endsWith("/v1/monitors")) {
+        made.push({ monitor_id: `monitor_${++n}`, status: "active", metadata: call.body?.metadata });
+        return lose.reply ? new Error("The connection was cut.") : { json: made.at(-1) };
+      }
+      if (call.url.includes("/v1/monitors?")) return { json: { monitors: made.filter((monitor) => monitor.status === "active") } };
+      if (call.url.includes("/events")) return { json: { events: [{ event_id: "e1", event_date: "2026-11-25", output: { content: "A launch.", basis: [] } }, { event_type: "completion" }], ...(call.url.includes("cursor=") ? {} : { next_cursor: "older 1" }) } };
+      const cancelled = made.find((monitor) => call.url.endsWith(`/${monitor.monitor_id}/cancel`));
+      if (cancelled) cancelled.status = "cancelled";
+      return { status: 204 };
+    };
+    return { ...client(answer), made, lose };
   };
+  const WATCH = { query: "Brand launches a new product", frequency: "1d", processor: "lite", days: 2, by: "owner@example.com" } as const;
 
   it("counts every run of a watch's life, with one day more for the daily job", () => {
     expect(monitorExecutions("1d", 30)).toBe(32);
@@ -120,12 +142,16 @@ describe("watches", () => {
     const { parallel, client: c } = monitors();
     const watches = new Watches(table, c, now);
     const watch = await watches.start({ query: "Brand launches a new product", frequency: "1d", processor: "lite", days: 30, by: "owner@example.com" });
-    expect(parallel.calls[0]?.body).toEqual({ type: "event_stream", frequency: "1d", processor: "lite", settings: { query: "Brand launches a new product" } });
+    expect(parallel.calls[0]?.body).toEqual({ type: "event_stream", frequency: "1d", processor: "lite", settings: { query: "Brand launches a new product" }, metadata: { studio_watch: expect.stringMatching(/^[0-9a-f]{24}$/) } });
     expect(watch).toMatchObject({ monitorId: "monitor_1", status: "active", endsAt: "2026-12-24T03:00:00.000Z" });
     expect(await spent()).toBe(0.096);
-    expect(await watches.events("monitor_1", 10)).toEqual([{ id: "e1", date: "2026-11-25", content: "A launch.", basis: [] }]);
+    const event = { id: "e1", date: "2026-11-25", content: "A launch.", basis: [] };
+    expect(await watches.events("monitor_1", 10)).toEqual({ events: [event], next: "older 1" });
+    // The older events are read with the answer's next, and the last page has none.
+    expect(await watches.events("monitor_1", 10, "older 1")).toEqual({ events: [event] });
+    expect(parallel.calls.at(-1)?.url).toBe("https://api.parallel.ai/v1/monitors/monitor_1/events?limit=10&cursor=older%201");
     await expect(watches.events("monitor_other", 10)).rejects.toThrow(/started no watch/);
-    expect(parallel.calls).toHaveLength(2);
+    expect(parallel.calls).toHaveLength(3);
   });
 
   it("refuses one more watch than the limit, before anything is sent or held", async () => {
@@ -152,9 +178,86 @@ describe("watches", () => {
     expect(await watches.stopExpired()).toEqual([]);
   });
 
+  it("gives the last place to one of two starts at the same moment", async () => {
+    const { parallel, client: c, made } = monitors();
+    const watches = new Watches(table, c, now);
+    for (let i = 0; i < WATCHES_MAX - 1; i += 1) await watches.start(WATCH);
+    const both = await Promise.allSettled([watches.start(WATCH), watches.start(WATCH)]);
+    expect(both.map((one) => one.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(made).toHaveLength(WATCHES_MAX);
+    expect(parallel.calls.filter((call) => call.method === "POST")).toHaveLength(WATCHES_MAX);
+    // A stopped watch gives its place back.
+    await watches.stop("monitor_1");
+    await expect(watches.start(WATCH)).resolves.toMatchObject({ status: "active" });
+  });
+
+  it("gives the place back when Parallel refuses the start, and nothing is charged", async () => {
+    const parallel = fakeParallel(() => ({ status: 422 }));
+    const watches = new Watches(table, new ParallelClient(testKeys, ledger, parallel.fetchFn), now);
+    await expect(watches.start(WATCH)).rejects.toBeInstanceOf(NotBilledError);
+    expect(await watches.list()).toEqual([]);
+    expect(await spent()).toBe(0);
+  });
+
+  it("still ends a watch whose start had no answer: the daily job finds it at Parallel by the studio's name", async () => {
+    const { client: c, made, lose } = monitors({ reply: true });
+    const watches = new Watches(table, c, now);
+    await expect(watches.start(WATCH)).rejects.toThrow(/not known/);
+    // Parallel runs it. The studio keeps it with its end, and with no id of Parallel yet.
+    expect(made).toHaveLength(1);
+    expect(await watches.list()).toEqual([expect.objectContaining({ status: "starting", endsAt: "2026-11-26T03:00:00.000Z" })]);
+    expect((await watches.list())[0]).not.toHaveProperty("monitorId");
+    lose.reply = false;
+    clock = new Date("2026-11-25T03:00:00Z");
+    expect(await watches.stopExpired()).toEqual([]);
+    expect(await watches.list()).toEqual([expect.objectContaining({ monitorId: "monitor_1", status: "active", endsAt: "2026-11-26T03:00:00.000Z" })]);
+    clock = new Date("2026-11-26T04:00:00Z");
+    expect(await watches.stopExpired()).toEqual(["monitor_1"]);
+    expect(made[0]?.status).toBe("cancelled");
+  });
+
+  it("still ends a watch whose record could not be written after Parallel took it", async () => {
+    const { client: c, made } = monitors();
+    const watches = new Watches(table, c, now);
+    const put = table.put.bind(table);
+    let puts = 0;
+    table.put = async (item, options) => {
+      if (item.pk === "WATCH" && ++puts === 2) throw new Error("The table did not answer.");
+      return put(item, options);
+    };
+    await expect(watches.start(WATCH)).rejects.toThrow(/did not answer/);
+    table.put = put;
+    expect(made).toHaveLength(1);
+    expect((await watches.list())[0]?.status).toBe("starting");
+    clock = new Date("2026-11-26T04:00:00Z");
+    expect(await watches.stopExpired()).toEqual(["monitor_1"]);
+    expect(made[0]?.status).toBe("cancelled");
+  });
+
+  it("drops a start that Parallel never shows after two days, and cancels a monitor of the studio that it does not keep", async () => {
+    const parallel = fakeParallel((call) => (call.method === "POST" && call.url.endsWith("/v1/monitors") ? new Error("The connection was cut.") : { json: { monitors: [] } }));
+    const watches = new Watches(table, new ParallelClient(testKeys, ledger, parallel.fetchFn), now);
+    await expect(watches.start(WATCH)).rejects.toThrow(/not known/);
+    clock = new Date("2026-11-25T03:00:00Z");
+    await watches.stopExpired();
+    expect(await watches.list()).toHaveLength(1);
+    clock = new Date("2026-11-26T04:00:00Z");
+    await watches.stopExpired();
+    expect(await watches.list()).toEqual([]);
+
+    const { parallel: other, client: c, made } = monitors();
+    const kept = new Watches(table, c, now);
+    await kept.start(WATCH);
+    made.push({ monitor_id: "monitor_lost", status: "active", metadata: { studio_watch: "0123456789abcdef01234567" } }, { monitor_id: "monitor_elsewhere", status: "active", metadata: null });
+    expect(await kept.stopExpired()).toEqual([]);
+    // The studio's own lost monitor is cancelled. One made elsewhere under the same key is not touched.
+    expect(made.map((monitor) => [monitor.monitor_id, monitor.status])).toEqual([["monitor_1", "active"], ["monitor_lost", "cancelled"], ["monitor_elsewhere", "active"]]);
+    expect(other.calls.filter((call) => call.url.endsWith("/cancel")).map((call) => call.url)).toEqual(["https://api.parallel.ai/v1/monitors/monitor_lost/cancel"]);
+  });
+
   it("keeps a watch active when Parallel does not take the cancel, for the next run", async () => {
     let fail = false;
-    const parallel = fakeParallel((call) => (call.url.endsWith("/cancel") && fail ? { status: 500 } : { json: { monitor_id: "monitor_1" } }));
+    const parallel = fakeParallel((call) => (call.url.endsWith("/cancel") && fail ? { status: 500 } : call.url.includes("?") ? { json: { monitors: [{ monitor_id: "monitor_1", metadata: call.body }] } } : { json: { monitor_id: "monitor_1" } }));
     const watches = new Watches(table, new ParallelClient(testKeys, ledger, parallel.fetchFn), now);
     await watches.start({ query: "Brand launches a new product", frequency: "1d", processor: "lite", days: 1, by: "owner@example.com" });
     clock = new Date("2026-11-26T03:00:00Z");

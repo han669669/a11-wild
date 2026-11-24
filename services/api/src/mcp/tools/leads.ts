@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { BrandStore } from "../../brand/store.js";
-import { findAllUsd, monitorExecutions, MONITOR_HOURS, PRICES, type MonitorFrequency, type ParallelClient } from "../../parallel/client.js";
+import { findAllUsd, monitorExecutions, MONITOR_HOURS, PRICES, SHOP_MARKETS, type MonitorFrequency, type ParallelClient } from "../../parallel/client.js";
 import { WATCHES_MAX, type Watches } from "../../parallel/watches.js";
 import { isPublicHttpsUrl } from "../../urlsafety.js";
 import { defineTool, Refusal, type ToolDefinition } from "../registry.js";
@@ -30,7 +30,7 @@ export function leadTools({ brands, parallel, watches }: LeadToolDeps): ToolDefi
   return [
     defineTool({
       name: "web_decide",
-      description: `Answers up to 20 typed questions from current web pages through Parallel, in one call. Costs ${usd(PRICES.decisions)}. noul: a statement that is true or false; the answer is a probability from 0 to 1, and no evidence is not a "false". choice: one of the options you name in criteria (add an option such as unknown). score: a level of the scale you name in criteria, lowest first. Put what the questions are about in state, such as the brand and its site. The pages behind the answers come back as citations. ${LEAD} ${DATA}`,
+      description: `Answers up to 20 typed questions from current web pages through Parallel, in one call. Costs ${usd(PRICES.decisions)}. noul: a statement that is true or false; the answer is a probability from 0 to 1, and no evidence is not a "false". choice: one of the options you name in criteria (add an option such as unknown). score: a level of the scale you give in criteria as a list of 2 to 10 levels, lowest first; the answer counts the levels from 0. Put what the questions are about in state, such as the brand and its site. The pages behind the answers come back as citations. ${LEAD} ${DATA}`,
       input: {
         state: z.record(key, z.union([z.string().max(500), z.number(), z.boolean()])).describe("What the questions are about, as a few named values."),
         questions: z
@@ -39,7 +39,10 @@ export function leadTools({ brands, parallel, watches }: LeadToolDeps): ToolDefi
               name: key,
               type: z.enum(["noul", "choice", "score"]),
               instructions: z.string().min(5).max(500).describe("The question, in one sentence."),
-              criteria: z.record(z.string().min(1).max(60), z.string().min(1).max(300)).optional().describe("noul: optional true and false. choice: 2 or more options. score: 2 to 10 levels, lowest first."),
+              criteria: z
+                .union([z.record(z.string().min(1).max(60), z.string().min(1).max(300)), z.array(z.string().min(1).max(300)).min(2).max(10)])
+                .optional()
+                .describe("noul: optional true and false, by name. choice: 2 or more options, by name. score: a list of 2 to 10 levels, lowest first."),
             }),
           )
           .min(1)
@@ -50,9 +53,10 @@ export function leadTools({ brands, parallel, watches }: LeadToolDeps): ToolDefi
       handler: async ({ state, questions, batchId }) => {
         if (new Set(questions.map((question) => question.name)).size !== questions.length) throw new Refusal("Give each question its own name.");
         for (const question of questions) {
-          const options = Object.keys(question.criteria ?? {}).length;
-          if (question.type !== "noul" && options < 2) throw new Refusal(`Question ${question.name} needs two or more entries in criteria.`);
-          if (question.type === "score" && options > 10) throw new Refusal(`Question ${question.name} has more than ten levels.`);
+          const levels = Array.isArray(question.criteria);
+          if (question.type === "score" && !levels) throw new Refusal(`Question ${question.name} is a score: give criteria as a list of 2 to 10 levels, lowest first.`);
+          if (question.type !== "score" && levels) throw new Refusal(`Question ${question.name} is no score: give criteria by name, not as a list.`);
+          if (question.type === "choice" && Object.keys(question.criteria ?? {}).length < 2) throw new Refusal(`Question ${question.name} needs two or more options in criteria.`);
         }
         const asked = questions.map(({ criteria, ...rest }) => ({ ...rest, ...(criteria ? { criteria } : {}) }));
         return { untrusted: true, ...(await parallel.decide({ state, questions: asked, ...(batchId ? { batchId } : {}) })) };
@@ -64,7 +68,7 @@ export function leadTools({ brands, parallel, watches }: LeadToolDeps): ToolDefi
       input: {
         queries: z.array(z.string().min(2).max(200)).min(1).max(5).describe("A brand with its model finds one product; a product type with its key attributes finds a category."),
         objective: objective.optional(),
-        market: z.string().regex(/^[a-z]{2}$/, "A country code of two small letters.").default("sg"),
+        market: z.enum(SHOP_MARKETS).default("sg").describe("The country code of a market that Parallel serves."),
         minPrice: z.number().min(0).optional(),
         maxPrice: z.number().positive().optional(),
         condition: z.enum(["new", "used", "refurbished", "any"]).optional(),
@@ -182,16 +186,16 @@ export function leadTools({ brands, parallel, watches }: LeadToolDeps): ToolDefi
     defineTool({
       name: "watch_list",
       ownerOnly: true,
-      description: "The watches the studio started, newest first: what each looks for, how often, its end and whether it still runs. Free. Only for the owner's session.",
+      description: "The watches the studio started, newest first: what each looks for, how often, its end and whether it still runs. Free. Only for the owner's session. A watch at starting had no answer from Parallel at its start and holds a place: the daily job finds it at Parallel and ends it on time, or drops it after two days.",
       input: {},
       handler: async () => ({ watches: await watches.list() }),
     }),
     defineTool({
       name: "watch_events",
       ownerOnly: true,
-      description: `What a watch found, newest first: each event with its text and the pages behind it. Free. Only for the owner's session. ${LEAD} ${DATA}`,
-      input: { monitorId: runId, limit: z.number().int().min(1).max(50).default(20) },
-      handler: async ({ monitorId, limit }) => ({ untrusted: true, events: await watches.events(monitorId, limit) }),
+      description: `What a watch found, newest first: each event with its text and the pages behind it. When next comes back, give it as cursor to read the older events. Free. Only for the owner's session. ${LEAD} ${DATA}`,
+      input: { monitorId: runId, limit: z.number().int().min(1).max(50).default(20), cursor: z.string().min(1).max(500).optional().describe("The next of the answer before, for the older events.") },
+      handler: async ({ monitorId, limit, cursor }) => ({ untrusted: true, ...(await watches.events(monitorId, limit, cursor)) }),
     }),
     defineTool({
       name: "watch_stop",

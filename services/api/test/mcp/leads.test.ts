@@ -25,10 +25,16 @@ beforeEach(async () => {
 describe("the newer Parallel tools", () => {
   it("answers typed questions with their pages, and refuses a choice with fewer than two options", async () => {
     const question = { name: "stocked", type: "choice", instructions: "Does the shop stock the kaya?" };
-    expect(await callTool(studio, "web_decide", { state: { brand: "Brand" }, questions: [question] })).toMatchObject({ ok: false, error: expect.stringMatching(/two or more/) });
+    expect(await callTool(studio, "web_decide", { state: { brand: "Brand" }, questions: [question] })).toMatchObject({ ok: false, error: expect.stringMatching(/by name|two or more/) });
     expect(calls).toEqual([]);
     const answer = await callTool(studio, "web_decide", { state: { brand: "Brand" }, questions: [{ ...question, criteria: { yes: "It is listed.", unknown: "No page says." } }] });
     expect(answer.value).toMatchObject({ untrusted: true, answers: { stocked: { choice: "yes" } }, citations: [{ url: "https://shop.example/" }] });
+    // A score takes its levels as a list, lowest first, and Parallel gets them as that list.
+    const score = { name: "range", type: "score", instructions: "How wide is the brand's range of spreads?" };
+    expect(await callTool(studio, "web_decide", { state: {}, questions: [{ ...score, criteria: { low: "One.", high: "Many." } }] })).toMatchObject({ ok: false, error: expect.stringMatching(/as a list/) });
+    expect(await callTool(studio, "web_decide", { state: {}, questions: [{ ...question, criteria: ["Yes.", "No."] }] })).toMatchObject({ ok: false, error: expect.stringMatching(/by name/) });
+    expect((await callTool(studio, "web_decide", { state: {}, questions: [{ ...score, criteria: ["One spread.", "Many spreads."] }] })).ok).toBe(true);
+    expect(calls.at(-1)?.body).toMatchObject({ questions: { range: { type: "score", criteria: ["One spread.", "Many spreads."] } } });
   });
 
   it("searches Singapore's stores and places when no market or location is given, and offers only safe pictures", async () => {
@@ -37,6 +43,10 @@ describe("the newer Parallel tools", () => {
     expect(shop).toMatchObject({ untrusted: true, searchId: expect.any(String) });
     expect(shop.results.map((result: { imageUrl: string | null }) => result.imageUrl)).toEqual(["https://shop.example/p.jpg", null]);
     expect(await callTool(studio, "shop_search", { queries: ["kaya"], minPrice: 9, maxPrice: 5 })).toMatchObject({ ok: false });
+    // Parallel serves no market "kh" and would search the US in its place: the studio refuses it, and nothing is sent or held.
+    const before = calls.length;
+    expect(await callTool(studio, "shop_search", { queries: ["kaya"], market: "kh" })).toMatchObject({ ok: false });
+    expect(calls).toHaveLength(before);
     const places = (await callTool(studio, "place_search", { query: "Brand" })).value;
     expect(calls.at(-1)?.body).toMatchObject({ location: "Singapore", mode: "fast" });
     expect(places).toMatchObject({ untrusted: true, results: [{ name: "Brand Outlet" }] });
