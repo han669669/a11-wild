@@ -81,11 +81,15 @@ export class Watches {
       ({ monitorId } = await this.parallel.monitorStart({ ...input, watchId: item.watchId }));
     } catch (error) {
       // Only an outcome that is not known keeps its place: Parallel may run the watch, and the daily job looks for it.
-      if (!(error instanceof ProviderError)) await this.table.delete(PK, item.sk);
+      if (!(error instanceof ProviderError)) await this.table.delete(PK, item.sk, still(item));
       throw error;
     }
     const active: WatchItem = { ...item, monitorId, status: "active" };
-    await this.table.put(active);
+    if (!(await this.table.put(active, still(item)))) {
+      // The place was freed before Parallel answered, and it may hold another watch now. That one stays. This one ends here, or at the next daily job.
+      await this.parallel.monitorCancel(monitorId).catch(() => undefined);
+      throw new Refusal("Parallel answered this start late, and the studio no longer keeps its place. The watch is cancelled. Start it again if you still want it.");
+    }
     return view(active);
   }
 
@@ -118,7 +122,7 @@ export class Watches {
    */
   private async reconcile(): Promise<{ adopted: number; dropped: number; orphans: number }> {
     const counts = { adopted: 0, dropped: 0, orphans: 0 };
-    if ((await this.table.query(PK)).length === 0) return counts;
+    // Parallel is asked on each run, also when the studio keeps no watch: a monitor with the studio's name and no record here would run with no end.
     const running = await this.parallel.monitorList();
     // Read after Parallel's list. A start writes its record before it asks Parallel, so each monitor of that list that the studio keeps is in this read.
     const all = await this.table.query<WatchItem>(PK);
