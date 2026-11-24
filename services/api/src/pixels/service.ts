@@ -175,9 +175,10 @@ export class PixelService {
     for (let step = 0; at && step < 6; step += 1) {
       const render = all.find((other) => other.id === at!.id);
       if (!render) return undefined;
-      if (!render.fromId) {
-        return render.pack ? photoNamed(await brands.product((await batches.get(batchId)).productId), render.pack)?.key : undefined;
+      if (render.pack) {
+        return photoNamed(await brands.product((await batches.get(batchId)).productId), render.pack)?.key;
       }
+      if (!render.fromId) return undefined;
       at = await images.get(batchId, render.fromId);
       if (at.kind === "skeleton") return undefined;
     }

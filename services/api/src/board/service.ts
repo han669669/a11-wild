@@ -220,8 +220,9 @@ export class BoardService implements FinalRule {
     if (out) return [];
     const judged = judgedIn(batch, seen);
     const defect = defectOf(judged);
-    if (defect) return [`logo_set again for picture ${on.id}: with its logo it has ${defect.code} (${defect.note})`];
-    if (rejected(judged)) return [`logo_set again for picture ${on.id}: with its logo it has two F items or more`];
+    const retry = on.kind === "final" ? `a new final from the picked draft (logo placement on a final stays locked to the picked draft)` : `logo_set again for picture ${on.id}`;
+    if (defect) return [`${retry}: with its logo it has ${defect.code} (${defect.note})`];
+    if (rejected(judged)) return [`${retry}: with its logo it has two F items or more`];
     return [];
   }
 
