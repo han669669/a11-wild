@@ -6,6 +6,7 @@ import { AttentionService } from "../attention/service.js";
 import { log } from "../log.js";
 import { Refusal } from "../mcp/registry.js";
 import { scopeOf } from "../taste/canon.js";
+import { forMember } from "../spend/ledger.js";
 import { requireOwner, type SessionEnv } from "./guards.js";
 
 const SCOPE = z.strictObject({ kind: z.enum(CANON_SCOPES), brandId: z.string().min(1).max(64).optional() });
@@ -86,7 +87,10 @@ export function studioRoutes(
     return c.json(saved);
   });
 
-  routes.get("/api/spend", session, async (c) => c.json(await ledger.summary()));
+  routes.get("/api/spend", session, async (c) => {
+    const summary = await ledger.summary();
+    return c.json(c.get("session").role === "owner" ? summary : forMember(summary));
+  });
 
   /** The pictures made beside the ads kept. The owner's alone: it counts the work of his earlier tools too. */
   routes.get("/api/made", session, requireOwner, async (c) => c.json(await made.read()));

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { SpendGate } from "../../spend/gate.js";
-import type { SpendLedger } from "../../spend/ledger.js";
+import { forMember, type SpendLedger } from "../../spend/ledger.js";
 import { defineTool, type ToolDefinition } from "../registry.js";
 
 const batchId = z.string().min(1).max(64).describe("The batch id.");
@@ -12,7 +12,10 @@ export function spendTools(spend: { ledger: SpendLedger; gate: SpendGate }): Too
       description:
         "This month's spend, the two caps and each paid call. Free. With batchId, that batch's total and lines. A line with status reserved has an unknown outcome and still counts.",
       input: { batchId: batchId.optional() },
-      handler: ({ batchId }) => spend.ledger.summary(batchId),
+      handler: async ({ batchId }, context) => {
+        const summary = await spend.ledger.summary(batchId);
+        return context.user.role === "owner" ? summary : forMember(summary);
+      },
     }),
     defineTool({
       name: "spend_approve",

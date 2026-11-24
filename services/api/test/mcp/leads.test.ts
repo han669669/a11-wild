@@ -61,6 +61,21 @@ describe("the newer Parallel tools", () => {
     expect((await callTool(studio, "entity_search", { entityType: "people", objective: "Founders of kaya brands in Singapore" })).value).toMatchObject({ untrusted: true, entities: [{ name: "Brand Pte Ltd" }] });
   });
 
+  it("shows a member what the owner's search for prospects cost, and not what he looked for", async () => {
+    const objective = "Founders of kaya brands in Singapore";
+    await callTool(studio, "entity_search", { entityType: "people", objective });
+    await callTool(studio, "place_search", { query: "Brand" });
+    const owner = (await callTool(studio, "spend_get", {})).value.lines;
+    expect(owner.map((line: { ref: string }) => line.ref).sort()).toEqual(["Brand", objective]);
+    const member = await callTool(studio, "spend_get", {}, { sub: "sub-member" });
+    expect(JSON.stringify(member)).not.toContain(objective);
+    expect(member.value.lines.map((line: { kind: string; ref: string; usd: number }) => [line.kind, line.ref, line.usd]).sort()).toEqual([
+      ["entity search", "For the owner.", 0.005],
+      ["places", "Brand", 0.001],
+    ]);
+    expect(member.value.monthUsd).toBe(0.006);
+  });
+
   it("starts a FindAll run as a preview by default, and refuses a preview of more than ten", async () => {
     const args = { objective: "Kaya makers", entityType: "companies", conditions: [{ name: "sells_kaya", description: "Sells kaya." }] };
     expect(await callTool(studio, "findall_start", { ...args, matchLimit: 20 })).toMatchObject({ ok: false, error: expect.stringMatching(/10 or fewer/) });
