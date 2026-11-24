@@ -13,6 +13,18 @@ export const CAPS = { monthUsd: 25, batchUsd: 5 } as const;
  */
 export const CAMPAIGN_CAPS = { campaignUsd: 73.6, outreachBatchUsd: 1.5 } as const;
 
+/** The kinds of call that only the owner's session makes to find companies, people and what they do. */
+const OWNER_KINDS: readonly string[] = ["entity search", "findall", "monitor"];
+
+/**
+ * A summary as a member reads it. What the owner looked for when he searched for prospects, and for an
+ * outreach ad, is the owner's: such a line keeps its amount and loses its words.
+ */
+export const forMember = (summary: SpendSummary): SpendSummary => ({
+  ...summary,
+  lines: summary.lines.map((line) => (line.campaign || OWNER_KINDS.includes(line.kind) ? { ...line, ref: "For the owner." } : line)),
+});
+
 type Caps = { monthUsd: number; batchUsd: number; campaignUsd?: number; outreachBatchUsd?: number };
 
 /** A cap would be passed. Nothing was sent and nothing was written. */
@@ -171,10 +183,10 @@ export class SpendLedger {
    * What a batch has spent or still holds in reserve with one service this month, in micro-dollars.
    * With no batch id, the same for the calls that belong to no batch.
    */
-  async batchMicro(batchId: string | undefined, service: SpendService): Promise<number> {
+  async batchMicro(batchId: string | undefined, service: SpendService, except: readonly string[] = []): Promise<number> {
     const items = await this.table.query<LineItem>(monthKey(this.month()));
     return items
-      .filter((item) => item.sk.startsWith("LINE#") && item.batchId === batchId && item.service === service && item.status !== "released")
+      .filter((item) => item.sk.startsWith("LINE#") && item.batchId === batchId && item.service === service && item.status !== "released" && !except.includes(item.kind))
       .reduce((sum, item) => sum + item.micro, 0);
   }
 

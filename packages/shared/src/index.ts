@@ -1137,7 +1137,7 @@ export interface Prospect {
   loadedAt: string;
 }
 
-/** What an agent may read of a prospect: nothing that reaches a person. */
+/** A prospect as the agent's work list names it. Its contacts come from `outreach_contacts`. */
 export interface ProspectBrief {
   id: string;
   n: number;
@@ -1147,6 +1147,19 @@ export interface ProspectBrief {
   tier: OutreachTier;
   newestAd?: string;
   instagram?: string;
+}
+
+/** A prospect with its contacts, as an agent in the owner's session reads it (owner, 24-11-2026). An opted-out prospect holds none. */
+export interface ProspectContacts extends ProspectBrief {
+  stage: OutreachStage;
+  bestRoute?: string;
+  secondRoute?: string;
+  whatsapp?: string[];
+  email?: string;
+  phone?: string;
+  decisionMaker?: string;
+  dmTitle?: string;
+  linkedin?: string;
 }
 
 /** A finished outreach ad, attached to its prospect. */

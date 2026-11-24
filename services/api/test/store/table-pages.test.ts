@@ -38,3 +38,28 @@ describe("the table's query", () => {
     expect(asked).toEqual([undefined, "b", "d"]);
   });
 });
+
+describe("the table's conditional put", () => {
+  it("asks for each condition that is set, so both must hold as in the in-memory table", async () => {
+    const sent: { ConditionExpression?: string }[] = [];
+    const client = new DynamoDBClient({
+      region: "ap-southeast-1",
+      credentials: { accessKeyId: "test", secretAccessKey: "test" },
+      requestHandler: {
+        handle: async (request: { body: string }) => {
+          sent.push(JSON.parse(request.body) as { ConditionExpression?: string });
+          return { response: { statusCode: 200, headers: { "content-type": "application/x-amz-json-1.0" }, body: Readable.from([Buffer.from("{}")]) } };
+        },
+        updateHttpClientConfig: () => undefined,
+        httpHandlerConfigs: () => ({}),
+      } as never,
+    });
+    const table = new DynamoTable(client, "studio");
+    const still = { attribute: "watchId", value: "w1" };
+    await table.put({ pk: "WATCH", sk: "PLACE#1" });
+    await table.put({ pk: "WATCH", sk: "PLACE#1" }, { ifNotExists: true });
+    await table.put({ pk: "WATCH", sk: "PLACE#1" }, { ifEquals: still });
+    await table.put({ pk: "WATCH", sk: "PLACE#1" }, { ifNotExists: true, ifEquals: still });
+    expect(sent.map((request) => request.ConditionExpression)).toEqual([undefined, "attribute_not_exists(pk)", "#attribute = :value", "attribute_not_exists(pk) AND #attribute = :value"]);
+  });
+});

@@ -112,7 +112,7 @@ Step 7. Show and stop. Call outreach_show with the batch. The owner now sees eve
 
 Step 8. Report after each brand in one line: the brand, the kind, what it cost, how many critics it used, and shown, attached, parked or service. After the first three brands stop and give the owner the cost of each, before you go on.
 
-You never send a message, say yes to an ad, log a reply, or read a number or an address. If a step names work for which the server lists no tool, stop and tell the owner which step is missing.`;
+You never send a message, say yes to an ad or log a reply. The making of an ad needs no number and no address; when the owner asks for work that needs a prospect's contacts, read them with outreach_contacts and use them for that work only. If a step names work for which the server lists no tool, stop and tell the owner which step is missing.`;
 
 export const PROMPTS: readonly Prompt[] = [
   {

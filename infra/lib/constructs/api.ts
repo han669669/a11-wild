@@ -93,6 +93,20 @@ export class Api extends Construct {
       }),
     );
     this.pruneFunction = makeFunction("PruneFunction", "prune-handler.ts", Duration.minutes(5));
+    // The daily job cancels a Parallel watch at its end, so it reads that one key and no other.
+    this.pruneFunction.addEnvironment("KEYS_PREFIX", props.keysPrefix);
+    this.pruneFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["ssm:GetParameter"],
+        resources: [
+          Stack.of(this).formatArn({
+            service: "ssm",
+            resource: "parameter",
+            resourceName: `${props.keysPrefix.replace(/^\//, "")}/parallel`,
+          }),
+        ],
+      }),
+    );
 
     this.httpApi = new apigwv2.HttpApi(this, "HttpApi", {
       defaultIntegration: new HttpLambdaIntegration("ApiIntegration", this.apiFunction),

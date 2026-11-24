@@ -1,4 +1,4 @@
-import { OUTREACH_STAGES, type Batch, type OutreachAd, type OutreachStage, type OutreachTier, type ProspectBrief, type ProspectFile } from "@a11-wild/shared";
+import { OUTREACH_STAGES, type Batch, type OutreachAd, type OutreachStage, type OutreachTier, type ProspectBrief, type ProspectContacts, type ProspectFile } from "@a11-wild/shared";
 import type { BatchStore } from "../batch/store.js";
 import type { IdeaFinal } from "../board/service.js";
 import { Refusal } from "../mcp/registry.js";
@@ -40,7 +40,13 @@ interface Deps {
   ledger: SpendLedger;
 }
 
-/** What an agent may read of a prospect: nothing that reaches a person. */
+/** A number as its digits with the country code, so that "+65 6123 4567" and "61234567" are one number. */
+const digitsOf = (value: string): string => {
+  const digits = value.replace(/\D/g, "");
+  return digits.length === 8 ? `65${digits}` : digits;
+};
+
+/** A prospect as the work list names it. Its contacts come from `contacts`. */
 function briefOf(file: ProspectFile): ProspectBrief {
   const { id, n, brand, sector, liveAds, tier, newestAd, instagram } = file.profile;
   return { id, n, brand, sector, liveAds, tier, ...(newestAd ? { newestAd } : {}), ...(instagram ? { instagram } : {}) };
@@ -48,7 +54,7 @@ function briefOf(file: ProspectFile): ProspectBrief {
 
 const inCampaign = (file: ProspectFile): boolean => !file.profile.test && CAMPAIGN.tiers.includes(file.profile.tier);
 
-/** The agent's side of the outreach: which brand needs an ad, and where a finished ad goes. It reads and returns no contact. */
+/** The agent's side of the outreach: which brand needs an ad, where a finished ad goes, and the contacts of the list. */
 export class OutreachDesk {
   constructor(private readonly deps: Deps) {}
 
@@ -194,6 +200,35 @@ export class OutreachDesk {
     const again = (await store.all()).find((entry) => entry.profile.id === file.profile.id)?.ads.filter(same).at(-1);
     if (again) return { ad: shown(again), already: true };
     throw new Refusal("Another ad was attached to this brand at the same moment. Call outreach_attach again.");
+  }
+
+  /**
+   * The contacts of the list, in its order, for an agent in the owner's session (owner, 24-11-2026).
+   * An opted-out prospect comes back with no contact, its Instagram name included: its opt-out is final.
+   * A number of an opted-out prospect is given for no other prospect, as a phone number or as a WhatsApp number.
+   * A test prospect's opt-out stays on the test prospect: it closes no number of a real one. A real one's opt-out closes its number for a test prospect too.
+   */
+  async contacts(input: { prospectId?: string | undefined; after: number; limit: number }): Promise<{ prospects: ProspectContacts[]; more: boolean }> {
+    const { files: all, optOuts, file: one } = input.prospectId ? await this.file(input.prospectId) : { ...(await this.read()), file: undefined };
+    // The register keeps WhatsApp numbers and addresses. A phone number is free text, so it is compared by its digits.
+    const closed = new Set([...optOuts].flatMap((key) => (key.startsWith("W#") ? [key.slice(2)] : [])));
+    for (const file of all) {
+      if (file.profile.test || !optedOut(file, optOuts)) continue;
+      for (const number of [file.profile.phone ?? "", ...file.profile.whatsapp]) if (digitsOf(number)) closed.add(digitsOf(number));
+    }
+    const listed = one ? [one] : all.filter((file) => !file.profile.test && file.profile.n > input.after).sort((a, b) => a.profile.n - b.profile.n);
+    const prospects = listed.slice(0, input.limit).map((file): ProspectContacts => {
+      const stage = stageOf(file, optOuts);
+      const { instagram: _instagram, ...named } = briefOf(file);
+      if (stage === "opted_out") return { ...named, stage };
+      const { bestRoute, secondRoute, email, decisionMaker, dmTitle, linkedin } = file.profile;
+      const open = (number: string): boolean => !closed.has(digitsOf(number));
+      const phone = file.profile.phone && open(file.profile.phone) ? file.profile.phone : undefined;
+      const whatsapp = file.profile.whatsapp.filter(open);
+      const known = Object.fromEntries(Object.entries({ bestRoute, secondRoute, email, phone, decisionMaker, dmTitle, linkedin }).filter(([, value]) => value));
+      return { ...briefOf(file), stage, ...known, ...(whatsapp.length > 0 ? { whatsapp } : {}) };
+    });
+    return { prospects, more: listed.length > input.limit };
   }
 
   /** The campaign in numbers. It names no brand and holds no contact. */

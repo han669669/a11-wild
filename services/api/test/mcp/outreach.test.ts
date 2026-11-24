@@ -13,7 +13,7 @@ const TEMPLATES = [
   { titles: ["Re: New ad for {Brand}", "{Brand}, still yours"], body: "Hi, Han again." },
   { titles: ["Last one, {Brand}", "{Brand}, one more before I go"], body: "Hi, last note from me." },
 ];
-/** Every private value of a full row. None may come back from a tool. */
+/** Every private value of a full row. Only outreach_contacts may return one. */
 const PRIVATE = { whatsapp: "+65 8123 4567", email: "founder@secretbrand.example", phone: "+65 6123 4567", decisionMaker: "Private Person", dmTitle: "Chief Secret Officer", linkedin: "https://www.linkedin.com/in/private-person" };
 const LEAKS = /81234567|8123 4567|secretbrand|61234567|6123 4567|Private Person|Chief Secret|linkedin/i;
 
@@ -57,6 +57,7 @@ describe("outreach_load", () => {
     for (const [name, args] of [
       ["outreach_next", {}],
       ["outreach_state", {}],
+      ["outreach_contacts", {}],
       ["outreach_mark", { prospectId: id, mark: "service" }],
       ["outreach_attach", { batchId: "none", why: "x" }],
     ] as const) {
@@ -83,8 +84,8 @@ describe("outreach_load", () => {
   });
 });
 
-describe("no outreach tool returns a contact", () => {
-  it("holds for a prospect that has every private field, through every tool", async () => {
+describe("only outreach_contacts returns a contact", () => {
+  it("holds for a prospect that has every private field, through every other tool", async () => {
     await callTool(studio, "outreach_load", { rows: [row(1, PRIVATE)], templates: TEMPLATES });
     const batchId = await outreachBatch(studio, "00001");
     const replies = [
@@ -103,11 +104,114 @@ describe("no outreach tool returns a contact", () => {
     expect(replies[0]!.value.owed).toEqual([{ id: "00001", n: 1, brand: "Brand 1", sector: "F&B", liveAds: 24, tier: "20+", newestAd: "2026-11-01", batchId, owes: "final", ideaId: "idea-1", imageId: expect.any(String) }]);
   });
 
-  it("lists no tool that sends, says yes to an ad, logs a reply or reads a contact", async () => {
+  it("lists no tool that sends, says yes to an ad or logs a reply", async () => {
     const token = await studio.signer.accessToken((await import("../helpers/deps.js")).config);
     const response = await studio.app.request("/mcp", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
     const tools = ((await response.json()) as { result: { tools: { name: string }[] } }).result.tools.map((tool) => tool.name).filter((name) => name.startsWith("outreach_"));
-    expect(tools.sort()).toEqual(["outreach_attach", "outreach_load", "outreach_mark", "outreach_next", "outreach_show", "outreach_state"]);
+    expect(tools.sort()).toEqual(["outreach_attach", "outreach_contacts", "outreach_load", "outreach_mark", "outreach_next", "outreach_show", "outreach_state"]);
+  });
+});
+
+describe("outreach_contacts", () => {
+  it("gives the owner's session every contact of a prospect", async () => {
+    await callTool(studio, "outreach_load", { rows: [row(1, { ...PRIVATE, bestRoute: "WhatsApp", instagram: "brand1" })] });
+    const answer = await callTool(studio, "outreach_contacts", { prospectId: "00001" });
+    expect(answer.value).toEqual({
+      prospects: [
+        {
+          id: "00001",
+          n: 1,
+          brand: "Brand 1",
+          sector: "F&B",
+          liveAds: 24,
+          tier: "20+",
+          newestAd: "2026-11-01",
+          instagram: "brand1",
+          stage: "new",
+          bestRoute: "WhatsApp",
+          whatsapp: ["6581234567"],
+          email: PRIVATE.email,
+          phone: (await outreach().store.get("00001")).phone,
+          decisionMaker: PRIVATE.decisionMaker,
+          dmTitle: PRIVATE.dmTitle,
+          linkedin: PRIVATE.linkedin,
+        },
+      ],
+      more: false,
+    });
+  });
+
+  it("reads the list in its order, in parts, without a test prospect", async () => {
+    await loadProspects(studio, [row(3), row(1), row(2)]);
+    const { makeTestProspect } = await import("../../src/outreach/load.js");
+    await makeTestProspect(outreach().store, { brand: "TEST prospect", whatsapp: "+65 8999 0000" }, () => studio.clock.now);
+    const first = (await callTool(studio, "outreach_contacts", { limit: 2 })).value;
+    expect(first.prospects.map((entry: { n: number }) => entry.n)).toEqual([1, 2]);
+    expect(first.more).toBe(true);
+    const rest = (await callTool(studio, "outreach_contacts", { after: 2, limit: 2 })).value;
+    expect(rest.prospects.map((entry: { brand: string }) => entry.brand)).toEqual(["Brand 3"]);
+    expect(rest.more).toBe(false);
+  });
+
+  it("gives no contact of a prospect who opted out, nor of one that shares its contact", async () => {
+    await loadProspects(studio, [row(1, PRIVATE), row(2, PRIVATE), row(3)]);
+    await outreach().sequence.optOut("00001");
+    const { prospects } = (await callTool(studio, "outreach_contacts", {})).value;
+    expect(prospects.slice(0, 2).map((entry: { stage: string }) => entry.stage)).toEqual(["opted_out", "opted_out"]);
+    expect(JSON.stringify(prospects.slice(0, 2))).not.toMatch(LEAKS);
+    expect(prospects[2]).toMatchObject({ stage: "new", whatsapp: ["6580000003"] });
+    expect(JSON.stringify((await callTool(studio, "outreach_contacts", { prospectId: "00002" })).value)).not.toMatch(LEAKS);
+  });
+
+  it("gives no Instagram name of a prospect who opted out, and no phone number of one for another prospect", async () => {
+    await loadProspects(studio, [row(1, { phone: "+65 6123 4567", instagram: "brand1", email: undefined }), row(2, { phone: "6123 4567", instagram: "brand2" }), row(3, { phone: "+65 6999 0000" })]);
+    await outreach().sequence.optOut("00001");
+    const { prospects } = (await callTool(studio, "outreach_contacts", {})).value;
+    expect(prospects[0]).toEqual(expect.objectContaining({ id: "00001", stage: "opted_out" }));
+    expect(JSON.stringify(prospects[0])).not.toMatch(/brand1|6123/);
+    expect(prospects[1]).toMatchObject({ id: "00002", stage: "new", instagram: "brand2", whatsapp: ["6580000002"] });
+    expect(JSON.stringify(prospects[1])).not.toMatch(/6123/);
+    expect(prospects[2]).toMatchObject({ phone: "+65 6999 0000" });
+    expect(JSON.stringify((await callTool(studio, "outreach_contacts", { prospectId: "00002" })).value)).not.toMatch(/6123/);
+  });
+
+  it("gives no number of a prospect who opted out as another prospect's WhatsApp number", async () => {
+    // The number is a phone number on the one who opted out and a WhatsApp number on the other.
+    await loadProspects(studio, [row(1, { phone: "+65 8123 4567", email: undefined }), row(2, { whatsapp: "8123 4567 / 8000 0002" }), row(3, { whatsapp: "+65 8123 4567", email: undefined })]);
+    await outreach().sequence.optOut("00001");
+    const { prospects } = (await callTool(studio, "outreach_contacts", {})).value;
+    expect(prospects[1]).toMatchObject({ id: "00002", stage: "new", whatsapp: ["6580000002"] });
+    expect(prospects[2]).toMatchObject({ id: "00003", stage: "new" });
+    expect(prospects[2]).not.toHaveProperty("whatsapp");
+    expect(JSON.stringify(prospects)).not.toMatch(/8123/);
+    expect(JSON.stringify((await callTool(studio, "outreach_contacts", { prospectId: "00003" })).value)).not.toMatch(/8123/);
+  });
+
+  it("keeps a real prospect's number when only a test prospect with that number opted out", async () => {
+    await loadProspects(studio, [row(1, { phone: "+65 8999 0000" })]);
+    const { makeTestProspect } = await import("../../src/outreach/load.js");
+    const test = await makeTestProspect(outreach().store, { brand: "TEST prospect", whatsapp: "+65 8999 0000" }, () => studio.clock.now);
+    await outreach().sequence.optOut(test.id);
+    const { prospects } = (await callTool(studio, "outreach_contacts", {})).value;
+    expect(prospects).toEqual([expect.objectContaining({ id: "00001", stage: "new", phone: "+65 8999 0000" })]);
+    expect((await callTool(studio, "outreach_contacts", { prospectId: test.id })).value.prospects[0]).toEqual(expect.objectContaining({ stage: "opted_out" }));
+  });
+
+  it("gives no number of a real prospect who opted out for a test prospect with that number", async () => {
+    await loadProspects(studio, [row(1, { whatsapp: "+65 8123 4567", email: undefined })]);
+    await outreach().sequence.optOut("00001");
+    const { makeTestProspect } = await import("../../src/outreach/load.js");
+    const test = await makeTestProspect(outreach().store, { brand: "TEST prospect", whatsapp: "+65 8123 4567", email: "test@example.com" }, () => studio.clock.now);
+    const answer = (await callTool(studio, "outreach_contacts", { prospectId: test.id })).value;
+    expect(answer.prospects[0]).toMatchObject({ stage: "new", email: "test@example.com" });
+    expect(JSON.stringify(answer)).not.toMatch(/8123/);
+  });
+
+  it("refuses an unknown prospect without a contact in the refusal", async () => {
+    await loadProspects(studio, [row(1, PRIVATE)]);
+    const answer = await callTool(studio, "outreach_contacts", { prospectId: "99999" });
+    expect(answer).toMatchObject({ ok: false });
+    expect(JSON.stringify(answer)).not.toMatch(LEAKS);
   });
 });
 

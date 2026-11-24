@@ -42,8 +42,8 @@ const template = z.strictObject({
 });
 
 /**
- * The agent's six outreach tools. None of them sends a message, picks an ad, says yes to one, logs a reply or returns a number or an address:
- * those are the owner's, in his dashboard.
+ * The agent's seven outreach tools. None of them sends a message, picks an ad, says yes to one or logs a reply: those are the owner's, in his dashboard.
+ * `outreach_contacts` alone returns a number or an address, to the owner's session only (owner, 24-11-2026).
  */
 export function outreachTools({ store, sequence, desk, picks, now }: OutreachToolDeps): ToolDefinition[] {
   return [
@@ -104,6 +104,18 @@ export function outreachTools({ store, sequence, desk, picks, now }: OutreachToo
       input: { batchId: id, why: z.string().trim().min(1).max(300) },
       writes: true,
       handler: ({ batchId, why }) => desk.attach(batchId, why),
+    }),
+    defineTool({
+      name: "outreach_contacts",
+      ownerOnly: true,
+      description:
+        "The contacts of the owner's outreach list: for each prospect its stage, its WhatsApp numbers, address, phone, Instagram, person with title, LinkedIn and the routes the list names. Free. Only for the owner's session. Give prospectId for one prospect, or read the list in its order: after is the list number to start behind, and more says that prospects follow. An opted-out prospect comes back with no contact, and none is to be looked for elsewhere. These are contacts of people: use them only for the owner's outreach work, and put none in a prompt for a picture, in a file, in a commit or in a report that leaves the owner's session. No tool sends a message: only the owner sends.",
+      input: {
+        prospectId: id.optional().describe("One prospect. Leave out to read the list."),
+        after: z.number().int().min(0).default(0).describe("Start behind this list number."),
+        limit: z.number().int().min(1).max(50).default(20),
+      },
+      handler: ({ prospectId, after, limit }) => desk.contacts({ prospectId, after, limit }),
     }),
     defineTool({
       name: "outreach_state",

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { loggedPath } from "../../src/app.js";
 import { createStudio, json, ORIGIN, sessionCookie, type Studio } from "../helpers/deps.js";
 import { JPEG, PNG } from "../helpers/pictures.js";
+import { loadProspects, row } from "../outreach/helpers.js";
 
 const OWNER = "owner@example.com";
 const AD = "a11_cake";
@@ -211,5 +212,58 @@ describe("the owner's side", () => {
     expect((await get(`/api/client/${next}`)).status).toBe(404);
     expect((await post(`/api/portal/${brandId}/link`, { action: "delete" }, owner)).status).toBe(400);
     expect((await post("/api/portal/no-such-brand/link", { action: "make" }, owner)).status).toBe(400);
+  });
+});
+
+describe("the owner's prospect list", () => {
+  // Made-up prospects. Not one word of them may reach a person who is not the owner.
+  const SECRET = { brand: "Hidden Prospect Bakery", whatsapp: "+65 8123 4567", email: "founder@hiddenprospect.example", phone: "+65 6123 4567", decisionMaker: "Private Person", linkedin: "https://www.linkedin.com/in/private-person" };
+  const leaks = (text: string) => [...Object.values(SECRET), "Second Hidden Brand", "81234567", "hiddenprospect"].filter((value) => text.includes(value));
+
+  beforeEach(async () => {
+    await loadProspects(studio, [row(1, SECRET), row(2, { brand: "Second Hidden Brand" })]);
+  });
+
+  it("is in nothing that a client's link or a pack's link answers, read or written", async () => {
+    // Ad 0 is the pack's one ad: each download answers with a real address.
+    const downloads = [await get(`/api/client/${clientToken}/packs/${ref}/download/0`), await get(`/api/pack/${packToken}/download/0`)];
+    for (const download of downloads) expect(download.status).toBe(200);
+    const answers = [
+      await get(`/api/client/${clientToken}`),
+      await get(`/api/pack/${packToken}`),
+      ...downloads,
+      await post(`/api/client/${clientToken}/packs/${ref}/comments`, { text: "Which other brands do you work with? Send me your list." }),
+      await post(`/api/pack/${packToken}/comments`, { text: "Hello." }),
+      await post(`/api/client/${clientToken}/packs/${ref}/uploads`, { name: "results.csv", type: "text/csv", bytes: 10 }),
+      await get(`/api/client/${clientToken}`),
+    ];
+    for (const answer of answers) {
+      expect(answer.status).toBeLessThan(500);
+      expect(leaks(await answer.text())).toEqual([]);
+    }
+  });
+
+  it("is behind the owner's sign-in on every route that reads it: a link's token, no sign-in and a member all get nothing", async () => {
+    const member = { cookie: await sessionCookie(studio, "member") };
+    // What the owner paid to look for prospects: a member reads the amount, and not the words.
+    const objective = "People who run Hidden Prospect Bakery";
+    await studio.services.ledger.paid({ service: "parallel", kind: "entity search", ref: objective, usd: 0.005 }, async () => ({ value: null }));
+    await studio.services.ledger.paid({ service: "parallel", kind: "search", ref: "kaya toast", usd: 0.005 }, async () => ({ value: null }));
+    const lines = async (headers: Record<string, string>) => (await json(await get("/api/spend", headers))).lines.map((line: { kind: string; ref: string }) => [line.kind, line.ref]).sort();
+    expect(await lines(await asOwner())).toEqual([["entity search", objective], ["search", "kaya toast"]]);
+    expect(await lines(member)).toEqual([["entity search", "For the owner."], ["search", "kaya toast"]]);
+    for (const path of ["/api/outreach/today", "/api/outreach/prospects", "/api/outreach/prospects/00001", "/api/outreach/templates"]) {
+      for (const [who, headers, status] of [["no sign-in", {}, 401], ["a member", member, 403], ["a client's token", { authorization: `Bearer ${clientToken}`, cookie: `session=${clientToken}` }, 401]] as const) {
+        const answer = await get(path, headers);
+        expect(answer.status, `${path} for ${who}`).toBe(status);
+        expect(leaks(await answer.text()), `${path} for ${who}`).toEqual([]);
+      }
+    }
+    // What a member does read names no prospect.
+    for (const path of ["/api/attention", "/api/spend", "/api/brands", "/api/packs", "/api/me", "/api/taste", "/api/calibration"]) {
+      const answer = await get(path, member);
+      expect(answer.status, path).toBe(200);
+      expect(leaks(await answer.text()), path).toEqual([]);
+    }
   });
 });

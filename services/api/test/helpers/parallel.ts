@@ -26,7 +26,8 @@ export function fakeParallel(answer: (call: ParallelCall) => Reply) {
     calls.push(call);
     const reply = answer(call);
     if (reply instanceof Error) throw reply;
-    return new Response(reply.text ?? JSON.stringify(reply.json ?? {}), { status: reply.status ?? 200 });
+    const status = reply.status ?? 200;
+    return new Response(status === 204 ? null : (reply.text ?? JSON.stringify(reply.json ?? {})), { status });
   }) as typeof fetch;
   return { fetchFn, calls };
 }
