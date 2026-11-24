@@ -172,11 +172,13 @@ export class PixelService {
     const all = await renders.list(batchId);
     let at: BatchImage | undefined = image.rootId ? await images.get(batchId, image.rootId) : image;
     // A final is made from its draft, and a repair from its picture: the first one the model drew alone names the pack.
+    let named: string | undefined;
     for (let step = 0; at && step < 6; step += 1) {
       const render = all.find((other) => other.id === at!.id);
       if (!render) return undefined;
+      if (!named && render.pack) named = render.pack;
       if (!render.fromId) {
-        return render.pack ? photoNamed(await brands.product((await batches.get(batchId)).productId), render.pack)?.key : undefined;
+        return named ? photoNamed(await brands.product((await batches.get(batchId)).productId), named)?.key : undefined;
       }
       at = await images.get(batchId, render.fromId);
       if (at.kind === "skeleton") return undefined;
@@ -304,6 +306,36 @@ export class PixelService {
     return picked ? { ...view, next: `The words and the logo are set as on the draft the owner picked; the place, the colour and the logo you gave were not used. ${view.next}` } : view;
   }
 
+  /** Places the brand's real logo on a v1 draft or final with no words. A final repeats the picked draft's exact logo placement after photo_finish. */
+  async logoSet(input: { batchId: string; imageId: string; logoWidth?: number; logoTop?: number; logoX?: number; logoColour?: string }): Promise<PixelView> {
+    const { batches, brands, images } = this.deps;
+    const batch = await batches.get(input.batchId);
+    if (hasWords(batch.kind)) throw new Refusal("logo_set is for v1 pictures (logo only, no words). Use type_set on a v2 or v3 batch.");
+    const given = await this.rendered(input.batchId, input.imageId);
+    const all = await images.list(input.batchId);
+    const root = given.rootId ? await images.get(input.batchId, given.rootId) : given;
+    const counted = countedOf(root, all);
+    const on = root.kind === "final" ? finishOf(counted, all) : counted;
+    if (!on) throw new Refusal(`The logo goes on a final after its real-camera finish. Run photo_finish on picture ${counted.id} first.`);
+    const brand = await brands.brand(batch.brandId);
+    if (!brand.logo) throw new Refusal("This brand has no saved logo. Save one with brand_save first.");
+    const picked = root.kind === "final" && root.fromId ? await this.setAs(input.batchId, root.fromId, all) : undefined;
+    const how = picked ?? {
+      logoKey: brand.logo.key,
+      ...(input.logoWidth !== undefined ? { logoWidth: input.logoWidth } : {}),
+      ...(input.logoTop !== undefined ? { logoTop: input.logoTop } : {}),
+      ...(input.logoX !== undefined ? { logoX: input.logoX } : {}),
+      ...(input.logoColour ? { logoColour: input.logoColour } : {}),
+    };
+    const view = await this.start(
+      "logo_set",
+      input.batchId,
+      { ...how, logoKey: brand.logo.key, renderKey: on.key },
+      { imageId: on.id, out: { kind: "typeset", fromId: on.id, rootId: root.id, ...(root.ideaId ? { ideaId: root.ideaId } : {}) } },
+    );
+    return picked ? { ...view, next: `The logo is set as on the draft the owner picked; the place, size and colour you gave were not used. ${view.next}` } : view;
+  }
+
   /** How the caller asks for the words: its place, in the brand's own font, with the brand's saved logo. */
   private async asGiven(batch: Batch, input: Parameters<PixelService["typeSet"]>[0], concept: { lockup: Lockup; ideaId: string } | undefined): Promise<Record<string, unknown>> {
     if (!input.layout.area) throw new Refusal("Give area: the place of the words on this picture, as x0,y0,x1,y1.");
@@ -330,9 +362,13 @@ export class PixelService {
     };
   }
 
-  /** How the words stand on a draft as the owner last saw it: what its newest set of words was made with, less the words and the picture. Nothing for a draft whose words were never set. */
+  /** How the words (or v1 logo) stand on a draft as the owner last saw it: prefers a set on the counted draft and falls back to the draft's root if a repair was not restamped. */
   private async setAs(batchId: string, draftId: string, all: BatchImage[]): Promise<Record<string, unknown> | undefined> {
-    const newest = all.filter((image) => image.kind === "typeset" && image.rootId === draftId).sort((one, other) => other.createdAt.localeCompare(one.createdAt))[0];
+    const draft = all.find((image) => image.id === draftId);
+    const counted = draft ? countedOf(draft, all) : undefined;
+    const onCounted = counted ? all.filter((image) => image.kind === "typeset" && image.fromId === counted.id) : [];
+    const pool = onCounted.length > 0 ? onCounted : all.filter((image) => image.kind === "typeset" && image.rootId === draftId);
+    const newest = pool.sort((one, other) => other.createdAt.localeCompare(one.createdAt))[0];
     // The picture of a set of words has the id of the job that made it.
     const job = newest ? await this.deps.jobs.find(batchId, newest.id) : undefined;
     if (!job) return undefined;

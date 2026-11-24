@@ -59,7 +59,7 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
     defineTool({
       name: "skeleton_make",
       description:
-        "Makes a skeleton: the real pack, cut from the product's pack photo, on a blank 4:5 canvas at its true proportions. Free. Use it before every draft of a product that has a pack photo, and give its picture id to render_submit as fromId: a model keeps what is already in its picture, so the pack's shape is right by construction. Each draft of an idea needs its own skeleton, with another place, scale or crop. Give either one pack (height, cx, base, count) or a plan with each pack's place, side and small turn, and flat shapes for a surface. Leave clear stage round each thing, a third of a pack's width or more: the model draws things a little larger than the skeleton, and a pack that touches its neighbour or its food cannot be measured alone. Only a skeleton made from a plan can be reprinted later. The pack photo needs a plain backdrop or its own transparency. The reply is a job: pixel_status gives the picture.",
+        "Makes a skeleton: the real pack, cut from the product's pack photo, on a blank 4:5 canvas at its true proportions. Free. Use it before every v2 draft of a product that has a pack photo (and in v1 or v3 when locking a pack or combining more than four photos), and give its picture id to render_submit as fromId: a model keeps what is already in its picture, so the pack's shape is right by construction. Each draft of an idea needs its own skeleton, with another place, scale or crop. Give either one pack (height, cx, base, count) or a plan with each pack's place, side and small turn, and flat shapes for a surface. Leave clear stage round each thing, a third of a pack's width or more: the model draws things a little larger than the skeleton, and a pack that touches its neighbour or its food cannot be measured alone. Only a skeleton made from a plan can be reprinted later. The pack photo needs a plain backdrop or its own transparency. The reply is a job: pixel_status gives the picture.",
       input: {
         batchId: id,
         ideaId: id,
@@ -229,6 +229,30 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
             ...(footnoteAlign ? { footnoteAlign } : {}),
             ...(footnoteY !== undefined ? { footnoteY } : {}),
           },
+        }),
+    }),
+    defineTool({
+      name: "logo_set",
+      description:
+        "Sets the brand's real logo on a v1 draft or final with no words. Free. Run it on every v1 draft before the owner sees it so he judges a finished poster ad, and on every v1 final after photo_finish. On a final, the studio repeats the picked draft's exact logo placement automatically.",
+      input: {
+        batchId: id,
+        imageId: id.describe("A v1 draft or final of this batch, or a repair of one."),
+        logoWidth: z.number().min(0.02).max(1).default(0.25).describe("The logo width as a share of the picture width."),
+        logoTop: z.number().min(0).max(0.9).default(0.045).describe("The logo top edge as a share of the picture height (at least 0.04)."),
+        logoX: fraction.optional().describe("The logo's left edge as a share of the width. Default: optically centred."),
+        logoColour: colour.optional().describe("A one-colour version of the logo as RRGGBB: a light one for a dark picture."),
+      },
+      writes: true,
+      needsRules: true,
+      handler: ({ batchId, imageId, logoWidth, logoTop, logoX, logoColour }) =>
+        pixels.logoSet({
+          batchId,
+          imageId,
+          logoWidth,
+          logoTop,
+          ...(logoX !== undefined ? { logoX } : {}),
+          ...(logoColour ? { logoColour } : {}),
         }),
     }),
     defineTool({

@@ -12,7 +12,7 @@ import { log } from "../log.js";
 import type { MadeCount } from "../made/count.js";
 import { NotBilledError, type SpendLedger } from "../spend/ledger.js";
 import { toMicro, toUsd } from "../spend/money.js";
-import { RENDER_RULES, wordsAsked } from "./prompt-guard.js";
+import { renderRules, wordsAsked } from "./prompt-guard.js";
 import { publicRender, type RenderStore, type StoredRender } from "./store.js";
 
 export const DRAFTS_PER_IDEA = 3;
@@ -219,9 +219,17 @@ export class RenderService {
         if (mine.some((render) => render.id !== redoOf && render.fromId === from?.id)) {
           throw new Refusal("R23: each draft of an idea comes from its own skeleton. This skeleton already has a draft of this idea. Make another skeleton, with another camera, crop or scale.");
         }
-      } else if (hasPack && batch.kind !== "v3") {
-        // A concept ad draws the product from its real photos by default, so that it can be held, turned or opened. pack_check then measures its shape.
+      } else if (hasPack && batch.kind === "v2") {
+        // v1 wild ads and v3 concept ads may draw directly from real product/food/prop photos (without a skeleton) when no pack lock is needed.
         throw new Refusal("R29: this product has a pack photo, so each draft is built round a skeleton that holds the real pack. Make one with skeleton_make and give its id as fromId.");
+      } else if (batch.kind === "v1") {
+        // Real photos first: a skeleton-free v1 draft sends every photo the idea named so the model never guesses the product or pack.
+        const shows = [...new Set(idea.shows ?? [])];
+        if (shows.length > REFERENCES_MAX) {
+          throw new Refusal(`Idea ${idea.id} shows ${shows.length} photos, and render_submit takes at most ${REFERENCES_MAX} references directly. Combine them in a skeleton (skeleton_make) and give its id as fromId.`);
+        }
+        const unsent = shows.filter((name) => !input.references.includes(name));
+        if (unsent.length > 0) throw new Refusal(`Real photos first: idea ${idea.id} shows ${unsent.join(", ")}. Give the real photo of each one in references.`);
       }
       count = (await batches.ideas(batch.id)).length * DRAFTS_PER_IDEA;
     } else {
@@ -266,7 +274,7 @@ export class RenderService {
     }
     try {
       const referenceUrls = await Promise.all(keys.map((key) => pictures.viewUrl(key, REFERENCE_LINK_SECONDS)));
-      job = await fal.submit({ kind: input.kind, prompt: `${input.prompt.trim()}\n\n${RENDER_RULES}`, referenceUrls });
+      job = await fal.submit({ kind: input.kind, prompt: `${input.prompt.trim()}\n\n${renderRules(batch.kind)}`, referenceUrls });
     } catch (error) {
       // Only a sure refusal gives the money back. Any other failure may still be billed, and a rough that may be billed keeps its place.
       if (error instanceof NotBilledError) {

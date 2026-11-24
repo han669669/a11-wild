@@ -209,7 +209,8 @@ export function batchTools({ batches, brands, facts, truth, reads, critic, done,
       handler: async ({ batchId, ideas }, context) => {
         const batch = await batches.get(batchId);
         if (batch.kind === "v3") throw new Refusal("A batch of concept ads saves its brief (brief_save) and then its concepts (concepts_save).");
-        if (batch.state !== "ideas") requireMove(batch, "ideas", "ideas_save");
+        const refiningV1 = batch.kind === "v1" && batch.state === "judged" && batch.purpose !== "outreach";
+        if (batch.state !== "ideas" && !refiningV1) requireMove(batch, "ideas", "ideas_save");
         const unread = await reads.missing(batchId, batch.kind);
         if (unread.length > 0) {
           throw new Refusal(`Read the owner's taste for this batch first. Not read yet: ${unread.join(", ")}. Call each with batchId "${batchId}".`);
@@ -244,11 +245,11 @@ export function batchTools({ batches, brands, facts, truth, reads, critic, done,
         } else {
           await batches.saveIdeas(batchId, saved, context.user.email);
         }
-        const moved = await batches.move(batch, "ideas", "ideas_save");
+        const moved = refiningV1 ? batch : await batches.move(batch, "ideas", "ideas_save");
         return {
           state: moved.state,
           ideas: saved,
-          nextStep: batch.format === "other" ? "save the text spec (spec_save)" : stepAfter({ kind: batch.kind, state: "ideas" }),
+          nextStep: batch.format === "other" ? "save the text spec (spec_save)" : stepAfter({ kind: batch.kind, state: moved.state }),
           ...(batch.format === "other" ? { note: CANNOT_RENDER } : {}),
         };
       },

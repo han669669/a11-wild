@@ -49,12 +49,12 @@ describe("the blind judgement of the ideas", () => {
     expect((await callTool(studio, "batch_get", { batchId })).value.criticOnIdeas.verdicts).toHaveLength(3);
   });
 
-  it("refuses a second use of a ticket", async () => {
+  it("refuses a second use of a ticket and advises without blocking in v1", async () => {
     const { ticket } = (await open("ideas")).value;
     const cut = { ...rules, batchId, ticket, ideas: [{ ideaId: "idea-1", verdict: "cut", reason: WHY }, { ideaId: "idea-2", verdict: "keep", reason: WHY }, { ideaId: "idea-3", verdict: "keep", reason: WHY }] };
-    expect((await callTool(studio, "critic_pick", cut)).value).toMatchObject({ state: "ideas", cut: [{ ideaId: "idea-1" }] });
-    expect(await keepAll(ticket)).toEqual(refused(/ticket is not valid.*works once/));
-    expect(await state()).toBe("ideas");
+    expect((await callTool(studio, "critic_pick", cut)).value).toMatchObject({ state: "judged", cut: [{ ideaId: "idea-1" }] });
+    expect(await keepAll(ticket)).toEqual(refused(/already at "judged"|ticket is not valid/));
+    expect(await state()).toBe("judged");
   });
 
   it("refuses a ticket that ran out, a pick that skips an idea, and a ticket made for other ideas", async () => {

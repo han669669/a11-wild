@@ -245,14 +245,15 @@ describe("an outreach batch", () => {
       expect((await callTool(studio, "batch_get", { batchId })).value.batch.state).toBe("ideas");
     });
 
-    it("leaves a client's batch as it was: every idea is kept before it goes on, and the studio counts no limit", async () => {
+    it("lets a client's v1 batch move to judged with advisory critic notes and allows refining cut ideas with ideas_save", async () => {
       await withIdeas({});
-      for (let round = 0; round < 3; round++) {
-        const reply = await judge(["idea-1"]);
-        expect(reply.value).toMatchObject({ state: "ideas", nextStep: expect.stringMatching(/writes a new idea in place of each one/) });
-      }
-      expect((await judge([])).value).toMatchObject({ state: "judged" });
+      const reply = await judge(["idea-1"]);
+      expect(reply.value).toMatchObject({ state: "judged", cut: [{ ideaId: "idea-1" }], nextStep: expect.stringMatching(/advises and never blocks/) });
       expect(await studio.services.batches.ideas(batchId)).toHaveLength(3);
+      // Refining cut ideas after the advisory critic keeps the batch in "judged", ready for drafting.
+      const refined = await callTool(studio, "ideas_save", { ...rules, batchId, ideas: [idea(4), idea(5), idea(6)] });
+      expect(refined.value).toMatchObject({ state: "judged" });
+      expect((await studio.services.batches.ideas(batchId))[0]?.title).toBe(idea(4).title);
     });
   });
 

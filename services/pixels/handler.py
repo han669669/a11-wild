@@ -437,6 +437,36 @@ def set_type(job):
     return {"line": line}, out
 
 
+def set_logo(job):
+    """Places the brand's real logo on a v1 picture with no words. Optically centred unless logoX is given, with breathing space from the edges."""
+    source = job.fetch("renderKey")
+    four_by_five(source, "The picture")
+    out = job.out()
+    given = job.input
+    logo_width = float(fraction(given.get("logoWidth", 0.25), "logoWidth", 0.02, 1.0))
+    logo_top = float(fraction(given.get("logoTop", 0.045), "logoTop", 0.0, 0.9))
+    logo_x = float(fraction(given["logoX"], "logoX", 0.0, 1.0)) if given.get("logoX") is not None else None
+    margin = 0.04
+    if logo_x is not None and logo_x + logo_width > 1.0:
+        raise Refused("logoX + logoWidth must be 1 or less so the logo stays inside the picture.")
+    logo_file = logo_png(job, job.fetch("logoKey"))
+    with Image.open(source, formats=FORMATS) as base, Image.open(logo_file, formats=["PNG"]) as mark:
+        im = base.convert("RGB")
+        W, H = im.size
+        logo = mark.convert("RGBA")
+        if logo.getbbox():
+            logo = logo.crop(logo.getbbox())
+        lw = max(1, int(W * logo_width))
+        logo = logo.resize((lw, max(1, round(logo.height * lw / logo.width))), Image.LANCZOS)
+        ly = int(H * logo_top)
+        lx = round(W / 2 - headline.body_centre(logo)) if logo_x is None else round(W * logo_x)
+        if logo_top < margin or lx < margin * W or lx + logo.width > (1 - margin) * W or ly + logo.height > (1 - margin) * H:
+            raise Refused(f"The logo is less than {int(margin * 100)}% from the picture edge: keep logoTop >= {margin} and the logo inside the margins.")
+        im.paste(logo, (lx, ly), logo)
+        im.save(out, quality=95)
+    return {"line": f"logo {logo.width}x{logo.height}px at ({lx},{ly}), top {100 * ly / H:.1f}% bottom {100 * (ly + logo.height) / H:.1f}% of the height"}, out
+
+
 def grade_food(job):
     """The food in a picture, moved toward the colour of a real close-up of the same food. Only colour moves: texture and shape stay."""
     source = job.fetch("renderKey")
@@ -531,6 +561,7 @@ TOOLS = {
     "photo_finish": finish,
     "food_crop": crop_food,
     "headline": set_type,
+    "logo_set": set_logo,
     "food_grade": grade_food,
     "relight": relight,
     "box_print": print_box,

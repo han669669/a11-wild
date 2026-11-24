@@ -80,9 +80,8 @@ describe("render_submit", () => {
     expect(await state()).toBe("drafting");
   });
 
-  it("builds each draft of an idea round its own skeleton (R23, R29)", async () => {
+  it("allows v1 drafts without a skeleton and enforces unique skeletons when skeletons are used (R23)", async () => {
     await batchAtIdeas({ pack: true });
-    expect(await draft()).toEqual(refused(/R29.*skeleton_make/));
     const [one, two, three] = [await skeleton(1), await skeleton(2), await skeleton(3)];
     const first = await draft({ fromId: one });
     await callTool(studio, "render_status", { batchId, renderId: first.value.id });
@@ -92,8 +91,9 @@ describe("render_submit", () => {
     expect((await draft({ fromId: two })).ok).toBe(true);
     expect((await draft({ fromId: three })).ok).toBe(true);
     expect(await draft({ fromId: await skeleton(4) })).toEqual(refused(/has its 3 drafts/));
-    // Another idea may use a skeleton that a first idea used.
+    // Another idea may use a skeleton that a first idea used, or draw directly from real photos without a skeleton.
     expect((await draft({ ideaId: "idea-2", fromId: one })).ok).toBe(true);
+    expect((await draft({ ideaId: "idea-2" })).ok).toBe(true);
   });
 
   it("takes only the product's photos and the brand's logo as other references", async () => {

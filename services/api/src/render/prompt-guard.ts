@@ -1,3 +1,5 @@
+import type { BatchKind } from "@a11-wild/shared";
+
 /**
  * Hard check R16: a picture carries the brand logo and no words. A prompt that asks the model
  * to paint words is refused before anything is sent or paid for.
@@ -30,3 +32,14 @@ export const RENDER_RULES =
   "Keep the product from the reference picture exactly as it is: the same shape, the same proportions and the same print. " +
   "Every object keeps its real size next to the product, and rests on a surface with a contact shadow or is held in a hand; nothing floats. " +
   "No drip, spill or stain on the product or on a prop.";
+
+/** Per-kind render rules appended by the server. v1 allows playful scale staging while keeping food and pack truth strict. */
+export const renderRules = (kind: BatchKind): string =>
+  kind === "v1"
+    ? "Format: a 4:5 portrait photograph for a static ad. " +
+      "No words, letters or numbers anywhere in the picture, except the print on the product itself and the brand logo. " +
+      "No button, price, web address, caption, sign, handwriting or printed paper on a prop. " +
+      "Keep the food and any shown product from the reference picture faithful in texture, layers, colour, shape and print. " +
+      "Playful scale staging is welcome, while every object rests on a surface with a contact shadow or is held naturally; nothing floats awkwardly. " +
+      "No drip, spill or stain on the product or on a prop."
+    : RENDER_RULES;
