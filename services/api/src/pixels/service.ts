@@ -304,6 +304,36 @@ export class PixelService {
     return picked ? { ...view, next: `The words and the logo are set as on the draft the owner picked; the place, the colour and the logo you gave were not used. ${view.next}` } : view;
   }
 
+  /** Places the brand's real logo on a v1 draft or final with no words. A final repeats the picked draft's exact logo placement after photo_finish. */
+  async logoSet(input: { batchId: string; imageId: string; logoWidth?: number; logoTop?: number; logoX?: number; logoColour?: string }): Promise<PixelView> {
+    const { batches, brands, images } = this.deps;
+    const batch = await batches.get(input.batchId);
+    if (hasWords(batch.kind)) throw new Refusal("logo_set is for v1 pictures (logo only, no words). Use type_set on a v2 or v3 batch.");
+    const given = await this.rendered(input.batchId, input.imageId);
+    const all = await images.list(input.batchId);
+    const root = given.rootId ? await images.get(input.batchId, given.rootId) : given;
+    const counted = countedOf(root, all);
+    const on = root.kind === "final" ? finishOf(counted, all) : counted;
+    if (!on) throw new Refusal(`The logo goes on a final after its real-camera finish. Run photo_finish on picture ${counted.id} first.`);
+    const brand = await brands.brand(batch.brandId);
+    if (!brand.logo) throw new Refusal("This brand has no saved logo. Save one with brand_save first.");
+    const picked = root.kind === "final" && root.fromId ? await this.setAs(input.batchId, root.fromId, all) : undefined;
+    const how = picked ?? {
+      logoKey: brand.logo.key,
+      ...(input.logoWidth !== undefined ? { logoWidth: input.logoWidth } : {}),
+      ...(input.logoTop !== undefined ? { logoTop: input.logoTop } : {}),
+      ...(input.logoX !== undefined ? { logoX: input.logoX } : {}),
+      ...(input.logoColour ? { logoColour: input.logoColour } : {}),
+    };
+    const view = await this.start(
+      "logo_set",
+      input.batchId,
+      { ...how, logoKey: brand.logo.key, renderKey: on.key },
+      { imageId: on.id, out: { kind: "typeset", fromId: on.id, rootId: root.id, ...(root.ideaId ? { ideaId: root.ideaId } : {}) } },
+    );
+    return picked ? { ...view, next: `The logo is set as on the draft the owner picked; the place, size and colour you gave were not used. ${view.next}` } : view;
+  }
+
   /** How the caller asks for the words: its place, in the brand's own font, with the brand's saved logo. */
   private async asGiven(batch: Batch, input: Parameters<PixelService["typeSet"]>[0], concept: { lockup: Lockup; ideaId: string } | undefined): Promise<Record<string, unknown>> {
     if (!input.layout.area) throw new Refusal("Give area: the place of the words on this picture, as x0,y0,x1,y1.");

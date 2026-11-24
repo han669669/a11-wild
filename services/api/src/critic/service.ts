@@ -248,7 +248,7 @@ export class CriticService {
     };
   }
 
-  /** The critic's keep or cut for each idea. A batch whose ideas are all kept is judged. */
+  /** The critic's keep or cut for each idea. In v1, the critic advises and moves the batch to judged; in outreach it still keeps only the kept ideas and stops if none are kept. */
   async pick(batchId: string, ticket: string, verdicts: IdeaVerdict[]) {
     const { batches, critic } = this.deps;
     const batch = await batches.get(batchId);
@@ -260,25 +260,25 @@ export class CriticService {
     const saved = await critic.saveVerdicts(batchId, verdicts);
     const cut = verdicts.filter((verdict) => verdict.verdict === "cut");
     const kept = verdicts.filter((verdict) => verdict.verdict === "keep").map((verdict) => verdict.ideaId);
-    // An outreach batch makes one ad, so one kept idea is enough: a cut idea starts no new round.
+    // An outreach batch makes one ad, so one kept idea is enough: if none are kept, another round runs.
     const outreach = batch.purpose === "outreach";
-    if (cut.length > 0 && !(outreach && kept.length > 0)) {
+    if (outreach && kept.length === 0) {
       return {
         state: batch.state,
         cut: cut.map(({ ideaId, reason }) => ({ ideaId, reason })),
-        nextStep: outreach
-          ? outreachRound(saved.rounds)
-          : "Report the cut ideas and your reasons. The main agent writes a new idea in place of each one (ideas_save with all three), and then a fresh critic judges again.",
+        nextStep: outreachRound(saved.rounds),
       };
     }
-    if (cut.length > 0) await batches.saveIdeas(batchId, (await batches.ideas(batchId)).filter((idea) => kept.includes(idea.id)), "critic");
+    if (outreach && cut.length > 0) await batches.saveIdeas(batchId, (await batches.ideas(batchId)).filter((idea) => kept.includes(idea.id)), "critic");
     const moved = await batches.move(batch, "judged", "critic_pick");
     return {
       state: moved.state,
       ...(cut.length > 0 ? { kept, cut: cut.map(({ ideaId, reason }) => ({ ideaId, reason })) } : {}),
       nextStep: outreach
         ? "Report the ideas you kept, with your reasons. The main agent takes the one it is most sure of and goes on; it starts no other critic for the ideas."
-        : "Report that the three ideas are kept, with your reasons. The main agent now sends one draft to read its price.",
+        : cut.length > 0
+          ? "Report your advice and reasons for each idea. In v1 the critic advises and never blocks: the main agent may refine cut ideas (ideas_save) or go on to drafts with the owner's direction."
+          : "Report that the three ideas are kept, with your reasons. The main agent now sends one draft to read its price.",
     };
   }
 

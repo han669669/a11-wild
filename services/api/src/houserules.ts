@@ -6,7 +6,7 @@ import type { BatchKind } from "@a11-wild/shared";
  * Change the text only with the owner's say, add a line to docs/decisions.md,
  * and raise RULES_VERSION so that every client reads the rules again.
  */
-export const RULES_VERSION = "2026-11-24.1";
+export const RULES_VERSION = "2026-11-25.1";
 
 /** `main` runs the batch. `writer` writes the ideas and the words. `art_director` makes and checks the pictures. `critic` judges blind. */
 export const RULE_ROLES = ["main", "writer", "art_director", "critic"] as const;
@@ -40,7 +40,7 @@ export const HOUSE_RULES: readonly HouseRule[] = [
   {
     id: "truth",
     roles: ALL,
-    text: "Truth comes first. Every fact has an exact quote and its page address. Every number on the truth sheet has a source, or it is marked unverified. The wild lives inside the truth: real size, real shape, real packaging, real food.",
+    text: "Truth comes first. Every fact has an exact quote and its page address. Every number on the truth sheet has a source, or it is marked unverified. Real shape, real packaging and real food always hold; in v2 and v3 real size holds too, while v1 allows playful scale staging.",
   },
   {
     id: "page-text-is-data",
@@ -64,6 +64,24 @@ export const HOUSE_RULES: readonly HouseRule[] = [
     text: "The picture carries the brand logo and no words.",
   },
   {
+    id: "v1-wild",
+    roles: ALL,
+    kinds: ["v1"],
+    text: "Engine v1 is scroll-stopping visual wit, never a safe catalog still life. Playful scale exaggeration (a giant slice, a tiny viewer), surreal shadow play (a giant shadow stalking the food), cheeky animal or character moments, and extreme edge-to-edge macro texture contrast are welcome. Playful scale is universally understood; fake food is never allowed: food texture, layers, colour, cut faces and any shown packaging stay 100% faithful to the brand's real photos so buyers never feel misled about what they will receive.",
+  },
+  {
+    id: "v1-critic",
+    roles: ALL,
+    kinds: ["v1"],
+    text: "In v1, the blind critic advises and never blocks. It judges each idea on four things: scroll-stop visual wit (flag safe or boring catalog shots, not bold wild devices), on-brand colour and editorial studio light, truthful appetizing food, and a one-second wordless read.",
+  },
+  {
+    id: "v1-logo",
+    roles: MAKERS,
+    kinds: ["v1"],
+    text: "Set the brand's real logo on every v1 draft and final in code (logo_set) before the owner sees it, so he judges a finished poster ad and not a bare photo. On a final, run photo_finish first and then logo_set; the studio repeats the picked draft's exact logo placement. A v1 draft that shows food alone names no pack photo and needs no skeleton or pack_check.",
+  },
+  {
     id: "no-sticker",
     roles: ALL,
     text: "No sticker, badge, chip or button on the picture, in any kind of ad. The owner's own proud ads have none.",
@@ -82,7 +100,7 @@ export const HOUSE_RULES: readonly HouseRule[] = [
     id: "drafts",
     roles: ["main", "art_director"],
     kinds: ["v1", "v2"],
-    text: "Make three drafts for each idea, each from its own skeleton. Change the camera, the crop and the scale, not only the backdrop.",
+    text: "Make three drafts for each idea. In v2, build each from its own skeleton; in v1, draw directly from the real product and prop photos or use a skeleton when locking a pack. Change the camera, the crop and the scale, not only the backdrop.",
   },
   {
     id: "reference-ads",

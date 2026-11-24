@@ -85,12 +85,12 @@ describe("checks", () => {
     expect((await studio.services.checks.measure(batchId, first!, PACK_CHECK, null)).items).toEqual([]);
   });
 
-  it("asks for the pack measure on every draft of a product that has a pack photo", async () => {
+  it("asks for the pack measure only on v1 drafts that show the pack, not food-only drafts", async () => {
     const product = await studio.services.brands.product((await studio.services.batches.get(batchId)).productId);
     await studio.services.brands.saveProduct({ ...product, photos: [...product.photos, { key: "products/p/pack.png", sourceUrl: "https://cdn.wongi.example/pack.png", kind: "pack" }] });
+    // Food-only v1 drafts (no pack reference or skeleton) do not require pack_check.
     await checkAll();
-    expect(await state()).toBe("drafting");
-    for (const imageId of Object.values(drafts).flat()) await studio.services.checks.measure(batchId, imageId, PACK_CHECK, null);
+    expect(await state()).toBe("checked");
     expect((await callTool(studio, "board_show", { batchId })).value.batch.state).toBe("waiting_pick");
   });
 

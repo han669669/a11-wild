@@ -232,6 +232,30 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
         }),
     }),
     defineTool({
+      name: "logo_set",
+      description:
+        "Sets the brand's real logo on a v1 draft or final with no words. Free. Run it on every v1 draft before the owner sees it so he judges a finished poster ad, and on every v1 final after photo_finish. On a final, the studio repeats the picked draft's exact logo placement automatically.",
+      input: {
+        batchId: id,
+        imageId: id.describe("A v1 draft or final of this batch, or a repair of one."),
+        logoWidth: z.number().min(0.02).max(1).default(0.25).describe("The logo width as a share of the picture width."),
+        logoTop: z.number().min(0).max(0.9).default(0.045).describe("The logo top edge as a share of the picture height (at least 0.04)."),
+        logoX: fraction.optional().describe("The logo's left edge as a share of the width. Default: optically centred."),
+        logoColour: colour.optional().describe("A one-colour version of the logo as RRGGBB: a light one for a dark picture."),
+      },
+      writes: true,
+      needsRules: true,
+      handler: ({ batchId, imageId, logoWidth, logoTop, logoX, logoColour }) =>
+        pixels.logoSet({
+          batchId,
+          imageId,
+          logoWidth,
+          logoTop,
+          ...(logoX !== undefined ? { logoX } : {}),
+          ...(logoColour ? { logoColour } : {}),
+        }),
+    }),
+    defineTool({
       name: "food_grade",
       description:
         "Moves the colour of the food in a picture toward a real close-up photo of the same food. Free. Use it when real food looks pale or flat beside the brand's own close-up. Only colour moves: texture and shape stay, and the colour never goes past the real photo. It makes a new picture that stands for the old one: check it again.",

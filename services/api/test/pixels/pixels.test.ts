@@ -260,6 +260,23 @@ describe("repairs, the finish and the food crop", () => {
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ foodKey: "products/p/food.jpg", box: [400, 600, 656, 856] });
     expect(await run("food_crop", { imageId, box: [400, 600, 656, 856], photo: 2 })).toEqual(refused(/1 food photo\(s\)/));
   });
+
+  it("places the brand's real logo on a v1 draft and repeats that placement on its finished final", async () => {
+    const imageId = await draft();
+    const brand = await studio.services.brands.brand((await studio.services.batches.get(batchId)).brandId);
+    expect(await run("logo_set", { imageId, ...rules })).toEqual(refused(/no saved logo/));
+    await studio.services.brands.saveBrand({ ...brand, logo: { key: "brands/b/logo.png", sourceUrl: "https://cdn.wongi.example/logo.png" } });
+    const stamped = await run("logo_set", { imageId, ...rules, logoWidth: 0.22, logoTop: 0.05, logoColour: "FFFFFF" });
+    expect(stamped.value.image).toMatchObject({ kind: "typeset", fromId: imageId, rootId: imageId });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ logoKey: "brands/b/logo.png", logoWidth: 0.22, logoTop: 0.05, logoColour: "FFFFFF" });
+
+    const final = await studio.services.images.add({ batchId, kind: "final", ideaId: "idea-1", fromId: imageId, key: `batches/${batchId}/finals/f1.jpg` });
+    expect(await run("logo_set", { imageId: final.id, ...rules })).toEqual(refused(/Run photo_finish/));
+    const finished = await run("photo_finish", { imageId: final.id });
+    const finalLogo = await run("logo_set", { imageId: final.id, ...rules, logoWidth: 0.4, logoTop: 0.1 });
+    expect(finalLogo.value.image).toMatchObject({ kind: "typeset", fromId: finished.value.image.id, rootId: final.id });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ logoKey: "brands/b/logo.png", logoWidth: 0.22, logoTop: 0.05, logoColour: "FFFFFF", renderKey: finished.value.image.key });
+  });
 });
 
 describe("the board before the drafts", () => {

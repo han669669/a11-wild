@@ -990,6 +990,7 @@ export type PixelTool =
   | "photo_finish"
   | "food_crop"
   | "headline"
+  | "logo_set"
   | "food_grade"
   | "relight"
   | "box_print"
