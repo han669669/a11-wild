@@ -197,6 +197,16 @@ describe("outreach_contacts", () => {
     expect((await callTool(studio, "outreach_contacts", { prospectId: test.id })).value.prospects[0]).toEqual(expect.objectContaining({ stage: "opted_out" }));
   });
 
+  it("gives no number of a real prospect who opted out for a test prospect with that number", async () => {
+    await loadProspects(studio, [row(1, { whatsapp: "+65 8123 4567", email: undefined })]);
+    await outreach().sequence.optOut("00001");
+    const { makeTestProspect } = await import("../../src/outreach/load.js");
+    const test = await makeTestProspect(outreach().store, { brand: "TEST prospect", whatsapp: "+65 8123 4567", email: "test@example.com" }, () => studio.clock.now);
+    const answer = (await callTool(studio, "outreach_contacts", { prospectId: test.id })).value;
+    expect(answer.prospects[0]).toMatchObject({ stage: "new", email: "test@example.com" });
+    expect(JSON.stringify(answer)).not.toMatch(/8123/);
+  });
+
   it("refuses an unknown prospect without a contact in the refusal", async () => {
     await loadProspects(studio, [row(1, PRIVATE)]);
     const answer = await callTool(studio, "outreach_contacts", { prospectId: "99999" });

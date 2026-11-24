@@ -206,7 +206,7 @@ export class OutreachDesk {
    * The contacts of the list, in its order, for an agent in the owner's session (owner, 24-11-2026).
    * An opted-out prospect comes back with no contact, its Instagram name included: its opt-out is final.
    * A number of an opted-out prospect is given for no other prospect, as a phone number or as a WhatsApp number.
-   * A test prospect's opt-out stays on the test prospect: it closes no number of a real one.
+   * A test prospect's opt-out stays on the test prospect: it closes no number of a real one. A real one's opt-out closes its number for a test prospect too.
    */
   async contacts(input: { prospectId?: string | undefined; after: number; limit: number }): Promise<{ prospects: ProspectContacts[]; more: boolean }> {
     const { files: all, optOuts, file: one } = input.prospectId ? await this.file(input.prospectId) : { ...(await this.read()), file: undefined };
@@ -222,7 +222,7 @@ export class OutreachDesk {
       const { instagram: _instagram, ...named } = briefOf(file);
       if (stage === "opted_out") return { ...named, stage };
       const { bestRoute, secondRoute, email, decisionMaker, dmTitle, linkedin } = file.profile;
-      const open = (number: string): boolean => file.profile.test === true || !closed.has(digitsOf(number));
+      const open = (number: string): boolean => !closed.has(digitsOf(number));
       const phone = file.profile.phone && open(file.profile.phone) ? file.profile.phone : undefined;
       const whatsapp = file.profile.whatsapp.filter(open);
       const known = Object.fromEntries(Object.entries({ bestRoute, secondRoute, email, phone, decisionMaker, dmTitle, linkedin }).filter(([, value]) => value));

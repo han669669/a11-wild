@@ -59,15 +59,16 @@ export class DynamoTable implements Table {
 
   async put(item: Item, options: { ifNotExists?: boolean; ifEquals?: { attribute: string; value: string } } = {}): Promise<boolean> {
     const { ifEquals } = options;
+    const conditions = [...(options.ifNotExists ? ["attribute_not_exists(pk)"] : []), ...(ifEquals ? ["#attribute = :value"] : [])];
     try {
       await this.doc.send(
         new PutCommand({
           TableName: this.tableName,
           Item: item,
-          ...(options.ifNotExists ? { ConditionExpression: "attribute_not_exists(pk)" } : {}),
+          // Each condition that is set must hold, as in the in-memory table of the tests.
+          ...(conditions.length > 0 ? { ConditionExpression: conditions.join(" AND ") } : {}),
           ...(ifEquals
             ? {
-                ConditionExpression: "#attribute = :value",
                 ExpressionAttributeNames: { "#attribute": ifEquals.attribute },
                 ExpressionAttributeValues: { ":value": ifEquals.value },
               }
