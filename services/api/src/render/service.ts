@@ -224,7 +224,7 @@ export class RenderService {
         throw new Refusal("R29: this product has a pack photo, so each draft is built round a skeleton that holds the real pack. Make one with skeleton_make and give its id as fromId.");
       } else if (batch.kind === "v1") {
         // Real photos first: a skeleton-free v1 draft sends every photo the idea named so the model never guesses the product or pack.
-        const shows = idea.shows ?? [];
+        const shows = [...new Set(idea.shows ?? [])];
         if (shows.length > REFERENCES_MAX) {
           throw new Refusal(`Idea ${idea.id} shows ${shows.length} photos, and render_submit takes at most ${REFERENCES_MAX} references directly. Combine them in a skeleton (skeleton_make) and give its id as fromId.`);
         }

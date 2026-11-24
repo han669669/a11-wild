@@ -362,13 +362,13 @@ export class PixelService {
     };
   }
 
-  /** How the words (or v1 logo) stand on a draft as the owner last saw it: what its newest set on the counted draft was made with, less the words and the picture. */
+  /** How the words (or v1 logo) stand on a draft as the owner last saw it: prefers a set on the counted draft and falls back to the draft's root if a repair was not restamped. */
   private async setAs(batchId: string, draftId: string, all: BatchImage[]): Promise<Record<string, unknown> | undefined> {
     const draft = all.find((image) => image.id === draftId);
     const counted = draft ? countedOf(draft, all) : undefined;
-    const newest = all
-      .filter((image) => image.kind === "typeset" && (counted ? image.fromId === counted.id : image.rootId === draftId))
-      .sort((one, other) => other.createdAt.localeCompare(one.createdAt))[0];
+    const onCounted = counted ? all.filter((image) => image.kind === "typeset" && image.fromId === counted.id) : [];
+    const pool = onCounted.length > 0 ? onCounted : all.filter((image) => image.kind === "typeset" && image.rootId === draftId);
+    const newest = pool.sort((one, other) => other.createdAt.localeCompare(one.createdAt))[0];
     // The picture of a set of words has the id of the job that made it.
     const job = newest ? await this.deps.jobs.find(batchId, newest.id) : undefined;
     if (!job) return undefined;

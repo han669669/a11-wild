@@ -209,7 +209,7 @@ export function batchTools({ batches, brands, facts, truth, reads, critic, done,
       handler: async ({ batchId, ideas }, context) => {
         const batch = await batches.get(batchId);
         if (batch.kind === "v3") throw new Refusal("A batch of concept ads saves its brief (brief_save) and then its concepts (concepts_save).");
-        const refiningV1 = batch.kind === "v1" && batch.state === "judged";
+        const refiningV1 = batch.kind === "v1" && batch.state === "judged" && batch.purpose !== "outreach";
         if (batch.state !== "ideas" && !refiningV1) requireMove(batch, "ideas", "ideas_save");
         const unread = await reads.missing(batchId, batch.kind);
         if (unread.length > 0) {
