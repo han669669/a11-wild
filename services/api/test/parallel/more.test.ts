@@ -102,12 +102,27 @@ describe("Parallel client: the newer calls", () => {
     expect(await spent()).toBeGreaterThan(0);
   });
 
-  it("stops a FindAll run of US$1 or more for the owner's yes, before anything is sent", async () => {
-    const { parallel, client: c } = client(() => ({ json: {} }));
-    const error = await c.findAllStart({ objective: "Kaya makers", entityType: "companies", conditions: [{ name: "a", description: "Sells kaya." }], generator: "core", matchLimit: 5 }).catch((e: unknown) => e);
+  it("starts a FindAll run of US$10 or less with no yes from the owner, and other research still waits at its own US$1", async () => {
+    const reply = { findall_id: "findall_1", status: { status: "queued", is_active: true, metrics: {} }, run_id: "run_1" };
+    const { parallel, client: c } = client(() => ({ json: reply }));
+    await c.findAllStart({ objective: "Kaya makers", entityType: "companies", conditions: [{ name: "a", description: "Sells kaya." }], generator: "core", matchLimit: 10 });
+    expect(await spent()).toBe(findAllUsd("core", 10));
+    // The run is not in the total that the US$1 gate reads: nine research runs of US$0.10 go on, and the tenth waits.
+    for (let n = 0; n < 9; n += 1) await c.taskStart({ question: "How tall is the pack?", processor: "pro" });
+    const error = await c.taskStart({ question: "How tall is the pack?", processor: "pro" }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(GateError);
-    expect(parallel.calls).toEqual([]);
-    expect(await spent()).toBe(0);
+    expect(parallel.calls).toHaveLength(10);
+  });
+
+  it("still stops a FindAll run at the month's cap and at a batch's cap", async () => {
+    const { parallel, client: c } = client(() => ({ json: { findall_id: "findall_1", status: { status: "queued", is_active: true, metrics: {} } } }));
+    const start = (batchId?: string) =>
+      c.findAllStart({ objective: "Kaya makers", entityType: "companies", conditions: [{ name: "a", description: "Sells kaya." }], generator: "core", matchLimit: 50, ...(batchId ? { batchId } : {}) });
+    await expect(start("batch-1")).rejects.toThrow(/batch's spend cap/);
+    await start();
+    await start();
+    await expect(start()).rejects.toThrow(/month's spend cap/);
+    expect(parallel.calls).toHaveLength(2);
   });
 
   it("releases the hold when Parallel refuses a newer call, and never repeats the key", async () => {

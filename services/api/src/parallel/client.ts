@@ -31,6 +31,13 @@ export type FindAllGenerator = keyof typeof PRICES.findAll;
 export type MonitorProcessor = keyof typeof PRICES.monitor;
 export type EntityType = "companies" | "people";
 
+/**
+ * The owner's rule of 24-11-2026: a FindAll run of this price or less needs no yes from him, and does not count
+ * toward the US$1 at which other research waits. The month's cap and a batch's cap hold as before.
+ */
+export const FINDALL_NO_YES_USD = 10;
+const NO_YES_KINDS: readonly string[] = ["findall"];
+
 /** The hours between two executions of a monitor. */
 /** The name of the studio's own id in a monitor's metadata at Parallel (16 characters at most). */
 const WATCH_KEY = "studio_watch";
@@ -235,7 +242,8 @@ export class ParallelClient {
   ): Promise<T> {
     // Read the key first: with no key there is nothing to send, so nothing to reserve.
     await this.keys.get("parallel");
-    if (this.gate) await this.gate.research(batchId, await this.ledger.batchMicro(batchId, "parallel"), toMicro(usd));
+    const noYes = NO_YES_KINDS.includes(kind) && usd <= FINDALL_NO_YES_USD;
+    if (this.gate && !noYes) await this.gate.research(batchId, await this.ledger.batchMicro(batchId, "parallel", NO_YES_KINDS), toMicro(usd));
     return this.ledger.paid({ service: "parallel", kind, ref, usd, ...(batchId ? { batchId } : {}) }, async () => ({
       value: await call(),
     }));
