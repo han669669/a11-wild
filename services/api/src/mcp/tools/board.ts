@@ -26,10 +26,10 @@ export function boardTools({ board }: { board: BoardService }): ToolDefinition[]
     defineTool({
       name: "checks_save",
       description:
-        "Saves your look at one draft or one final: the D and F items you found in it, each with a line on what is wrong. rules_get gives the meaning of D1 to D11 and F1 to F8. Send an empty list when you looked and found nothing. One D item rejects the picture, and a draft with a D item never becomes a final. An item that a pixel tool measured (pack_check, cap_check) is kept: this call cannot remove it. In a batch with words, look at each picture twice: the bare picture, and the picture type_set made from it, by that picture's own id. A D item on the picture with its words means the type is set again. When every draft is checked the batch moves to checked; the reply names what is still missing.",
+        "Saves your look at one draft or one final: the D and F items you found in it, each with a line on what is wrong. rules_get gives the meaning of D1 to D11 and F1 to F8. Send an empty list when you looked and found nothing. In a client batch, one D item rejects the picture, and a draft with a D item never becomes a final; in an outreach batch, findings are kept as notes beside the picture and block nothing. An item that a pixel tool measured (pack_check, cap_check) is kept: this call cannot remove it. Look at each picture twice when a stamp is added: the bare picture, and the picture type_set (v2/v3) or logo_set (v1) made from it, by that picture's own id. When every draft is checked the batch moves to checked; follow stillMissing in the reply for any next step (such as re-running type_set/logo_set or making a new final).",
       input: {
         batchId: id,
-        imageId: id.describe("The picture id of the draft or the final, of a repair of one, or of the picture type_set made from one."),
+        imageId: id.describe("The picture id of the draft or the final, of a repair of one, or of the picture type_set or logo_set made from one."),
         items: z
           .array(z.strictObject({ code: z.enum(CHECK_CODE_LIST), note: z.string().min(3).max(300).describe("What is wrong in this picture.") }))
           .max(19),
