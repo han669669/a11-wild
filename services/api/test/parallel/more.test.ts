@@ -279,14 +279,21 @@ describe("watches", () => {
 
   /** A second client on the same stand-in that does something first, one time, right before the request that `when` picks. */
   const paused = (fetchFn: typeof fetch, when: (url: string) => boolean) => {
-    const hold: { first?: () => Promise<unknown> } = {};
+    // `first` runs before Parallel gets the call, `late` after Parallel did the work and before its answer is here.
+    const hold: { first?: () => Promise<unknown>; late?: () => Promise<unknown> } = {};
     const slow = (async (input: string | URL | Request, init?: RequestInit) => {
       const first = when(String(input)) ? hold.first : undefined;
       if (first) {
         delete hold.first;
         await first();
       }
-      return fetchFn(input, init);
+      const reply = await fetchFn(input, init);
+      const late = when(String(input)) ? hold.late : undefined;
+      if (late) {
+        delete hold.late;
+        await late();
+      }
+      return reply;
     }) as typeof fetch;
     return { hold, client: new ParallelClient(testKeys, ledger, slow) };
   };
@@ -326,6 +333,22 @@ describe("watches", () => {
     made.push({ monitor_id: "monitor_lost", status: "active", metadata: { studio_watch: "0123456789abcdef01234567" } }, { monitor_id: "monitor_elsewhere", status: "active", metadata: null });
     expect(await new Watches(table, c, now).stopExpired()).toEqual([]);
     expect(made.map((monitor) => [monitor.monitor_id, monitor.status])).toEqual([["monitor_lost", "cancelled"], ["monitor_elsewhere", "active"]]);
+  });
+
+  it("leaves a new watch in its place when the daily job and a stop came before the late answer to a start", async () => {
+    const { parallel, client: c, made } = monitors();
+    const owner = new Watches(table, c, now);
+    const slow = paused(parallel.fetchFn, (url) => url.endsWith("/v1/monitors"));
+    // Parallel runs the monitor, but its answer is not here yet. The daily job finds the monitor and makes the start a watch. The owner stops that watch and starts a second one, which takes its place.
+    slow.hold.late = async () => {
+      await owner.stopExpired();
+      expect(await owner.list()).toEqual([expect.objectContaining({ monitorId: "monitor_1", status: "active" })]);
+      await owner.stop("monitor_1");
+      await owner.start({ ...WATCH, query: "A second watch" });
+    };
+    await expect(new Watches(table, slow.client, now).start(WATCH)).rejects.toThrow(/Start it again/);
+    expect(await owner.list()).toEqual([expect.objectContaining({ monitorId: "monitor_2", query: "A second watch", status: "active" }), expect.objectContaining({ monitorId: "monitor_1", status: "stopped" })]);
+    expect(made.map((monitor) => [monitor.monitor_id, monitor.status])).toEqual([["monitor_1", "cancelled"], ["monitor_2", "active"]]);
   });
 
   it("leaves a new watch in its place when the answer to an older start comes late, and ends the older one", async () => {
