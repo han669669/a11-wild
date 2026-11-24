@@ -86,9 +86,14 @@ describe("studio stack", () => {
 
     const functions = Object.entries(template.findResources("AWS::Lambda::Function"));
     const withKeys = functions.filter(([, fn]) => fn.Properties.Environment?.Variables?.KEYS_PREFIX !== undefined);
-    expect(withKeys.map(([id]) => id)).toEqual([expect.stringMatching(/ApiFunction/)]);
+    // The daily job has the place too: it cancels a Parallel watch at its end, and its policy names that one key only.
+    expect(withKeys.map(([id]) => id).sort()).toEqual([expect.stringMatching(/ApiFunction/), expect.stringMatching(/PruneFunction/)]);
     // The key's place is named, never the key.
-    expect(withKeys[0]?.[1].Properties.Environment.Variables.KEYS_PREFIX).toBe("/a11-wild/keys");
+    for (const [, fn] of withKeys) expect(fn.Properties.Environment.Variables.KEYS_PREFIX).toBe("/a11-wild/keys");
+    const oneKey = holds("parameter/a11-wild/keys/parallel");
+    expect(oneKey).toHaveLength(1);
+    expect(oneKey[0]).toMatch(/PruneFunction/);
+    expect(holds("parameter/a11-wild/keys/fal")).toEqual([]);
   });
 
   it("gives the pixel function pictures only: no table, no key, no parameter, and only the API function starts it", () => {
