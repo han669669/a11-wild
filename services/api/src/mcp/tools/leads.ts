@@ -22,8 +22,9 @@ const usd = (value: number) => `US$${value.toFixed(value < 0.1 ? 3 : 2)}`;
 const FREQUENCIES = Object.keys(MONITOR_HOURS) as [MonitorFrequency, ...MonitorFrequency[]];
 
 /**
- * The rest of Parallel (owner, 24-11-2026): decisions, shopping and places for every user, and the search for
- * companies and people, FindAll and watches for the owner's session. Every paid call goes through the ledger.
+ * The rest of Parallel (owner, 24-11-2026): decisions, shopping, places, the search for companies and people,
+ * FindAll and watches. A paid tool is the owner's already; the ones that find leads or run on at Parallel are
+ * owner-only by name too, their free reads included. Every paid call goes through the ledger.
  */
 export function leadTools({ brands, parallel, watches }: LeadToolDeps): ToolDefinition[] {
   return [
