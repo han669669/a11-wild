@@ -279,7 +279,18 @@ def measured(code, line):
 
 
 def check_pack(job):
-    _, mask, _ = job.pack()
+    _, mask, box = job.pack()
+    if job.input.get("box") is not None:
+        # Respect the pack's crop box from the skeleton (e.g. a tall bottle inside a square studio photo with opaque props/foam).
+        x0, y0, x1, y1 = (int(v) for v in box.split(","))
+        with Image.open(mask) as m:
+            if not (0 <= x0 < x1 <= m.width and 0 <= y0 < y1 <= m.height):
+                raise Refused("box must lie inside the pack photo.")
+            # Pad by 1px of black so pack_check sees transparent surroundings even if the mask fills the crop box.
+            cropped = Image.new("L", (x1 - x0 + 2, y1 - y0 + 2), 0)
+            cropped.paste(m.convert("L").crop((x0, y0, x1, y1)), (1, 1))
+            mask = os.path.join(job.folder, "pack_mask_box.png")
+            cropped.save(mask)
     render = job.fetch("renderKey")
     four_by_five(render, "The render")
     at = numbers(job.input.get("at"), 2, "at")

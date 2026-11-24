@@ -134,6 +134,22 @@ class Handler(unittest.TestCase):
         outside = self.job("pack_check", **args, around=[600, 600, 724, 1100])
         self.assertIn("box must lie inside the picture and hold the point", outside["error"])
 
+    def test_pack_check_respects_pack_box_on_opaque_square_packshot(self):
+        # A tall pack inside a square photo with a coloured/opaque fill inside a light border (measures 1.000 without box).
+        square = Image.new("RGB", (400, 400), (255, 255, 255))
+        square.paste(Image.new("RGB", (360, 360), (180, 120, 210)), (20, 20))
+        self.store.add("products/p/square.png", square)
+        self.store.add("batches/b1/drafts/tall.png", render(150, 450))
+        without_box = self.job("pack_check", packKey="products/p/square.png", renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
+        self.assertTrue(without_box["ok"], without_box)
+        self.assertFalse(without_box["passed"])
+        with_box = self.job("pack_check", packKey="products/p/square.png", box=[150, 50, 250, 350], renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
+        self.assertTrue(with_box["ok"] and with_box["passed"], with_box)
+        self.assertIn("packshot H/W 3.000", with_box["line"])
+        bad_box = self.job("pack_check", packKey="products/p/square.png", box=[150, 50, 450, 350], renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
+        self.assertFalse(bad_box["ok"])
+        self.assertIn("box must lie inside the pack photo", bad_box["error"])
+
     def test_cap_check_fails_a_cap_that_sits_off_centre(self):
         self.store.add("batches/b1/finals/centred.png", bottle(0))
         self.store.add("batches/b1/finals/shifted.png", bottle(6))
