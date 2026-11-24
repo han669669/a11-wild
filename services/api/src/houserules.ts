@@ -6,7 +6,7 @@ import type { BatchKind } from "@a11-wild/shared";
  * Change the text only with the owner's say, add a line to docs/decisions.md,
  * and raise RULES_VERSION so that every client reads the rules again.
  */
-export const RULES_VERSION = "2026-11-25.1";
+export const RULES_VERSION = "2026-11-25.2";
 
 /** `main` runs the batch. `writer` writes the ideas and the words. `art_director` makes and checks the pictures. `critic` judges blind. */
 export const RULE_ROLES = ["main", "writer", "art_director", "critic"] as const;
@@ -67,13 +67,13 @@ export const HOUSE_RULES: readonly HouseRule[] = [
     id: "v1-wild",
     roles: ALL,
     kinds: ["v1"],
-    text: "Engine v1 is scroll-stopping visual wit, never a safe catalog still life. Playful scale exaggeration (a giant slice, a tiny viewer), surreal shadow play (a giant shadow stalking the food), cheeky animal or character moments, and extreme edge-to-edge macro texture contrast are welcome. Playful scale is universally understood; fake food is never allowed: food texture, layers, colour, cut faces and any shown packaging stay 100% faithful to the brand's real photos so buyers never feel misled about what they will receive.",
+    text: "Engine v1 is scroll-stopping visual wit, never a safe catalog still life — and never a template copied from a reference ad. Invent each wild concept from this specific product's name, shape, texture, layers or truth; do not repeat motifs from reference ads (such as cats, animals or stalking shadows) unless they genuinely belong to this product. Playful scale exaggeration and bold editorial staging are welcome because buyers universally understand playful scale; fake food is never allowed: food texture, layers, colour, cut faces and any shown packaging stay 100% faithful to the brand's real photos so buyers never feel misled about what they will receive.",
   },
   {
     id: "v1-critic",
     roles: ALL,
     kinds: ["v1"],
-    text: "In client v1 batches, the blind critic advises and never blocks (outreach batches still need at least one kept idea). It judges each idea on four things: scroll-stop visual wit (flag safe or boring catalog shots, not bold wild devices), on-brand colour and editorial studio light, truthful appetizing food, and a one-second wordless read.",
+    text: "In client v1 batches, the blind critic advises and never blocks (outreach batches still need at least one kept idea). It judges each idea on four things: original scroll-stop visual wit earned by this product (flag both safe catalog shots and lazy motif-copying from reference ads with no link to the product), on-brand colour and editorial studio light, truthful appetizing food, and a one-second wordless read.",
   },
   {
     id: "v1-logo",
