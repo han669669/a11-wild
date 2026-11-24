@@ -278,19 +278,68 @@ def measured(code, line):
     return {"line": line, "passed": code == 0}, None
 
 
-def check_pack(job):
-    _, mask, box = job.pack()
-    if job.input.get("box") is not None:
-        # Respect the pack's exact crop box from skeleton_make (e.g. a tall bottle inside a square studio photo with opaque props/foam).
-        x0, y0, x1, y1 = (int(v) for v in box.split(","))
-        with Image.open(mask) as m:
-            if not (0 <= x0 < x1 <= m.width and 0 <= y0 < y1 <= m.height):
-                raise Refused("box must lie inside the pack photo.")
-            # Pad by 1px of black so pack_check sees transparent surroundings even if the mask fills the crop box.
+def _box_mask(mask_path, pack_size, box_str, out_path):
+    """Crop a packshot mask to `box` for pack_check, padded with a 1px black rim.
+
+    When `mask_path` is a real cutout around the pack, keep pixels in the 4px skeleton/swap PAD margin
+    only where they belong to a foreground region already inside `box` (matching skeleton/swap while
+    excluding detached props outside `box`). When the photo has no cutout separation around `box`
+    (opaque backdrop or edge-to-edge studio photo), fall back to the exact `box` rectangle.
+    """
+    x0, y0, x1, y1 = (int(v) for v in box_str.split(","))
+    w, h = pack_size
+    if not (0 <= x0 < x1 <= w and 0 <= y0 < y1 <= h):
+        raise Refused("box must lie inside the pack photo.")
+    if mask_path is None:
+        cropped = Image.new("L", (x1 - x0 + 2, y1 - y0 + 2), 0)
+        cropped.paste(Image.new("L", (x1 - x0, y1 - y0), 255), (1, 1))
+        cropped.save(out_path)
+        return out_path
+    pad = product_lock.PAD
+    with Image.open(mask_path) as m:
+        if m.size != (w, h):
+            raise Refused("box must lie inside the pack photo.")
+        grey = m.convert("L")
+        px0, py0, px1, py1 = max(0, x0 - pad), max(0, y0 - pad), min(w, x1 + pad), min(h, y1 + pad)
+        arr = np.asarray(grey.crop((px0, py0, px1, py1))) > 128
+        # If the padded border is still solid foreground (no cutout separation around the pack), use the exact box.
+        border_opaque = arr[0, :].all() and arr[-1, :].all() and arr[:, 0].all() and arr[:, -1].all()
+        if border_opaque:
+            inner = grey.crop((x0, y0, x1, y1))
             cropped = Image.new("L", (x1 - x0 + 2, y1 - y0 + 2), 0)
-            cropped.paste(m.convert("L").crop((x0, y0, x1, y1)), (1, 1))
-            mask = os.path.join(job.folder, "pack_mask_box.png")
-            cropped.save(mask)
+            cropped.paste(inner, (1, 1))
+            cropped.save(out_path)
+            return out_path
+        # Keep only foreground regions that overlap the inner box, so detached props in the PAD margin are excluded.
+        import cv2
+        n_labels, labels = cv2.connectedComponents(arr.astype(np.uint8), connectivity=4)
+        ix0, iy0, ix1, iy1 = x0 - px0, y0 - py0, x1 - px0, y1 - py0
+        inside_labels = set(np.unique(labels[iy0:iy1, ix0:ix1])) - {0}
+        if not inside_labels:
+            raise Refused("No product was found inside box.")
+        keep = np.isin(labels, list(inside_labels)).astype(np.uint8) * 255
+        cropped = Image.new("L", (keep.shape[1] + 2, keep.shape[0] + 2), 0)
+        cropped.paste(Image.fromarray(keep, "L"), (1, 1))
+        cropped.save(out_path)
+        return out_path
+
+
+def check_pack(job):
+    if job.input.get("box") is not None:
+        path = job.fetch("packKey")
+        box = numbers(job.input["box"], 4, "box")
+        with Image.open(path) as picture:
+            pack_size = picture.size
+        try:
+            mask, _ = job.cut(path, job.input.get("cutout"), job.input["box"])
+        except Refused as err:
+            if "no backdrop" not in str(err).lower():
+                raise
+            # Edge-to-edge studio photo with no detectable backdrop: measure against the explicit pack box.
+            mask = None
+        mask = _box_mask(mask, pack_size, box, os.path.join(job.folder, "pack_mask_box.png"))
+    else:
+        _, mask, _ = job.pack()
     render = job.fetch("renderKey")
     four_by_five(render, "The render")
     at = numbers(job.input.get("at"), 2, "at")

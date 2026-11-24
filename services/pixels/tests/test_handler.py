@@ -135,11 +135,10 @@ class Handler(unittest.TestCase):
         self.assertIn("box must lie inside the picture and hold the point", outside["error"])
 
     def test_pack_check_respects_pack_box_on_opaque_square_packshot(self):
-        # A tall pack inside a square photo with a coloured/opaque fill inside a light border (measures 1.000 without box).
+        # 1. Tall pack inside a square photo with opaque coloured fill inside a light border (measures 1.000 without box).
         square = Image.new("RGB", (400, 400), (255, 255, 255))
         square.paste(Image.new("RGB", (360, 360), (180, 120, 210)), (20, 20))
         self.store.add("products/p/square.png", square)
-        # Exact box crop gives H/W 3.000 (100x300), excluding any opaque backdrop or nearby props outside box.
         self.store.add("batches/b1/drafts/tall.png", render(150, 450))
         without_box = self.job("pack_check", packKey="products/p/square.png", renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
         self.assertTrue(without_box["ok"], without_box)
@@ -147,6 +146,22 @@ class Handler(unittest.TestCase):
         with_box = self.job("pack_check", packKey="products/p/square.png", box=[150, 50, 250, 350], renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
         self.assertTrue(with_box["ok"] and with_box["passed"], with_box)
         self.assertIn("packshot H/W 3.000", with_box["line"])
+        # 2. Edge-to-edge opaque studio photo with no detectable backdrop on edges still works when box is given.
+        edge_to_edge = Image.new("RGB", (400, 400), (180, 120, 210))
+        self.store.add("products/p/full.png", edge_to_edge)
+        full_boxed = self.job("pack_check", packKey="products/p/full.png", box=[150, 50, 250, 350], renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
+        self.assertTrue(full_boxed["ok"] and full_boxed["passed"], full_boxed)
+        self.assertIn("packshot H/W 3.000", full_boxed["line"])
+        # 3. Cutout pack extending 2px into PAD is retained while a detached prop inside PAD is excluded.
+        rgba = Image.new("RGBA", (400, 400), (0, 0, 0, 0))
+        rgba.paste(Image.new("RGBA", (100, 300), (40, 80, 200, 255)), (150, 50))
+        rgba.paste(Image.new("RGBA", (20, 20), (200, 80, 40, 255)), (251, 180))  # detached prop 1px right of pack (inside PAD)
+        self.store.add("products/p/with_prop.png", rgba)
+        # Box sits 2px inside left edge (x0=152) and right at pack's right edge (x1=250): left 2px pack edge kept, detached prop excluded -> 100x300 (H/W 3.000).
+        prop_boxed = self.job("pack_check", packKey="products/p/with_prop.png", box=[152, 50, 250, 350], renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
+        self.assertTrue(prop_boxed["ok"] and prop_boxed["passed"], prop_boxed)
+        self.assertIn("packshot H/W 3.000", prop_boxed["line"])
+        # 4. Out-of-bounds box is refused.
         bad_box = self.job("pack_check", packKey="products/p/square.png", box=[150, 50, 450, 350], renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
         self.assertFalse(bad_box["ok"])
         self.assertIn("box must lie inside the pack photo", bad_box["error"])
