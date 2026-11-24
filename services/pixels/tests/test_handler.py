@@ -139,14 +139,14 @@ class Handler(unittest.TestCase):
         square = Image.new("RGB", (400, 400), (255, 255, 255))
         square.paste(Image.new("RGB", (360, 360), (180, 120, 210)), (20, 20))
         self.store.add("products/p/square.png", square)
-        # Skeleton crops box with a 4px PAD on each side (108x308 -> H/W 2.852), so a render of that shape passes.
-        self.store.add("batches/b1/drafts/tall.png", render(158, 450))
+        # Exact box crop gives H/W 3.000 (100x300), excluding any opaque backdrop or nearby props outside box.
+        self.store.add("batches/b1/drafts/tall.png", render(150, 450))
         without_box = self.job("pack_check", packKey="products/p/square.png", renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
         self.assertTrue(without_box["ok"], without_box)
         self.assertFalse(without_box["passed"])
         with_box = self.job("pack_check", packKey="products/p/square.png", box=[150, 50, 250, 350], renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
         self.assertTrue(with_box["ok"] and with_box["passed"], with_box)
-        self.assertIn("packshot H/W 2.852", with_box["line"])
+        self.assertIn("packshot H/W 3.000", with_box["line"])
         bad_box = self.job("pack_check", packKey="products/p/square.png", box=[150, 50, 450, 350], renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
         self.assertFalse(bad_box["ok"])
         self.assertIn("box must lie inside the pack photo", bad_box["error"])
