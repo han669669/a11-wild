@@ -158,5 +158,14 @@ describe("brandExtract", () => {
     });
     const shopifyFallbackUpgraded = await brandExtract({ url: "https://shop.example/" }, shopifyFallbackNet);
     expect(shopifyFallbackUpgraded.logoCandidates).toEqual([{ url: "https://shop.example/cdn/shop/files/logo.png?v=1", kind: "header" }]);
+
+    const transparentLogoPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="/logo-transparent.png" srcset="/logo.svg 2x" alt="Brand"></a></header></body></html>`;
+    const transparentLogoNet = fakeNet({
+      "https://brand.example/": html(transparentLogoPage),
+      "https://brand.example/logo.svg": { body: "<svg/>", headers: { "content-type": "image/svg+xml" } },
+      "https://brand.example/logo-transparent.png": { body: "x", headers: { "content-type": "image/x-png" } },
+    });
+    const transparentKept = await brandExtract({ url: "https://brand.example/" }, transparentLogoNet);
+    expect(transparentKept.logoCandidates).toEqual([{ url: "https://brand.example/logo-transparent.png", kind: "header" }]);
   });
 });

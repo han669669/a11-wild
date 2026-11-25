@@ -205,7 +205,7 @@ export function largestSrcset(srcset: string | undefined): string | undefined {
   return rankedSrcset(srcset)[0];
 }
 
-const LAZY_SRC = /(^|[^a-z])(blank|placeholder|spacer|transparent|pixel|1x1|loading)([^a-z]|$)/i;
+const LAZY_SRC = /(?:^|\/)(blank|placeholder|spacer|transparent|pixel|1x1|loading)\.[a-z0-9]+(?:[?#]|$)/i;
 
 /** Ordered image addresses from an <img> tag, best-first: srcset, data-srcset, then src / data-src (preferring data-src when lazy-loaded and dropping placeholder src files). */
 export function imgSrcCandidates(imgTag: string): string[] {

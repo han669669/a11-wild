@@ -62,8 +62,8 @@ const top = <T extends string>(counts: Map<T, number>, n: number, boost?: T | nu
 const LOGOS_MAX = 6;
 const PRODUCT_PAGES_MAX = 30;
 
-/** Raster MIME types that copyPicture accepts. */
-const SAVABLE_RASTER_MIME = new Set(["image/png", "image/jpeg", "image/webp"]);
+/** Raster MIME types (including legacy PNG/JPEG aliases) that copyPicture accepts. */
+const SAVABLE_RASTER_MIME = new Set(["image/png", "image/x-png", "image/jpeg", "image/jpg", "image/pjpeg", "image/webp"]);
 /** Max probe attempts per logo candidate across srcset/src/data-src fallbacks. */
 const PROBE_ATTEMPTS_MAX = 4;
 
@@ -219,13 +219,13 @@ export async function brandExtract(input: { url: string }, net: Net) {
         const all = [c.url, ...(c.fallbacks ?? [])];
         const urls = all.length <= PROBE_ATTEMPTS_MAX ? all : [...all.slice(0, PROBE_ATTEMPTS_MAX - 2), ...all.slice(-2)];
         const triedFull = new Set<string>();
+        // Share one 4s budget across all opportunistic Shopify upgrade probes for this candidate so fallbacks keep >= 6s.
+        const upgradeSignal = AbortSignal.any([probeSignal, AbortSignal.timeout(4_000)]);
         let lastState: "live" | "svg" | "dead" | "unknown" = "dead";
         for (const u of urls) {
           const full = fullSizeShopifyLogo(u);
-          if (full && !triedFull.has(full)) {
+          if (full && !triedFull.has(full) && !upgradeSignal.aborted) {
             triedFull.add(full);
-            // Bound the opportunistic full-size probe so a slow original cannot starve the fallback deadline.
-            const upgradeSignal = AbortSignal.any([probeSignal, AbortSignal.timeout(4_000)]);
             if ((await probeLogo(net, full, upgradeSignal, true)) === "live") {
               return { candidate: { url: full, kind: c.kind }, state: "live" as const };
             }
