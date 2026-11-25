@@ -92,5 +92,21 @@ describe("brandExtract", () => {
     });
     const kept = await brandExtract({ url: "https://shop.example/" }, fallbackNet);
     expect(kept.logoCandidates).toEqual([{ url: "https://shop.example/cdn/shop/files/logo.png?v=1&width=300", kind: "header" }]);
+
+    const oversizedFull = fakeNet({
+      "https://shop.example/": html(shopPage),
+      "https://shop.example/cdn/shop/files/logo.png?v=1": { body: "x", headers: { "content-type": "image/png", "content-length": "9000000" } },
+      "https://shop.example/cdn/shop/files/logo.png?v=1&width=300": { body: "x", headers: { "content-type": "image/png", "content-length": "40000" } },
+    });
+    const keptSavable = await brandExtract({ url: "https://shop.example/" }, oversizedFull);
+    expect(keptSavable.logoCandidates).toEqual([{ url: "https://shop.example/cdn/shop/files/logo.png?v=1&width=300", kind: "header" }]);
+
+    const deadSrcsetPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="/logo.png" srcset="/logo-2x.png 2x" alt="Brand"></a></header></body></html>`;
+    const deadSrcsetNet = fakeNet({
+      "https://brand.example/": html(deadSrcsetPage),
+      "https://brand.example/logo.png": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const recovered = await brandExtract({ url: "https://brand.example/" }, deadSrcsetNet);
+    expect(recovered.logoCandidates).toEqual([{ url: "https://brand.example/logo.png", kind: "header" }]);
   });
 });

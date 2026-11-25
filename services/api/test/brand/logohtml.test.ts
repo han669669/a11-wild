@@ -171,7 +171,13 @@ describe("cubic review fixes", () => {
     ]);
     const density = `<header><a href="/"><img src="/logo-1x.png" srcset="/logo-1x.png 1x, /logo-2x.png 2x, /logo-3x.png 3x"></a></header>`;
     expect(headerLogos(density, page, "Brand")).toEqual([{ kind: "img", url: "https://brand.example/logo-3x.png" }]);
+    const compact = `<header><a href="/"><img src="/logo-small.png" srcset="/logo-small.png 1x,/logo-large.png 3x"></a></header>`;
+    expect(headerLogos(compact, page, "Brand")).toEqual([{ kind: "img", url: "https://brand.example/logo-large.png" }]);
+    const commaUrl = `<header><a href="/"><img srcset="https://cdn.example/w_300,q_auto/logo.png 300w,https://cdn.example/w_600,q_auto/logo.png 600w"></a></header>`;
+    expect(headerLogos(commaUrl, page, "Brand")).toEqual([{ kind: "img", url: "https://cdn.example/w_600,q_auto/logo.png" }]);
     const lazy = `<header><a href="/"><img src="data:image/gif;base64,R0lGOD" data-srcset="/logo-200.png 200w, /logo-800.png 800w"></a></header>`;
     expect(headerLogos(lazy, page, "Brand")).toEqual([{ kind: "img", url: "https://brand.example/logo-800.png" }]);
+    const plainWithDataSrc = `<header><a href="/"><img src="/live.png" data-src="/other.png"></a></header>`;
+    expect(headerLogos(plainWithDataSrc, page, "Brand")).toEqual([{ kind: "img", url: "https://brand.example/live.png" }]);
   });
 });

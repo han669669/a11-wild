@@ -1,6 +1,7 @@
 import { Refusal } from "../mcp/registry.js";
+import { MAX_PICTURE_BYTES } from "../pictures/store.js";
 import { isPublicHost, type Net, publicFetch, readCapped } from "../urlsafety.js";
-import { bestImgSrc, fileKey, headerLogos, organizationLogo, siteName } from "./logohtml.js";
+import { fileKey, headerLogoCandidates, imgSrcCandidates, organizationLogo, siteName } from "./logohtml.js";
 
 const HTML_MAX = 1_500_000;
 const CSS_MAX = 400_000;
@@ -61,6 +62,11 @@ const top = <T extends string>(counts: Map<T, number>, n: number, boost?: T | nu
 const LOGOS_MAX = 6;
 const PRODUCT_PAGES_MAX = 30;
 
+/** Raster MIME types that copyPicture accepts. */
+const SAVABLE_RASTER_MIME = new Set(["image/png", "image/jpeg", "image/webp"]);
+/** Max probe attempts per logo candidate (Shopify unresized upgrade + srcset/src fallbacks). */
+const PROBE_ATTEMPTS_MAX = 3;
+
 /** Strip Shopify CDN thumbnail resize params (`width`, `height`) to get the full-size raster logo when live. */
 function fullSizeShopifyLogo(url: string): string | null {
   try {
@@ -77,13 +83,20 @@ function fullSizeShopifyLogo(url: string): string | null {
 }
 
 /** live: a PNG, JPEG or WebP answered. svg: an SVG file answered (brand_save refuses SVG). dead: an error status or a reply that is not an image. unknown: no clear answer (a timeout keeps the logo). */
-async function probeLogo(net: Net, url: string, signal: AbortSignal): Promise<"live" | "svg" | "dead" | "unknown"> {
+async function probeLogo(net: Net, url: string, signal: AbortSignal, strictSavable = false): Promise<"live" | "svg" | "dead" | "unknown"> {
   try {
     const { response } = await publicFetch(url, "The logo", net, { headers: { ...UA, accept: "image/*,*/*;q=0.5" }, signal });
     await response.body?.cancel();
     if (!response.ok) return "dead";
     const type = contentType(response);
-    return type.includes("svg") ? "svg" : type.startsWith("image/") ? "live" : "dead";
+    if (type.includes("svg")) return "svg";
+    if (strictSavable) {
+      if (!SAVABLE_RASTER_MIME.has(type)) return "dead";
+      const len = Number.parseInt(response.headers.get("content-length") ?? "", 10);
+      if (Number.isFinite(len) && len > MAX_PICTURE_BYTES) return "dead";
+      return "live";
+    }
+    return type.startsWith("image/") ? "live" : "dead";
   } catch {
     return "unknown"; // a host the studio may not call, or a timeout, is not proof that the file is gone
   }
@@ -161,14 +174,18 @@ export async function brandExtract(input: { url: string }, net: Net) {
   // The brand's own logo, in this order: the header of the page, then the JSON-LD Organization logo.
   // A logo found anywhere else on the page is a guess (a press or partner logo looks the same), so it comes last and says so.
   const name = siteName(html) || meta("og:site_name") || new URL(base).hostname.replace(/^www\./, "");
-  const logoCandidates: { url: string; kind: "header" | "organization" | "guess" }[] = [];
-  const addLogo = (raw: string | undefined, kind: "header" | "organization" | "guess") => {
+  const logoCandidates: { url: string; fallbacks?: string[]; kind: "header" | "organization" | "guess" }[] = [];
+  const addLogo = (raw: string | undefined, kind: "header" | "organization" | "guess", rawFallbacks?: string[]) => {
     const u = raw ? abs(raw, base) : null;
-    if (u && !/\.ico(\?|$)/i.test(u) && !logoCandidates.some((c) => fileKey(c.url) === fileKey(u))) logoCandidates.push({ url: u, kind });
+    if (!u || /\.ico(\?|$)/i.test(u) || logoCandidates.some((c) => fileKey(c.url) === fileKey(u))) return;
+    const fallbacks = (rawFallbacks ?? [])
+      .map((f) => abs(f, base))
+      .filter((f): f is string => !!f && f !== u && !/\.ico(\?|$)/i.test(f));
+    logoCandidates.push(fallbacks.length ? { url: u, fallbacks, kind } : { url: u, kind });
   };
   let inlineSvgLogo = false;
-  for (const l of headerLogos(html, base, name)) {
-    if (l.kind === "img") addLogo(l.url, "header");
+  for (const l of headerLogoCandidates(html, base, name)) {
+    if (l.kind === "img") addLogo(l.url, "header", l.fallbacks);
     else inlineSvgLogo = true;
   }
   addLogo(organizationLogo(html, base), "organization");
@@ -180,10 +197,21 @@ export async function brandExtract(input: { url: string }, net: Net) {
     const resolved = await Promise.all(
       list.map(async (c) => {
         const full = fullSizeShopifyLogo(c.url);
-        if (full && (await probeLogo(net, full, probeSignal)) === "live") {
-          return { candidate: { ...c, url: full }, state: "live" as const };
+        if (full) {
+          // Bound the opportunistic full-size probe so a slow original cannot starve the fallback deadline.
+          const upgradeSignal = AbortSignal.any([probeSignal, AbortSignal.timeout(4_000)]);
+          if ((await probeLogo(net, full, upgradeSignal, true)) === "live") {
+            return { candidate: { url: full, kind: c.kind }, state: "live" as const };
+          }
         }
-        return { candidate: c, state: await probeLogo(net, c.url, probeSignal) };
+        const urls = [c.url, ...(c.fallbacks ?? [])].slice(0, PROBE_ATTEMPTS_MAX);
+        let lastState: "live" | "svg" | "dead" | "unknown" = "dead";
+        for (const u of urls) {
+          const state = await probeLogo(net, u, probeSignal);
+          if (state === "live" || state === "unknown") return { candidate: { url: u, kind: c.kind }, state };
+          lastState = state;
+        }
+        return { candidate: { url: c.url, kind: c.kind }, state: lastState };
       }),
     );
     deadLogos += resolved.filter((r) => r.state === "dead").length;
@@ -195,8 +223,8 @@ export async function brandExtract(input: { url: string }, net: Net) {
     // Nothing usable from the header or the site data (or every file was dead): look for a logo-named image elsewhere on the page.
     const before = logoCandidates.length; // addLogo skips a file already listed, so what it adds is new
     for (const t of tags("img")) {
-      const src = bestImgSrc(t);
-      if (src && /logo/i.test(`${src} ${attr(t, "alt") ?? ""} ${attr(t, "class") ?? ""} ${attr(t, "id") ?? ""}`)) addLogo(src, "guess");
+      const [src, ...fallbacks] = imgSrcCandidates(t);
+      if (src && /logo/i.test(`${src} ${attr(t, "alt") ?? ""} ${attr(t, "class") ?? ""} ${attr(t, "id") ?? ""}`)) addLogo(src, "guess", fallbacks);
       if (logoCandidates.length - before >= 3) break;
     }
     logos = await probe(logoCandidates.slice(before));
