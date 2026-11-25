@@ -117,23 +117,23 @@ describe("Today page", () => {
     expect(screen.queryByRole("button", { name: "Mark as sent" })).not.toBeInTheDocument();
   });
 
-  it("keeps a follow-up enabled at its saved destination while a contact check is pending", async () => {
+  it("uses the current contact for a follow-up without gating it on a contact check", async () => {
     const line = firstLine({
       prospect: prospectRow({ stage: "contacted", channel: "email", flags: { duplicate: false, blocked: false, check: true } }),
       step: 1,
-      sendTo: { channel: "whatsapp", to: "6580000001", direct: false },
+      sendTo: { channel: "email", to: "amelia@example.com", direct: true, person: "Amelia Lee", title: "Founder" },
       routeCheckTo: { channel: "email", to: "amelia@example.com", direct: true, person: "Amelia Lee", title: "Founder" },
       routeCheck: true,
       messages: [
-        { title: "Re: New ad for Koi Tea", text: "Hi again.", href: "https://wa.me/6580000001?text=follow-up" },
-        { title: "Koi Tea, still yours", text: "Hi again.", href: "https://wa.me/6580000001?text=follow-up" },
+        { title: "Re: New ad for Koi Tea", text: "Hi again.", href: "mailto:amelia@example.com" },
+        { title: "Koi Tea, still yours", text: "Hi again.", href: "mailto:amelia@example.com" },
       ],
     });
     stubApi({ "GET /api/outreach/today": () => ({ body: todayPage({ firsts: [], followUps: [line] }) }) });
     renderSignedIn(<Outreach />);
     expect(await screen.findByText("The best contact changed. Now: Email to Amelia Lee, Founder (amelia@example.com).")).toBeInTheDocument();
-    expect(screen.getByText("To the brand on WhatsApp")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Open WhatsApp" })).toHaveAttribute("href", "https://wa.me/6580000001?text=follow-up");
+    expect(screen.getByText("To the brand on Email")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open the mail program" })).toHaveAttribute("href", "mailto:amelia@example.com");
     expect(screen.getByRole("button", { name: "Mark as sent" })).toBeEnabled();
   });
 

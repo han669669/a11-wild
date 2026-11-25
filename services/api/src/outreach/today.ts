@@ -1,7 +1,7 @@
 import type { OutreachAd, OutreachAdView, OutreachStep, OutreachTemplates, ProspectFile, ProspectRow, TodayLine, TodayPage } from "@a11-wild/shared";
 import { isSendingDay, nextSendingDay, singaporeDay } from "./days.js";
 import { messagesFor } from "./messages.js";
-import { chosen, lastSendTarget, nextStep, sameContact, type OutreachSequence } from "./sequence.js";
+import { chosen, nextStep, sameContact, type OutreachSequence } from "./sequence.js";
 import { adWaits, approvedAd, candidatesWait, channelOf, newestAd, owedAnswer, routeCheckUnresolved, sendTarget, sendTargetUnavailable, stageOf, verdictOf } from "./stage.js";
 import type { OutreachStore } from "./store.js";
 import type { Pictures } from "../pictures/store.js";
@@ -128,7 +128,7 @@ export async function todayPage(deps: { store: OutreachStore; sequence: Outreach
     const routeCheck = routeCheckUnresolved(file);
     const routeCheckTo = routeCheck ? sendTarget(file, optOuts) : undefined;
     const currentTarget = (step !== undefined && templates !== undefined) || routeCheck ? sendTarget(file, optOuts) : undefined;
-    const target = step !== undefined && step > 0 ? lastSendTarget(file) : currentTarget;
+    const target = currentTarget;
     const sendTo = target && !sendTargetUnavailable(file, target, optOuts) ? target : undefined;
     return {
       prospect: rowOf(file, optOuts, shared, now),

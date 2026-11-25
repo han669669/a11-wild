@@ -8,7 +8,7 @@ import { singaporeDay } from "../outreach/days.js";
 import { makeTestProspect } from "../outreach/load.js";
 import { BRAND, mailLink, messagesFor, profileLink } from "../outreach/messages.js";
 import { filtered, filterOf, numbersOf } from "../outreach/numbers.js";
-import { DAILY, lastSendTarget, nextStep, sameContact } from "../outreach/sequence.js";
+import { DAILY, nextStep, sameContact } from "../outreach/sequence.js";
 import { approvedAd, owedAnswer, optedOut, routeCheckUnresolved, sendTarget, sendTargetUnavailable, sellsOf, stageOf } from "../outreach/stage.js";
 import { adView, rowOf, todayPage } from "../outreach/today.js";
 import { routeOf } from "../outreach/routes.js";
@@ -133,7 +133,7 @@ export function outreachRoutes(
     const closed = new Set(optOuts);
     for (const opted of files) if (!opted.profile.test && optedOut(opted, optOuts)) contactKeys(opted.profile).forEach((key) => closed.add(key));
     const check = stage !== "opted_out" && routeCheckUnresolved(file);
-    const target = step === undefined ? undefined : step === 0 ? sendTarget(file, optOuts) : lastSendTarget(file);
+    const target = step === undefined ? undefined : sendTarget(file, optOuts);
     const messageTarget = target && !sendTargetUnavailable(file, target, optOuts) && routeOpen(target, closed) ? target : undefined;
     const sends = [...file.sends]
       .sort((a, b) => a.step - b.step)

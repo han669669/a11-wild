@@ -99,22 +99,22 @@ describe("Prospect page", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Mark as sent" })).toBeEnabled());
   });
 
-  it("keeps a follow-up enabled at its saved channel while a contact check is pending", async () => {
-    const savedMessages = messages().map((message) => ({ ...message, href: "https://wa.me/6580000001?text=follow-up" })) as ReturnType<typeof messages>;
+  it("uses the current contact for a follow-up without gating it on a contact check", async () => {
+    const currentMessages = messages().map((message) => ({ ...message, href: "mailto:amelia@example.com" })) as ReturnType<typeof messages>;
     stubApi({
       [GET]: () => ({
         body: prospectPage({
           prospect: prospectRow({ stage: "contacted", channel: "email", flags: { duplicate: false, blocked: false, check: true } }),
           contact: { whatsapp: [], email: { address: "amelia@example.com", href: "mailto:amelia@example.com" }, sendTo: { channel: "email", to: "amelia@example.com", direct: true, person: "Amelia Lee", title: "Founder" } },
           check: true,
-          message: { step: 1, channel: "whatsapp", messages: savedMessages },
+          message: { step: 1, channel: "email", messages: currentMessages },
         }),
       }),
     });
     open();
     expect(await screen.findByText("The best contact changed. Now: Email to Amelia Lee, Founder (amelia@example.com).")).toBeInTheDocument();
-    expect(screen.getByText("Follow-up 1 by WhatsApp")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Open WhatsApp" })).toHaveAttribute("href", "https://wa.me/6580000001?text=follow-up");
+    expect(screen.getByText("Follow-up 1 by Email")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open the mail program" })).toHaveAttribute("href", "mailto:amelia@example.com");
     expect(screen.getByRole("button", { name: "Mark as sent" })).toBeEnabled();
   });
 

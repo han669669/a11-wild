@@ -75,15 +75,15 @@ describe("the Today page", () => {
     expect(JSON.stringify(line)).not.toContain("6580000001");
   });
 
-  it("keeps a follow-up linked to the address used for the first message after the contact changes", async () => {
+  it("offers a follow-up at the current contact after the contact changes", async () => {
     await ready("00001");
     await sequence.send("00001", { step: 0, title: 0 });
     at("2026-11-26T10:00:00");
     await loadRows(store, [row(1, { bestRoute: "Email (valid) replacement@example.com" })], now);
 
     const line = (await today()).followUps[0]!;
-    expect(line.sendTo).toMatchObject({ channel: "whatsapp", to: "6580000001" });
-    expect(line.messages?.[0]?.href).toMatch(/^https:\/\/wa\.me\/6580000001\?/);
+    expect(line.sendTo).toMatchObject({ channel: "email", to: "replacement@example.com" });
+    expect(line.messages?.[0]?.href).toMatch(/^mailto:replacement@example\.com\?subject=/);
   });
 
   it("puts the oldest ads first without changing the daily number", async () => {

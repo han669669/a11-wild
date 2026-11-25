@@ -122,48 +122,17 @@ describe("marking a message as sent", () => {
     expect(routeCheckUnresolved(file)).toBe(true);
   });
 
-  it("continues a follow-up at the last sent address after an import, without confirming a carried check", async () => {
+  it("uses the current contact for a follow-up after an import without confirmation", async () => {
     await ready("00001");
-    const first = await sequence.send("00001", { step: 0, title: 0 });
+    await sequence.send("00001", { step: 0, title: 0 });
     at("2026-11-26T10:00:00");
-    const replacement = row(1, { bestRoute: "Email (valid) replacement@example.com" });
-    await loadRows(store, [replacement], now);
-
-    const importedProfile = await store.get("00001");
-    expect(importedProfile.routeCheck).toBeUndefined();
-    const pending = { since: importedProfile.loadedAt, channel: "whatsapp" as const, direct: false };
-    await store.saveProfile({ ...importedProfile, routeCheck: pending });
-    at("2026-11-27T10:00:00");
-    await loadRows(store, [replacement], now);
+    await loadRows(store, [row(1, { bestRoute: "Email (valid) replacement@example.com" })], now);
 
     const imported = (await store.all()).find((entry) => entry.profile.id === "00001")!;
-    expect(imported.profile.routeCheck).toEqual(pending);
-    expect(routeCheckUnresolved(imported)).toBe(true);
+    expect(imported.profile.routeCheck).toBeUndefined();
+    expect(routeCheckUnresolved(imported)).toBe(false);
     const followUp = await sequence.send("00001", { step: 1, title: 0 });
-    expect(followUp.send).toMatchObject({ channel: first.send.channel, to: first.send.to });
-  });
-
-  it("refuses a follow-up when its last sent address is quarantined", async () => {
-    await ready("00001");
-    await sequence.send("00001", { step: 0, title: 0 });
-    at("2026-11-26T10:00:00");
-    await loadRows(store, [row(1, { bestRoute: "Email (valid) replacement@example.com", notes: "AUDIT-FLAG: +65 8000 0001 do not use" })], now);
-
-    await expect(sequence.send("00001", { step: 1, title: 0 })).rejects.toThrow(
-      "The address this brand was messaged at can no longer be used.",
-    );
-  });
-
-  it("refuses a follow-up when its last sent address has opted out", async () => {
-    await loadRows(store, [row(2, { whatsapp: "+65 8000 0001" })], now);
-    await ready("00001");
-    await sequence.send("00001", { step: 0, title: 0 });
-    await sequence.optOut("00002");
-    at("2026-11-26T10:00:00");
-
-    await expect(sequence.send("00001", { step: 1, title: 0 })).rejects.toThrow(
-      "The address this brand was messaged at can no longer be used.",
-    );
+    expect(followUp.send).toMatchObject({ channel: "email", to: "replacement@example.com" });
   });
 
   it("keeps an unresolved check when an identical import finds the brand parked", async () => {
@@ -388,6 +357,28 @@ describe("taking a mark back", () => {
     expect(await store.placesTaken("2026-11-23")).toBe(0);
     expect((await store.all())[0]!.events.at(-1)).toMatchObject({ type: "unsent", step: 0 });
     expect((await sequence.send("00001", { step: 0, title: 1 })).already).toBe(false);
+  });
+
+  it("requires confirmation after taking back a first message sent to an outdated contact", async () => {
+    await ready("00001");
+    await loadRows(store, [row(1, { bestRoute: "Email (valid) original@example.com" })], now);
+    await sequence.confirmRoute("00001");
+    const first = await sequence.send("00001", { step: 0, title: 0 });
+    await loadRows(store, [row(1, { bestRoute: "Email (valid) replacement@example.com" })], now);
+    const imported = (await store.all()).find((entry) => entry.profile.id === "00001")!;
+    expect(routeCheckUnresolved(imported)).toBe(false);
+
+    await sequence.takeBack("00001", 0);
+    const file = (await store.all()).find((entry) => entry.profile.id === "00001")!;
+    expect(await stage("00001")).toBe("ready");
+    expect(file.profile.routeCheck).toMatchObject({ since: new Date(now().getTime() + 1).toISOString(), channel: first.send.channel, direct: false });
+    expect(file.profile.routeCheck).not.toHaveProperty("to");
+    expect(routeCheckUnresolved(file)).toBe(true);
+    await expect(sequence.send("00001", { step: 0, title: 0 })).rejects.toThrow("The best contact for this brand changed. Check it, then send.");
+
+    at("2026-11-23T10:02:00");
+    await sequence.confirmRoute("00001");
+    expect((await sequence.send("00001", { step: 0, title: 0 })).send).toMatchObject({ channel: "email", to: "replacement@example.com" });
   });
 
   it("is refused on the next day, and for a step that is not the newest", async () => {
