@@ -1,13 +1,18 @@
-import type { OutreachChannel, OutreachEvent, OutreachSend, OutreachStep, OutreachTemplates, ProspectFile } from "@a11-wild/shared";
+import type { OutreachChannel, OutreachEvent, OutreachSend, OutreachStep, OutreachTemplates, ProspectFile, ProspectSendTarget } from "@a11-wild/shared";
 import { Refusal } from "../mcp/registry.js";
 import { dueDay, singaporeDay } from "./days.js";
 import { checkTemplate, fill } from "./messages.js";
-import { newestAd, optedOut, routeCheckUnresolved, sendTarget, stageOf, targetForChannel, verdictOf } from "./stage.js";
+import { newestAd, optedOut, routeCheckUnresolved, sendTarget, sendTargetUnavailable, stageOf, targetForChannel, verdictOf } from "./stage.js";
 import { contactKeys, type OutreachStore } from "./store.js";
 
 /** The owner's sequence: follow-up 1 three days after the first message, follow-up 2 four days after follow-up 1. */
 export const GAP_DAYS: Record<1 | 2, number> = { 1: 3, 2: 4 };
 export const STEP_NAMES = ["the first message", "follow-up 1", "follow-up 2"] as const;
+
+export function lastSendTarget(file: ProspectFile): ProspectSendTarget | undefined {
+  const send = [...file.sends].sort((a, b) => a.at.localeCompare(b.at)).at(-1);
+  return send?.to ? { channel: send.channel, to: send.to, direct: false } : undefined;
+}
 
 export const DAILY = { name: "DAILY", standard: 5, min: 1, max: 20 } as const;
 const TEMPLATES = "TEMPLATES";
@@ -86,8 +91,16 @@ export class OutreachSequence {
     const { step } = input;
     const before = file.sends.find((send) => send.step === step);
     if (before) return { send: before, already: true };
-    if (optedOut(file, optOuts)) throw new Refusal("This contact opted out. No message to it is recorded, and none should be sent.");
-    if (routeCheckUnresolved(file)) throw new Refusal("The best contact for this brand changed. Check it, then send.");
+    let followUpTarget: ProspectSendTarget | undefined;
+    if (step === 0) {
+      if (optedOut(file, optOuts)) throw new Refusal("This contact opted out. No message to it is recorded, and none should be sent.");
+      if (routeCheckUnresolved(file)) throw new Refusal("The best contact for this brand changed. Check it, then send.");
+    } else {
+      followUpTarget = lastSendTarget(file);
+      if (followUpTarget && sendTargetUnavailable(file, followUpTarget, optOuts)) {
+        throw new Refusal("The address this brand was messaged at can no longer be used.");
+      }
+    }
     const day = singaporeDay(this.now());
     const stage = stageOf(file, optOuts);
     if (step === 0) {
@@ -99,10 +112,11 @@ export class OutreachSequence {
       const next = nextStep(file);
       if (next?.step !== step) throw new Refusal(next ? `The next message of this brand is ${STEP_NAMES[next.step]}.` : "This brand has had its last message.");
       if (next.due > day) throw new Refusal(`${STEP_NAMES[step]} of this brand is due on ${next.due}.`);
+      if (!followUpTarget) throw new Refusal("This brand has no checked number or address.");
     }
     const templates = await this.templates();
     if (!templates) throw new Refusal("The message text is not loaded yet.");
-    const target = sendTarget(file);
+    const target = step === 0 ? sendTarget(file, optOuts) : followUpTarget;
     if (!target) throw new Refusal("This brand has no checked number or address.");
     const { channel } = target;
     const counted = step === 0 && !file.profile.test;
@@ -199,8 +213,9 @@ export class OutreachSequence {
   }
 
   async confirmRoute(id: string): Promise<OutreachEvent> {
-    const { file } = await this.file(id);
+    const { file, optOuts } = await this.file(id);
     if (!routeCheckUnresolved(file)) throw new Refusal("There is no changed contact waiting for confirmation.");
+    if (!sendTarget(file, optOuts)) throw new Refusal("There is no contact to confirm yet.");
     return this.store.addEvent(id, { type: "route", choice: "confirmed" }, "owner");
   }
 

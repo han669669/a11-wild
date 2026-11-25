@@ -121,7 +121,14 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
       {page.message && !out ? (
         <Section title="The message to send now">
           <Card>
-            <MessageCard prospect={prospect} ad={ads.find((ad) => ad.verdict === "yes")} step={page.message.step} messages={page.message.messages} done={done} disabled={Boolean(page.check)} />
+            <MessageCard
+              prospect={{ ...prospect, channel: page.message.channel ?? prospect.channel }}
+              ad={ads.find((ad) => ad.verdict === "yes")}
+              step={page.message.step}
+              messages={page.message.messages}
+              done={done}
+              disabled={Boolean(page.check && page.message.step === 0)}
+            />
           </Card>
         </Section>
       ) : null}

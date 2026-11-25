@@ -1335,6 +1335,7 @@ export interface TodayLine {
   /** Both versions of the message, with the link of the brand's channel. */
   messages?: [OutreachMessage, OutreachMessage];
   sendTo?: ProspectSendTarget;
+  routeCheckTo?: ProspectSendTarget;
   routeCheck?: boolean;
   flags?: ProspectFlag[];
   /** The reply that is owed an answer. */
@@ -1423,7 +1424,7 @@ export interface ProspectPage {
   /** The Singapore day: a mark of today can be taken back. */
   day: string;
   /** The message that can be sent now, in both versions. */
-  message?: { step: OutreachStep; messages: [OutreachMessage, OutreachMessage] };
+  message?: { step: OutreachStep; channel?: OutreachChannel; messages: [OutreachMessage, OutreachMessage] };
   /** A reply that waits for the owner's answer. */
   owed?: { text?: string; at: string };
   /** Every draft made for the brand, for the owner's pick. Missing when no outreach batch has drafts. */

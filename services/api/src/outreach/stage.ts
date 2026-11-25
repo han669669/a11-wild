@@ -1,5 +1,5 @@
 import type { OutreachAd, OutreachChannel, OutreachEvent, OutreachStage, Prospect, ProspectFile, ProspectRoute, ProspectSendTarget, ProspectSells } from "@a11-wild/shared";
-import { blockedValues, isBlockedTarget, type BlockedValues } from "./blocked.js";
+import { blockedValues, isBlockedTarget, numberKey, type BlockedValues } from "./blocked.js";
 import { EMAIL } from "./messages.js";
 import { contactKeys } from "./store.js";
 
@@ -155,6 +155,11 @@ export function sendTarget(file: ProspectFile, optOuts?: ReadonlySet<string>): P
   const channelEvent = last(file.events, "channel");
   const blocked = blockedValues(file.profile.flags ?? []);
   return channelEvent ? targetForChannel(file, channelEvent.channel, blocked) ?? defaultTarget(file, blocked) : defaultTarget(file, blocked);
+}
+
+export function sendTargetUnavailable(file: ProspectFile, target: ProspectSendTarget, optOuts: ReadonlySet<string>): boolean {
+  const key = target.channel === "email" ? `E#${target.to.toLowerCase()}` : `W#${numberKey(target.to)}`;
+  return isBlockedTarget(blockedValues(file.profile.flags ?? []), target) || file.events.some((event) => event.type === "optout") || optOuts.has(key);
 }
 
 function defaultTarget(file: ProspectFile, blocked: BlockedValues): ProspectSendTarget | undefined {

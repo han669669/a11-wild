@@ -4,7 +4,7 @@ import { Refusal } from "../mcp/registry.js";
 import { blockedValues, EMAIL_IN_TEXT, isBlockedTarget, numberKey } from "./blocked.js";
 import { EMAIL } from "./messages.js";
 import { routeOf } from "./routes.js";
-import { routeCheckUnresolved, sendTarget, stageOf } from "./stage.js";
+import { sendTarget, stageOf } from "./stage.js";
 import { type OutreachStore, prospectId } from "./store.js";
 
 /** One row of the owner's list, as plain text and numbers. The spreadsheet is read outside the server. */
@@ -286,9 +286,9 @@ export async function loadRows(
       if (file && before) {
         const previous = { ...file, profile: before };
         const oldTarget = sendTarget(previous, optOuts);
-        const active = ["pick_waits", "pick_made", "ad_waits", "ready", "contacted", "replied", "in_talks", "client"].includes(stageOf(previous, optOuts));
+        const active = ["pick_waits", "pick_made", "ad_waits", "ready"].includes(stageOf(previous, optOuts));
         const nextTarget = sendTarget({ ...file, profile }, optOuts);
-        if (oldTarget && nextTarget && !sameChannelAndTo(oldTarget, nextTarget) && (active || routeCheckUnresolved(previous))) {
+        if (oldTarget && nextTarget && !sameChannelAndTo(oldTarget, nextTarget) && active) {
           profile.routeCheck = { since: loadedAt, channel: oldTarget.channel, direct: oldTarget.direct };
         } else if (before.routeCheck) {
           profile.routeCheck = before.routeCheck;

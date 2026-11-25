@@ -8,8 +8,8 @@ import { singaporeDay } from "../outreach/days.js";
 import { makeTestProspect } from "../outreach/load.js";
 import { BRAND, mailLink, messagesFor, profileLink } from "../outreach/messages.js";
 import { filtered, filterOf, numbersOf } from "../outreach/numbers.js";
-import { DAILY, nextStep, sameContact } from "../outreach/sequence.js";
-import { approvedAd, owedAnswer, optedOut, routeCheckUnresolved, sendTarget, sellsOf, stageOf } from "../outreach/stage.js";
+import { DAILY, lastSendTarget, nextStep, sameContact } from "../outreach/sequence.js";
+import { approvedAd, owedAnswer, optedOut, routeCheckUnresolved, sendTarget, sendTargetUnavailable, sellsOf, stageOf } from "../outreach/stage.js";
 import { adView, rowOf, todayPage } from "../outreach/today.js";
 import { routeOf } from "../outreach/routes.js";
 import { contactKeys } from "../outreach/store.js";
@@ -133,17 +133,18 @@ export function outreachRoutes(
     const closed = new Set(optOuts);
     for (const opted of files) if (!opted.profile.test && optedOut(opted, optOuts)) contactKeys(opted.profile).forEach((key) => closed.add(key));
     const check = stage !== "opted_out" && routeCheckUnresolved(file);
-    const messageTarget = step !== undefined ? sendTarget(file) : undefined;
+    const target = step === undefined ? undefined : step === 0 ? sendTarget(file, optOuts) : lastSendTarget(file);
+    const messageTarget = target && !sendTargetUnavailable(file, target, optOuts) && routeOpen(target, closed) ? target : undefined;
     const sends = [...file.sends]
       .sort((a, b) => a.step - b.step)
       .map((send) => {
         if (stage !== "opted_out" && (!send.to || routeOpen({ channel: send.channel, to: send.to }, closed))) return send;
         const { to: _to, ...withoutTarget } = send;
         return withoutTarget;
-      });
+    });
     const message =
-      step !== undefined && templates && approvedAd(file) && messageTarget && routeOpen(messageTarget, closed)
-        ? { step, messages: messagesFor(templates.steps[step], file.profile, messageTarget) }
+      step !== undefined && templates && approvedAd(file) && target && (step > 0 || messageTarget)
+        ? { step, channel: target.channel, messages: messagesFor(templates.steps[step], file.profile, messageTarget) }
         : undefined;
     return {
       prospect: rowOf(file, optOuts, sameContact(files), deps.now()),

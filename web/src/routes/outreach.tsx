@@ -120,12 +120,13 @@ function Lines({ lines, done, children }: { lines: TodayLine[]; done: () => void
 
 function RouteCheck({ line, done }: { line: TodayLine; done: () => void }) {
   const { write, busy, error } = useWrite(line.prospect.id, done);
-  const target = line.sendTo;
+  const target = line.routeCheckTo ?? line.sendTo;
   const channel = target?.channel === "email" ? "Email" : "WhatsApp";
   const recipient = target?.direct && target.person ? `${target.person}${target.title ? `, ${target.title}` : ""}` : "the brand";
+  const address = target ? (target.channel === "whatsapp" && /^\d+$/.test(target.to) ? `+${target.to}` : target.to) : undefined;
   return (
     <div className="grid gap-2">
-      <p className="text-body">The best contact changed. Now: {channel} to {recipient}.</p>
+      <p className="text-body">The best contact changed. Now: {channel} to {recipient}{address ? ` (${address})` : ""}.</p>
       <div className="flex flex-wrap gap-2">
         <Button
           type="button"
@@ -149,16 +150,18 @@ function Message({ line, done }: { line: TodayLine; done: () => void }) {
 }
 
 function MessageLine({ line, done }: { line: TodayLine; done: () => void }) {
-  const checkOpen = line.prospect.flags.check;
+  const checkOpen = line.prospect.flags.check && line.step === 0;
   const sendTo = line.sendTo;
-  const person = sendTo?.person ?? (!sendTo?.direct ? line.prospect.person : undefined);
-  const who = sendTo?.direct && person
-    ? `To ${person}${sendTo.title ? `, ${sendTo.title},` : ""} on ${CHANNELS[sendTo.channel]}`
-    : sendTo?.channel === "email"
-      ? "To the brand's general inbox"
-      : sendTo
-        ? `To the brand on ${CHANNELS[sendTo.channel]}`
-        : "To the brand's general inbox";
+  const person = sendTo?.person ?? (line.step === 0 && !sendTo?.direct ? line.prospect.person : undefined);
+  const who = sendTo
+    ? line.step !== 0
+      ? `To the brand on ${CHANNELS[sendTo.channel]}`
+      : sendTo.direct && person
+        ? `To ${person}${sendTo.title ? `, ${sendTo.title},` : ""} on ${CHANNELS[sendTo.channel]}`
+        : sendTo.channel === "email"
+          ? "To the brand's general inbox"
+          : `To the brand on ${CHANNELS[sendTo.channel]}`
+    : "To the brand's general inbox";
   return (
     <div className="grid gap-3">
       <p className="text-body">{who}</p>
@@ -167,7 +170,7 @@ function MessageLine({ line, done }: { line: TodayLine; done: () => void }) {
       ) : null}
       {line.flags?.some((flag) => flag.kind === "duplicate") ? <p className="text-body">Might be the same business as another brand. Look before you send.</p> : null}
       {line.flags?.filter((flag) => flag.kind === "blocked").map((flag) => <p key={flag.text} className="text-body">Do not use: {outreachFlagText(flag.text)}</p>)}
-      <MessageCard prospect={line.prospect} ad={line.ad} step={line.step!} messages={line.messages!} done={done} disabled={checkOpen} />
+      <MessageCard prospect={sendTo ? { ...line.prospect, channel: sendTo.channel } : line.prospect} ad={line.ad} step={line.step!} messages={line.messages!} done={done} disabled={checkOpen} />
     </div>
   );
 }

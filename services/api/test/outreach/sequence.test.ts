@@ -106,6 +106,66 @@ describe("marking a message as sent", () => {
     expect(event).not.toHaveProperty("person");
   });
 
+  it("keeps a check pending until a current contact is available to confirm", async () => {
+    await ready("00001");
+    await loadRows(store, [row(1, { bestRoute: "Email (valid) changed@example.com" })], now);
+    const pending = (await store.get("00001")).routeCheck;
+    expect(pending).toBeDefined();
+
+    await loadRows(store, [row(1, { bestRoute: undefined, secondRoute: undefined, whatsapp: "", email: "", phone: "", dmEmail: "", dmPhone: "" })], now);
+    expect(sendTarget((await store.all()).find((entry) => entry.profile.id === "00001")!)).toBeUndefined();
+    await expect(sequence.confirmRoute("00001")).rejects.toThrow("There is no contact to confirm yet.");
+
+    await loadRows(store, [row(1, { bestRoute: "Email (valid) replacement@example.com", whatsapp: "", email: "" })], now);
+    const file = (await store.all()).find((entry) => entry.profile.id === "00001")!;
+    expect(file.profile.routeCheck).toEqual(pending);
+    expect(routeCheckUnresolved(file)).toBe(true);
+  });
+
+  it("continues a follow-up at the last sent address after an import, without confirming a carried check", async () => {
+    await ready("00001");
+    const first = await sequence.send("00001", { step: 0, title: 0 });
+    at("2026-11-26T10:00:00");
+    const replacement = row(1, { bestRoute: "Email (valid) replacement@example.com" });
+    await loadRows(store, [replacement], now);
+
+    const importedProfile = await store.get("00001");
+    expect(importedProfile.routeCheck).toBeUndefined();
+    const pending = { since: importedProfile.loadedAt, channel: "whatsapp" as const, direct: false };
+    await store.saveProfile({ ...importedProfile, routeCheck: pending });
+    at("2026-11-27T10:00:00");
+    await loadRows(store, [replacement], now);
+
+    const imported = (await store.all()).find((entry) => entry.profile.id === "00001")!;
+    expect(imported.profile.routeCheck).toEqual(pending);
+    expect(routeCheckUnresolved(imported)).toBe(true);
+    const followUp = await sequence.send("00001", { step: 1, title: 0 });
+    expect(followUp.send).toMatchObject({ channel: first.send.channel, to: first.send.to });
+  });
+
+  it("refuses a follow-up when its last sent address is quarantined", async () => {
+    await ready("00001");
+    await sequence.send("00001", { step: 0, title: 0 });
+    at("2026-11-26T10:00:00");
+    await loadRows(store, [row(1, { bestRoute: "Email (valid) replacement@example.com", notes: "AUDIT-FLAG: +65 8000 0001 do not use" })], now);
+
+    await expect(sequence.send("00001", { step: 1, title: 0 })).rejects.toThrow(
+      "The address this brand was messaged at can no longer be used.",
+    );
+  });
+
+  it("refuses a follow-up when its last sent address has opted out", async () => {
+    await loadRows(store, [row(2, { whatsapp: "+65 8000 0001" })], now);
+    await ready("00001");
+    await sequence.send("00001", { step: 0, title: 0 });
+    await sequence.optOut("00002");
+    at("2026-11-26T10:00:00");
+
+    await expect(sequence.send("00001", { step: 1, title: 0 })).rejects.toThrow(
+      "The address this brand was messaged at can no longer be used.",
+    );
+  });
+
   it("keeps an unresolved check when an identical import finds the brand parked", async () => {
     await loadRows(store, [row(1, { bestRoute: "WhatsApp +65 8000 0001" })], now);
     await ready("00001");

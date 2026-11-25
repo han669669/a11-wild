@@ -152,6 +152,22 @@ describe("the owner's day", () => {
     expect((await json(await get("/api/outreach/prospects/00001"))).prospect.stage).toBe("contacted");
   });
 
+  it("keeps a follow-up link and send on the last messaged contact after an import", async () => {
+    await ready();
+    await on("00001", "sent", { step: 0, title: 0 });
+    studio.clock.now = new Date("2026-11-26T02:00:00Z");
+    cookie = await sessionCookie(studio);
+    await loadProspects(studio, [row(1, { bestRoute: "Email (valid) replacement@example.com" })]);
+
+    const page = await json(await get("/api/outreach/prospects/00001"));
+    expect(page.prospect).toMatchObject({ stage: "contacted", next: { step: 1, due: "2026-11-26" } });
+    expect(page.sends).toMatchObject([{ step: 0, channel: "whatsapp", to: "6580000001" }]);
+    expect(page.message).toMatchObject({ step: 1, channel: "whatsapp" });
+    expect(page.message.messages[0].href).toMatch(/^https:\/\/wa\.me\/6580000001\?text=/);
+    const sent = await json(await on("00001", "sent", { step: 1, title: 0 }));
+    expect(sent.sends[1]).toMatchObject({ step: 1, channel: "whatsapp", to: "6580000001" });
+  });
+
   it("marks a message as sent once, with the title he used, and takes it back on the same day only", async () => {
     await ready();
     const sent = await json(await on("00001", "sent", { step: 0, title: 1 }));
