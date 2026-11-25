@@ -5,7 +5,6 @@ import { type Item, record, type Table } from "../store/table.js";
 import { requireMove } from "./state.js";
 
 const PK = "BATCH";
-const LOGO_FREE_STATES = new Set<BatchState>(["checked", "waiting_pick", "finals", "finished", "done"]);
 
 /** A batch saved before the studio had kinds is a v1 batch. */
 const stored = (item: Item & Batch): Batch => ({ ...record<Batch>(item), kind: item.kind ?? "v1" });
@@ -42,17 +41,6 @@ export class BatchStore {
   async list(): Promise<Batch[]> {
     const items = await this.table.query<Item & Batch>(PK);
     return items.map(stored).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }
-
-  async markLogoFree(batchId: string): Promise<boolean> {
-    const batch = await this.get(batchId);
-    if (!LOGO_FREE_STATES.has(batch.state)) return false;
-    await this.table.put({ pk: `${PK}#${batchId}`, sk: "LOGOFREE", at: this.now().toISOString() }, { ifNotExists: true });
-    return true;
-  }
-
-  async logoFree(batchId: string): Promise<boolean> {
-    return Boolean(await this.table.get(`${PK}#${batchId}`, "LOGOFREE"));
   }
 
   /** Moves a batch to a state the diagram allows from where it is. A save of the same step again keeps the state. */

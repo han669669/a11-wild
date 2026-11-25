@@ -227,11 +227,15 @@ export class BoardService implements FinalRule {
 
   /** Where each idea stands on its way to a final: the owner's choice, and what its newest final still needs. */
   async finals(batch: Batch): Promise<IdeaFinal[]> {
-    const { batches, brands, checks, picks } = this.deps;
-    const [brand, product, logoFree] = await Promise.all([brands.brand(batch.brandId), brands.product(batch.productId), batches.logoFree(batch.id)]);
+    const { batches, checks, picks } = this.deps;
+    const [product, found, all, finals, made] = await Promise.all([
+      this.deps.brands.product(batch.productId),
+      checks.all(batch.id),
+      this.deps.images.list(batch.id),
+      this.sent(batch.id, "final"),
+      picks.all(batch.id),
+    ]);
     const hasPack = product.photos.some((photo) => photo.kind === "pack");
-    const hasLogo = Boolean(brand.logo) && !logoFree;
-    const [found, all, finals, made] = await Promise.all([checks.all(batch.id), this.deps.images.list(batch.id), this.sent(batch.id, "final"), picks.all(batch.id)]);
     const approved = hasWords(batch.kind) ? await this.deps.copy.list(batch.id) : [];
     const entries: IdeaFinal[] = [];
     for (const idea of await batches.ideas(batch.id)) {
@@ -241,6 +245,8 @@ export class BoardService implements FinalRule {
       entries.push(entry);
       if (!pick) missing.push(`the owner's pick, or his pass, for ${idea.id}`);
       if (!pick?.imageId) continue;
+      const pickedDraft = all.find((image) => image.id === pick.imageId);
+      const pickedStamp = pickedDraft ? logoOf(countedOf(pickedDraft, all), all) : undefined;
       // The newest final of the picked draft is the one that counts: an earlier one was made again because it failed, and a final of a draft he no longer picks does not count.
       const newest = finals.get(idea.id)?.filter((final) => final.fromId === pick.imageId).at(-1);
       if (!newest) {
@@ -261,7 +267,7 @@ export class BoardService implements FinalRule {
         const finish = finishOf(final, all) as BatchImage;
         const set = hasWords(batch.kind) ? typesetOf(finish, all, approved.find((copy) => copy.ideaId === idea.id)) : logoOf(finish, all);
         if (hasWords(batch.kind)) missing.push(...this.wordNeeds(batch, final, set, found, "finished final"));
-        else if (hasLogo || set) missing.push(...this.logoNeeds(batch, final, set, found, "finished final"));
+        else if (pickedStamp || set) missing.push(...this.logoNeeds(batch, final, set, found, "finished final"));
         // The owner sends the picture with its words, so what the agent saw on that one is his to read too.
         const worded = set ? notesIn(batch, found.get(set.id)) : [];
         if (worded.length > 0) entry.warns = [...warns, ...worded];
@@ -283,9 +289,9 @@ export class BoardService implements FinalRule {
     const { batches, brands, checks, critic } = this.deps;
     const missing: string[] = [];
     if (batch.state === "drafting") {
-      const [brand, product, logoFree] = await Promise.all([brands.brand(batch.brandId), brands.product(batch.productId), batches.logoFree(batch.id)]);
+      const [brand, product] = await Promise.all([brands.brand(batch.brandId), brands.product(batch.productId)]);
       const hasPack = product.photos.some((photo) => photo.kind === "pack");
-      const hasLogo = Boolean(brand.logo) && !logoFree;
+      const hasLogo = Boolean(brand.logo);
       const [found, all, drafts, ranks, renders] = await Promise.all([
         checks.all(batch.id),
         this.deps.images.list(batch.id),

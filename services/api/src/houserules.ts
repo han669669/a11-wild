@@ -79,7 +79,7 @@ export const HOUSE_RULES: readonly HouseRule[] = [
     id: "v1-logo",
     roles: MAKERS,
     kinds: ["v1"],
-    text: "Set the brand's real logo on every v1 draft and final in code (logo_set) before the owner sees it, so he judges a finished poster ad and not a bare photo. On a final, run photo_finish first and then logo_set; the studio repeats the picked draft's exact logo placement. A batch whose drafts were already checked when the brand's logo was saved keeps going without it. A v1 draft that shows food alone names no pack photo and needs no skeleton or pack_check.",
+    text: "Set the brand's real logo on every v1 draft and final in code (logo_set) before the owner sees it, so he judges a finished poster ad and not a bare photo. On a final, run photo_finish first and then logo_set; the studio repeats the picked draft's exact logo placement. A final carries the logo when its picked draft does. A v1 draft that shows food alone names no pack photo and needs no skeleton or pack_check.",
   },
   {
     id: "no-sticker",

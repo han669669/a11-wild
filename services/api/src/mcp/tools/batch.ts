@@ -39,7 +39,7 @@ export function batchTools({ batches, brands, facts, truth, reads, critic, done,
   /** What a session needs to go on with a batch, from its id alone. */
   async function view(batch: Batch) {
     // A batch that saved a sheet keeps that version. A batch that has not yet sees the product's newest.
-    const [brand, product, sheet, newest, ideas, unread, judged, logoFree] = await Promise.all([
+    const [brand, product, sheet, newest, ideas, unread, judged] = await Promise.all([
       brands.brand(batch.brandId),
       brands.product(batch.productId),
       truth.get(batch.productId, batch.truthVersion),
@@ -47,7 +47,6 @@ export function batchTools({ batches, brands, facts, truth, reads, critic, done,
       batches.ideas(batch.id),
       reads.missing(batch.id, batch.kind),
       critic.verdicts(batch.id),
-      batches.logoFree(batch.id),
     ]);
     const newer = sheet && newest && newest.version > sheet.version ? newest.version : undefined;
     const next =
@@ -58,7 +57,7 @@ export function batchTools({ batches, brands, facts, truth, reads, critic, done,
           : batch.test && batch.state === "finished"
             ? "nothing: this is a test batch, and a test batch is never marked done"
             : stepAfter(batch);
-    return { batch, ...(batch.kind === "v1" && logoFree ? { logoFree: true as const } : {}), nextStep: next, brand, product, factCount: (await facts.list(product.id)).length, truthSheet: sheet ?? null,
+    return { batch, nextStep: next, brand, product, factCount: (await facts.list(product.id)).length, truthSheet: sheet ?? null,
       ...(newer
         ? { truthNote: `This batch keeps version ${sheet?.version} of the truth sheet, which it saved. The product's sheet is now at version ${newer} (truth_get reads it).` }
         : {}),
@@ -116,7 +115,7 @@ export function batchTools({ batches, brands, facts, truth, reads, critic, done,
     defineTool({
       name: "batch_get",
       description:
-        "A batch with everything saved for it: its state, whether settled drafts are logo-free (logoFree: true), the brand, the product, the truth sheet, the ideas, and nextStep. Free. A new session resumes a batch with this call and the batch id alone.",
+        "A batch with everything saved for it: its state, the brand, the product, the truth sheet, the ideas, and nextStep. Free. A new session resumes a batch with this call and the batch id alone.",
       input: { batchId: id },
       handler: async ({ batchId }) => view(await batches.get(batchId)),
     }),

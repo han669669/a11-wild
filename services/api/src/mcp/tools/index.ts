@@ -158,7 +158,7 @@ export function studioTools(parts: StudioParts) {
   const tools: ToolDefinition[] = [
     ...coreTools(config),
     ...spendTools({ ledger, gate }),
-    ...brandTools({ batches, brands, parallel, pictures, net }),
+    ...brandTools({ brands, parallel, pictures, net }),
     ...factTools({ brands, facts, parallel }),
     ...leadTools({ brands, parallel, watches: new Watches(table, parallel, now) }),
     ...tasteTools({ canon, tasteLog, swipe, reads, references, batches, pictures, net, brands, learning, proposals, brandNotes }),

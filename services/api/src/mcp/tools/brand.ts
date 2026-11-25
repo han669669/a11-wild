@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { PALETTE_ROLES, type ProductPhoto } from "@a11-wild/shared";
-import type { BatchStore } from "../../batch/store.js";
 import { brandExtract, fetchText } from "../../brand/extract.js";
 import { copyFont } from "../../brand/fonts.js";
 import type { BrandStore } from "../../brand/store.js";
@@ -11,7 +10,6 @@ import { defineTool, Refusal, type ToolDefinition } from "../registry.js";
 import { productPictures } from "../../brand/product-pictures.js";
 
 export interface BrandToolDeps {
-  batches: BatchStore;
   brands: BrandStore;
   parallel: ParallelClient;
   pictures: Pictures;
@@ -36,7 +34,7 @@ function pictureLinks(text: string): string[] {
   return [...new Set(found)].filter(isPublicHttpsUrl).slice(0, 40);
 }
 
-export function brandTools({ batches, brands, parallel, pictures, net }: BrandToolDeps): ToolDefinition[] {
+export function brandTools({ brands, parallel, pictures, net }: BrandToolDeps): ToolDefinition[] {
   return [
     defineTool({
       name: "font_save",
@@ -137,24 +135,10 @@ export function brandTools({ batches, brands, parallel, pictures, net }: BrandTo
         if (siteHost(logoUrl) !== siteHost(brand.url) && candidateHost !== "cdn.shopify.com") {
           throw new Refusal("That logo is not on this brand's site.");
         }
-
-        const markSettledV1Batches = async () => {
-          for (const batch of await batches.list()) {
-            if (batch.kind === "v1" && batch.brandId === brandId) await batches.markLogoFree(batch.id);
-          }
-        };
-
-        if (brand.logo) {
-          if (brand.logo.sourceUrl !== logoUrl) throw new Refusal("This brand has its logo. A saved logo is not replaced.");
-          await markSettledV1Batches();
-          return { brandId, logo: { sourceUrl: brand.logo.sourceUrl } };
-        }
-
-        await markSettledV1Batches();
+        if (brand.logo) throw new Refusal("This brand has its logo. A saved logo is not replaced.");
         const copied = await copyPicture({ url: logoUrl, folder: `brands/${brandId}`, what: "The logo" }, net, pictures);
         const { createdAt: _createdAt, ...kit } = brand;
         await brands.saveBrand({ ...kit, logo: { key: copied.key, sourceUrl: copied.sourceUrl }, savedBy: context.user.email });
-        await markSettledV1Batches();
         return { brandId, logo: { sourceUrl: copied.sourceUrl } };
       },
     }),

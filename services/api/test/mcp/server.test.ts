@@ -112,7 +112,7 @@ describe("MCP server", () => {
       "Look at each stamped final and save its D and F checks with checks_save using the stamped picture's id.",
     );
     expect(text).toContain(
-      "A batch that batch_get marks logoFree: true skips logo_set and the stamped check; the final's own checks stand.",
+      "If the picked draft carries no logo, skip logo_set and the stamped check; the final's own checks stand.",
     );
     expect(text).toContain("A draft whose checks reject it (a D item, or two F items) may be made again once now with render_submit redo; check the new draft, then rank.");
 

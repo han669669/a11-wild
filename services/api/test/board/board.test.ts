@@ -123,19 +123,17 @@ describe("checks", () => {
     expect(saved.ok).toBe(true);
     const afterSave = await studio.services.batches.get(batchId);
     expect(afterSave.state).toBe("drafting");
-    expect(await studio.services.batches.logoFree(batchId)).toBe(false);
     const imageId = drafts["idea-1"]![0]!;
     const checked = await check(imageId);
     expect(checked.value.state).toBe("drafting");
     expect(checked.value.stillMissing).toContain(`logo_set for picture ${imageId}: the brand's real logo on the draft`);
   });
 
-  it("keeps a waiting-pick v1 board and its finals logo-free after a later logo save", async () => {
+  it("delivers an unstamped picked draft after a later logo save", async () => {
     await checkAll();
     const before = await callTool(studio, "board_show", { batchId });
     expect(before.value.batch.state).toBe("waiting_pick");
     expect(await state()).toBe("waiting_pick");
-    const staleBatch = await studio.services.batches.get(batchId);
 
     const batch = await studio.services.batches.get(batchId);
     const offer = await studio.services.brands.offer({
@@ -150,7 +148,6 @@ describe("checks", () => {
     const saved = await callTool(studio, "brand_logo_save", { brandId: batch.brandId, extractId: offer.id, logoUrl: LOGO_URL });
     expect(saved.ok).toBe(true);
     expect(await studio.services.batches.get(batchId)).toMatchObject({ state: "waiting_pick" });
-    expect(await studio.services.batches.logoFree(batchId)).toBe(true);
 
     const page = await json(await studio.app.request(`/api/batches/${batchId}/board`, { headers: { cookie: await sessionCookie(studio) } }));
     expect(page.batch.state).toBe("waiting_pick");
@@ -172,13 +169,70 @@ describe("checks", () => {
 
     const final = await render("idea-1", "final", drafts["idea-1"]![0]!);
     expect(final.ok).toBe(true);
-    const finalBatch = await studio.services.batches.get(batchId);
-    expect(finalBatch).toMatchObject({ state: "finals" });
-    expect(await studio.services.batches.logoFree(batchId)).toBe(true);
-    const moved = await studio.services.batches.move(staleBatch, "finals", "render_submit");
-    expect(await studio.services.batches.logoFree(batchId)).toBe(true);
-    const finals = await studio.services.board.finals(moved);
-    expect(finals.find((entry) => entry.ideaId === "idea-1")?.missing.some((missing) => missing.includes("logo_set"))).toBe(false);
+    expect((await check(final.value.image.id)).ok).toBe(true);
+    const job = await callTool(studio, "photo_finish", { ...rules, batchId, imageId: final.value.image.id });
+    expect(job.ok).toBe(true);
+    expect((await callTool(studio, "pixel_status", { batchId, jobId: job.value.id })).ok).toBe(true);
+
+    const delivered = (await studio.services.board.finals(await studio.services.batches.get(batchId))).find((entry) => entry.ideaId === "idea-1");
+    expect(delivered?.missing).toEqual([]);
+    expect(delivered?.delivered).toMatchObject({ kind: "finish", fromId: final.value.image.id });
+  });
+
+  it("requires a final stamp and its check when the picked v1 draft is stamped", async () => {
+    const batch = await studio.services.batches.get(batchId);
+    const brand = await studio.services.brands.brand(batch.brandId);
+    await studio.services.brands.saveBrand({
+      ...brand,
+      logo: { key: `brands/${brand.id}/logo.png`, sourceUrl: LOGO_URL },
+    });
+
+    for (const imageId of Object.values(drafts).flat()) {
+      const stampedDraft = await callTool(studio, "logo_set", {
+        ...rules,
+        batchId,
+        imageId,
+        logoWidth: 0.22,
+        logoTop: 0.05,
+        logoColour: "FFFFFF",
+      });
+      expect(stampedDraft.ok).toBe(true);
+      const stamped = await callTool(studio, "pixel_status", { batchId, jobId: stampedDraft.value.id });
+      expect(stamped.ok).toBe(true);
+      expect(stamped.value.status).toBe("done");
+      expect((await check(stamped.value.image.id)).ok).toBe(true);
+    }
+    await checkAll();
+    expect(await state()).toBe("checked");
+
+    const pickedDraft = drafts["idea-1"]![0]!;
+    expect((await pick("idea-1", pickedDraft)).ok).toBe(true);
+    const final = await render("idea-1", "final", pickedDraft);
+    expect(final.ok).toBe(true);
+    expect((await check(final.value.image.id)).ok).toBe(true);
+    const job = await callTool(studio, "photo_finish", { ...rules, batchId, imageId: final.value.image.id });
+    expect(job.ok).toBe(true);
+    expect((await callTool(studio, "pixel_status", { batchId, jobId: job.value.id })).ok).toBe(true);
+
+    const beforeStamp = (await studio.services.board.finals(await studio.services.batches.get(batchId))).find((entry) => entry.ideaId === "idea-1");
+    expect(beforeStamp?.missing).toContain(
+      `logo_set for picture ${final.value.image.id}: the brand's real logo on the finished final`,
+    );
+
+    const stampedFinalJob = await callTool(studio, "logo_set", { ...rules, batchId, imageId: final.value.image.id });
+    expect(stampedFinalJob.ok).toBe(true);
+    const stampedFinal = await callTool(studio, "pixel_status", { batchId, jobId: stampedFinalJob.value.id });
+    expect(stampedFinal.ok).toBe(true);
+    const stampId = stampedFinal.value.image.id;
+    const beforeStampCheck = (await studio.services.board.finals(await studio.services.batches.get(batchId))).find((entry) => entry.ideaId === "idea-1");
+    expect(beforeStampCheck?.missing).toContain(
+      `checks_save for picture ${stampId}: the finished final of ${final.value.image.id} with its logo`,
+    );
+
+    expect((await check(stampId)).ok).toBe(true);
+    const delivered = (await studio.services.board.finals(await studio.services.batches.get(batchId))).find((entry) => entry.ideaId === "idea-1");
+    expect(delivered?.missing).toEqual([]);
+    expect(delivered?.delivered).toMatchObject({ id: stampId, kind: "typeset" });
   });
 
   it("refuses checks for a picture that is not a draft or a final, and from a caller that did not read the rules", async () => {
