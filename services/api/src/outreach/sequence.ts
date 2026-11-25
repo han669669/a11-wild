@@ -2,7 +2,7 @@ import type { OutreachChannel, OutreachEvent, OutreachSend, OutreachStep, Outrea
 import { Refusal } from "../mcp/registry.js";
 import { dueDay, singaporeDay } from "./days.js";
 import { checkTemplate, fill } from "./messages.js";
-import { newestAd, optedOut, routeCheckUnresolved, sendTarget, stageOf, targetForChannel, verdictOf } from "./stage.js";
+import { newestAd, optedOut, routeCheckUnresolved, sendTarget, sendTargetUnavailable, stageOf, targetForChannel, verdictOf } from "./stage.js";
 import { contactKeys, type OutreachStore } from "./store.js";
 
 /** The owner's sequence: follow-up 1 three days after the first message, follow-up 2 four days after follow-up 1. */
@@ -90,8 +90,20 @@ export class OutreachSequence {
 
     const target = sendTarget(file, optOuts);
     if (step === 0 && routeCheckUnresolved(file)) throw new Refusal("The best contact for this brand changed. Check it, then send.");
-    if ((input.to !== undefined && input.to !== target?.to) || (input.channel !== undefined && input.channel !== target?.channel)) {
-      throw new Refusal("The contact for this brand changed. Reload the page and check it before marking.");
+    const suppliedTo = input.to;
+    const suppliedChannel = input.channel;
+    let recordTarget = target;
+    if ((suppliedTo !== undefined && suppliedTo !== target?.to) || (suppliedChannel !== undefined && suppliedChannel !== target?.channel)) {
+      let earlierTarget: typeof target = undefined;
+      if (step > 0 && suppliedTo !== undefined && suppliedChannel !== undefined) {
+        if (file.sends.some((send) => send.channel === suppliedChannel && send.to === suppliedTo)) {
+          earlierTarget = { channel: suppliedChannel, to: suppliedTo, direct: false };
+        }
+      }
+      if (!earlierTarget || sendTargetUnavailable(file, earlierTarget, optOuts)) {
+        throw new Refusal("The contact for this brand changed. Reload the page and check it before marking.");
+      }
+      recordTarget = earlierTarget;
     }
     const day = singaporeDay(this.now());
     const stage = stageOf(file, optOuts);
@@ -107,15 +119,15 @@ export class OutreachSequence {
     }
     const templates = await this.templates();
     if (!templates) throw new Refusal("The message text is not loaded yet.");
-    if (!target) throw new Refusal("This brand has no checked number or address.");
-    const { channel } = target;
+    if (!recordTarget) throw new Refusal("This brand has no checked number or address.");
+    const { channel } = recordTarget;
     const counted = step === 0 && !file.profile.test;
     // The place in the day's count is taken first, so two marks at once cannot pass the day's number.
     if (counted) {
       const daily = await this.daily();
       if (!(await this.store.takePlace(day, daily))) throw new Refusal(`Today's ${daily} first messages are sent. More can go tomorrow, or raise the daily number.`);
     }
-    const send: OutreachSend = { step, day, channel, to: target.to, ...fill(templates.steps[step], file.profile.brand, input.title), at: this.now().toISOString() };
+    const send: OutreachSend = { step, day, channel, to: recordTarget.to, ...fill(templates.steps[step], file.profile.brand, input.title), at: this.now().toISOString() };
     let put = false;
     try {
       put = await this.store.putSend(id, send);
@@ -154,10 +166,11 @@ export class OutreachSequence {
 
   /** Final, and kept for the contact: every brand with that number or that address leaves every list. */
   async optOut(id: string): Promise<void> {
-    const profile = await this.store.get(id);
+    const { file } = await this.file(id);
+    const { profile } = file;
     // The contact's own register is written first: if the second write fails, every brand with the contact is off the lists already, and a second try finishes it.
     // A test prospect's opt-out stays on the test prospect, so a test can neither block nor free a real contact.
-    if (!profile.test) await this.store.addOptOut(profile);
+    if (!profile.test) await this.store.addOptOut(profile, file.sends);
     await this.store.addEvent(id, { type: "optout" }, "owner");
   }
 

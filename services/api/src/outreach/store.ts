@@ -26,7 +26,7 @@ const HOLD_MS = 60_000;
 export const prospectId = (n: number): string => String(n).padStart(5, "0");
 
 /** The key of a contact in the opt-out register. Phone routes share a key with WhatsApp. */
-export const contactKeys = (profile: Prospect): string[] => {
+export const contactKeys = (profile: Prospect, sends: readonly Pick<OutreachSend, "channel" | "to">[] = []): string[] => {
   const keys = new Set<string>();
   const number = (value: string | undefined) => {
     const digits = value?.replace(/\D/g, "") ?? "";
@@ -48,6 +48,10 @@ export const contactKeys = (profile: Prospect): string[] => {
   email(profile.dmEmail);
   route(profile.route);
   route(profile.second);
+  for (const send of sends) {
+    if (send.channel === "email") email(send.to);
+    else number(send.to);
+  }
   return [...keys];
 };
 
@@ -181,9 +185,9 @@ export class OutreachStore {
   }
 
   /** An opt-out is kept for the contact, so it holds for every brand that shares it. It is never removed. */
-  async addOptOut(profile: Prospect): Promise<void> {
+  async addOptOut(profile: Prospect, sends: readonly Pick<OutreachSend, "channel" | "to">[] = []): Promise<void> {
     const at = this.now().toISOString();
-    for (const key of contactKeys(profile)) await this.table.put({ pk: OPT_OUTS, sk: key, at, prospectId: profile.id });
+    for (const key of contactKeys(profile, sends)) await this.table.put({ pk: OPT_OUTS, sk: key, at, prospectId: profile.id });
   }
 
   /** Takes one place in a day's count of first messages. False when the day is full. */

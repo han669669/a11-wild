@@ -164,8 +164,9 @@ describe("the owner's day", () => {
     expect(page.check).toBeUndefined();
     expect(page.sends).toMatchObject([{ step: 0, channel: "whatsapp", to: "6580000001" }]);
     expect(page.message).toMatchObject({ step: 1, channel: "email" });
+    expect(page.contact.sendTo).toMatchObject({ channel: "email", to: "replacement@example.com" });
     expect(page.message.messages[0].href).toMatch(/^mailto:replacement@example\.com\?subject=/);
-    const sent = await json(await on("00001", "sent", { step: 1, title: 0 }));
+    const sent = await json(await on("00001", "sent", { step: 1, title: 0, channel: page.contact.sendTo.channel, to: page.contact.sendTo.to }));
     expect(sent.sends[1]).toMatchObject({ step: 1, channel: "email", to: "replacement@example.com" });
   });
 

@@ -135,6 +135,27 @@ describe("marking a message as sent", () => {
     expect(followUp.send).toMatchObject({ channel: "email", to: "replacement@example.com" });
   });
 
+  it("records a follow-up at an earlier destination sent by this brand", async () => {
+    await ready("00001");
+    const first = await sequence.send("00001", { step: 0, title: 0 });
+    at("2026-11-26T10:00:00");
+    await loadRows(store, [row(1, { bestRoute: "Email (valid) replacement@example.com", whatsapp: "", email: "" })], now);
+
+    const followUp = await sequence.send("00001", { step: 1, title: 0, channel: first.send.channel, to: first.send.to });
+    expect(followUp.send).toMatchObject({ channel: first.send.channel, to: first.send.to });
+  });
+
+  it("refuses a follow-up to a destination never sent by this brand", async () => {
+    await ready("00001");
+    await sequence.send("00001", { step: 0, title: 0 });
+    at("2026-11-26T10:00:00");
+    await loadRows(store, [row(1, { bestRoute: "Email (valid) replacement@example.com", whatsapp: "", email: "" })], now);
+
+    await expect(sequence.send("00001", { step: 1, title: 0, channel: "email", to: "never-sent@example.com" })).rejects.toThrow(
+      "The contact for this brand changed. Reload the page and check it before marking.",
+    );
+  });
+
   it("returns an existing mark before checking its supplied destination", async () => {
     await ready("00001");
     const first = await sequence.send("00001", { step: 0, title: 0 });
@@ -422,6 +443,30 @@ describe("taking a mark back", () => {
 });
 
 describe("a reply and the owner's choices", () => {
+  it("registers a sent contact that the workbook later dropped when the brand opts out", async () => {
+    await ready("00001");
+    const first = await sequence.send("00001", { step: 0, title: 0 });
+    expect(first.send).toMatchObject({ channel: "whatsapp", to: "6580000001" });
+    at("2026-11-26T10:00:00");
+    await loadRows(
+      store,
+      [
+        row(1, { bestRoute: "Email (valid) replacement@example.com", whatsapp: "", email: "" }),
+        row(2, { whatsapp: "+65 8000 0001" }),
+      ],
+      now,
+    );
+    await ready("00002");
+
+    await sequence.optOut("00001");
+
+    expect(await store.optOuts()).toContain("W#6580000001");
+    await expect(sequence.send("00001", { step: 1, title: 0, channel: first.send.channel, to: first.send.to })).rejects.toThrow(
+      "The contact for this brand changed. Reload the page and check it before marking.",
+    );
+    await expect(sequence.send("00002", { step: 0, title: 0 })).rejects.toThrow(/opted out/);
+  });
+
   it("makes a no an opt-out for the contact", async () => {
     await ready("00001");
     await sequence.send("00001", { step: 0, title: 0 });
