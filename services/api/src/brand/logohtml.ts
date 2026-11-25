@@ -4,6 +4,7 @@
 // Difference: an inline SVG is only detected here, never stored. brand_extract reports it, and the owner supplies the file.
 
 export type HeaderLogo = { kind: "img"; url: string } | { kind: "svg" };
+export type HeaderLogoCandidate = { kind: "img"; url: string; fallbacks?: string[] } | { kind: "svg" };
 
 /** Largest inline SVG looked at (a wordmark is a few KB; a 200 KB SVG is an illustration). */
 const SVG_MAX_CHARS = 200_000;
@@ -129,18 +130,134 @@ function isLogoTag(tag: string, pageUrl: string, brand: string): boolean {
 }
 
 /**
- * The logos in the page header, best first (at most 2): the first inline SVG or image inside a logo container.
- * The header is every <header> element of the page; when they hold none, the start of the page.
+ * The logos in the page header, best first (at most 2): the first inline SVG or image inside a logo container,
+ * along with lower-resolution fallback URLs from the same <img> tag when available.
  */
-export function headerLogos(html: string, pageUrl: string, brand: string): HeaderLogo[] {
+export function headerLogoCandidates(html: string, pageUrl: string, brand: string): HeaderLogoCandidate[] {
   const headers = [...html.matchAll(/<header\b[\s\S]*?<\/header\s*>/gi)].map((m) => m[0]);
   const inHeaders = headers.length ? logosIn(headers.join("\n"), pageUrl, brand) : [];
   return inHeaders.length ? inHeaders : logosIn(html.slice(0, HEAD_CHARS), pageUrl, brand);
 }
 
-function logosIn(region: string, pageUrl: string, brand: string): HeaderLogo[] {
-  const out: HeaderLogo[] = [];
+/**
+ * The logos in the page header, best first (at most 2): the first inline SVG or image inside a logo container.
+ * The header is every <header> element of the page; when they hold none, the start of the page.
+ */
+export function headerLogos(html: string, pageUrl: string, brand: string): HeaderLogo[] {
+  return headerLogoCandidates(html, pageUrl, brand).map((l) => (l.kind === "img" ? { kind: "img", url: l.url } : l));
+}
+
+/** Widest logo entry picked from a srcset when larger sizes exist. */
+const LOGO_SRCSET_MAX_W = 2000;
+
+type SrcsetEntry = { href: string; kind: "w" | "x" | "direct" | "none"; value: number };
+
+/** Parse an HTML srcset attribute per the image candidate string syntax, preserving commas inside URLs and compact comma separators after descriptors. */
+function parseSrcset(srcset: string): SrcsetEntry[] {
+  const s = decode(srcset);
+  const out: SrcsetEntry[] = [];
+  let i = 0;
+  const n = s.length;
+  while (i < n) {
+    while (i < n && /[\s,]/.test(s[i]!)) i++;
+    if (i >= n) break;
+    const urlStart = i;
+    while (i < n && !/\s/.test(s[i]!)) i++;
+    let href = s.slice(urlStart, i);
+    // A trailing comma with no descriptor ends this candidate.
+    if (href.endsWith(",")) {
+      href = href.replace(/,+$/, "");
+      if (href && !href.startsWith("data:")) out.push({ href, kind: "none", value: 0 });
+      continue;
+    }
+    while (i < n && /\s/.test(s[i]!)) i++;
+    const descStart = i;
+    while (i < n && s[i] !== ",") i++;
+    const desc = s.slice(descStart, i).trim();
+    if (i < n && s[i] === ",") i++;
+    if (!href || href.startsWith("data:")) continue;
+    const w = desc.match(/^(\d+)w$/i);
+    if (w) out.push({ href, kind: "w", value: Number.parseInt(w[1]!, 10) });
+    else {
+      const x = desc.match(/^(\d+(?:\.\d+)?)x$/i);
+      if (x) out.push({ href, kind: "x", value: Number.parseFloat(x[1]!) });
+      else out.push({ href, kind: "none", value: 0 });
+    }
+  }
+  return out;
+}
+
+/** Rank parsed candidate entries best-first: widest <= 2000w, then smallest > 2000w, then highest x density, then direct attributes, then remaining reversed. */
+function rankCandidates(entries: SrcsetEntry[]): string[] {
+  if (!entries.length) return [];
+  const widths = entries.filter((e) => e.kind === "w");
+  const fits = widths.filter((e) => e.value <= LOGO_SRCSET_MAX_W).sort((a, b) => b.value - a.value);
+  const over = widths.filter((e) => e.value > LOGO_SRCSET_MAX_W).sort((a, b) => a.value - b.value);
+  const densities = entries.filter((e) => e.kind === "x").sort((a, b) => b.value - a.value);
+  const direct = entries.filter((e) => e.kind === "direct");
+  const rest = entries.filter((e) => e.kind === "none").reverse();
+  return [...fits, ...over, ...densities, ...direct, ...rest].map((e) => e.href);
+}
+
+/** Pick the highest-resolution usable entry from a srcset attribute (ignoring data: URIs). */
+export function largestSrcset(srcset: string | undefined): string | undefined {
+  return srcset ? rankCandidates(parseSrcset(srcset))[0] : undefined;
+}
+
+const HARD_PLACEHOLDER = /(?:^|\/)(blank|placeholder|spacer|pixel|1x1|loading)\.[a-z0-9]+(?:[?#]|$)/i;
+const LAZY_HINT_SRC = /(?:^|\/)(blank|placeholder|spacer|transparent|pixel|1x1|loading)\.[a-z0-9]+(?:[?#]|$)/i;
+
+function urlWidth(raw: string): number | undefined {
+  const m = /[?&](?:width|w)=(\d+)\b/i.exec(decode(raw));
+  return m ? Number.parseInt(m[1]!, 10) : undefined;
+}
+
+/** Ordered image addresses from an <img> tag, best-first: widest usable source first across srcset, data-srcset, src and data-src. */
+export function imgSrcCandidates(imgTag: string): string[] {
+  const src = attr(imgTag, "src");
+  const dataSrc = attr(imgTag, "data-src");
+  const srcsetRaw = attr(imgTag, "srcset");
+  const dataSrcsetRaw = attr(imgTag, "data-srcset");
+  const srcsetEntries = [...(srcsetRaw ? parseSrcset(srcsetRaw) : []), ...(dataSrcsetRaw ? parseSrcset(dataSrcsetRaw) : [])];
+  const srcIsEmpty = !src || src.startsWith("data:");
+  const srcIsHardPlaceholder = !!src && HARD_PLACEHOLDER.test(src);
+  const srcIsLazyHint = !!src && LAZY_HINT_SRC.test(src);
+  const isRasterAlt = (u: string | undefined) => !!u && !u.startsWith("data:") && !/\.svg(?:[?#]|$)/i.test(decode(u));
+  const hasRasterAlt = isRasterAlt(dataSrc) || srcsetEntries.some((e) => isRasterAlt(e.href));
+  const isLazy = !!dataSrc && (srcIsEmpty || /\blazyload\b/i.test(attr(imgTag, "class") ?? "") || srcIsLazyHint);
+  const usableSrc = srcIsHardPlaceholder && hasRasterAlt ? undefined : src;
+  const preferredDirect = isLazy ? dataSrc : usableSrc;
+  const otherDirect = isLazy ? usableSrc : dataSrc;
+  const toDirectEntry = (href: string | undefined, allowWidth: boolean): SrcsetEntry[] => {
+    if (!href || href.startsWith("data:")) return [];
+    const w = allowWidth ? urlWidth(href) : undefined;
+    return w ? [{ href, kind: "w", value: w }] : [{ href, kind: "direct", value: 0 }];
+  };
+  const hasWidthSrcset = srcsetEntries.some((e) => e.kind === "w");
+  const ranked = rankCandidates([
+    ...srcsetEntries,
+    ...toDirectEntry(preferredDirect, hasWidthSrcset),
+    ...toDirectEntry(otherDirect, false),
+  ]);
   const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of ranked) {
+    if (!item || item.startsWith("data:") || seen.has(item)) continue;
+    seen.add(item);
+    out.push(item);
+  }
+  return out;
+}
+
+/** Pick the highest-resolution image address from an <img> tag, preferring srcset over thumbnail src. */
+export function bestImgSrc(imgTag: string): string | undefined {
+  return imgSrcCandidates(imgTag)[0];
+}
+
+function logosIn(region: string, pageUrl: string, brand: string): HeaderLogoCandidate[] {
+  const out: HeaderLogoCandidate[] = [];
+  const seen = new Set<string>();
+  const byPrimary = new Map<string, { kind: "img"; url: string; fallbacks?: string[] }>();
   for (const m of region.matchAll(/<(a|div|span|figure|picture|svg|img|h1|p)\b[^>]*>/gi)) {
     if (out.length >= 2) break;
     const tag = m[0];
@@ -170,18 +287,30 @@ function logosIn(region: string, pageUrl: string, brand: string): HeaderLogo[] {
       } else {
         const img = rest.slice(imgAt).match(/^<img\b[^>]*>/i)?.[0] ?? "";
         pos += imgAt + Math.max(img.length, 4);
-        // A lazy-loaded logo has a data: placeholder in src and the real file in data-src or srcset.
-        const src = [attr(img, "src"), attr(img, "data-src"), (attr(img, "srcset") ?? "").split(/\s+/)[0], (attr(img, "data-srcset") ?? "").split(/\s+/)[0]].find((x) => !!x && !x.startsWith("data:"));
-        if (!src) continue;
-        try {
-          const url = new URL(decode(src), pageUrl).toString();
-          if (/^https?:/.test(url) && !/\.ico(\?|$)/i.test(url) && !isUiIconImg(img, url) && !seen.has(url)) {
-            seen.add(url);
-            out.push({ kind: "img", url });
-            break;
+        // Prefer the largest srcset entry over thumbnail src; keep lower-res candidates as fallbacks in case a srcset entry is dead.
+        const urls: string[] = [];
+        for (const raw of imgSrcCandidates(img)) {
+          try {
+            const url = new URL(decode(raw), pageUrl).toString();
+            if (/^https?:/.test(url) && !/\.ico(\?|$)/i.test(url) && !isUiIconImg(img, url) && !urls.includes(url)) {
+              urls.push(url);
+            }
+          } catch {
+            continue;
           }
-        } catch {
-          continue;
+        }
+        const [primary, ...fallbacks] = urls;
+        if (primary) {
+          const existing = byPrimary.get(primary);
+          if (existing) {
+            const extra = fallbacks.filter((u) => u !== existing.url && !existing.fallbacks?.includes(u));
+            if (extra.length) existing.fallbacks = [...(existing.fallbacks ?? []), ...extra];
+          } else {
+            const entry: { kind: "img"; url: string; fallbacks?: string[] } = fallbacks.length ? { kind: "img", url: primary, fallbacks } : { kind: "img", url: primary };
+            byPrimary.set(primary, entry);
+            out.push(entry);
+          }
+          break;
         }
       }
     }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { brandExtract } from "../../src/brand/extract.js";
+import type { Net } from "../../src/urlsafety.js";
 import { fakeNet } from "../helpers/net.js";
 
 export const HOME = `<!doctype html><html><head>
@@ -74,5 +75,207 @@ describe("brandExtract", () => {
     const result = await brandExtract({ url: "https://wongi.example/" }, net);
     expect(result.logoCandidates).toEqual([]);
     expect(result.warnings.join(" ")).toMatch(/did not answer with an image/);
+  });
+
+  it("upgrades Shopify CDN thumbnail logos to the full-size original when live, and falls back when not", async () => {
+    const shopPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="//shop.example/cdn/shop/files/logo.png?v=1&amp;width=105" srcset="//shop.example/cdn/shop/files/logo.png?v=1&amp;width=105 105w, //shop.example/cdn/shop/files/logo.png?v=1&amp;width=300 300w" alt="Brand"></a></header></body></html>`;
+    const liveFull = fakeNet({
+      "https://shop.example/": html(shopPage),
+      "https://shop.example/cdn/shop/files/logo.png?v=1": { body: "x", headers: { "content-type": "image/png" } },
+      "https://shop.example/cdn/shop/files/logo.png?v=1&width=300": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const upgraded = await brandExtract({ url: "https://shop.example/" }, liveFull);
+    expect(upgraded.logoCandidates).toEqual([{ url: "https://shop.example/cdn/shop/files/logo.png?v=1", kind: "header" }]);
+
+    const fallbackNet = fakeNet({
+      "https://shop.example/": html(shopPage),
+      "https://shop.example/cdn/shop/files/logo.png?v=1&width=300": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const kept = await brandExtract({ url: "https://shop.example/" }, fallbackNet);
+    expect(kept.logoCandidates).toEqual([{ url: "https://shop.example/cdn/shop/files/logo.png?v=1&width=300", kind: "header" }]);
+
+    const oversizedFull = fakeNet({
+      "https://shop.example/": html(shopPage),
+      "https://shop.example/cdn/shop/files/logo.png?v=1": { body: "x", headers: { "content-type": "image/png", "content-length": "9000000" } },
+      "https://shop.example/cdn/shop/files/logo.png?v=1&width=300": { body: "x", headers: { "content-type": "image/png", "content-length": "40000" } },
+    });
+    const keptSavable = await brandExtract({ url: "https://shop.example/" }, oversizedFull);
+    expect(keptSavable.logoCandidates).toEqual([{ url: "https://shop.example/cdn/shop/files/logo.png?v=1&width=300", kind: "header" }]);
+
+    const deadSrcsetPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="/logo.png" srcset="/logo-4x.png 4x, /logo-3x.png 3x, /logo-2x.png 2x" alt="Brand"></a></header></body></html>`;
+    const deadSrcsetNet = fakeNet({
+      "https://brand.example/": html(deadSrcsetPage),
+      "https://brand.example/logo.png": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const recovered = await brandExtract({ url: "https://brand.example/" }, deadSrcsetNet);
+    expect(recovered.logoCandidates).toEqual([{ url: "https://brand.example/logo.png", kind: "header" }]);
+
+    const lazyPngPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img class="lazyload" src="/blank.png" data-src="/wordmark.png" alt="Brand"></a></header></body></html>`;
+    const lazyPngNet = fakeNet({
+      "https://brand.example/": html(lazyPngPage),
+      "https://brand.example/blank.png": { body: "x", headers: { "content-type": "image/png" } },
+      "https://brand.example/wordmark.png": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const lazyPicked = await brandExtract({ url: "https://brand.example/" }, lazyPngNet);
+    expect(lazyPicked.logoCandidates).toEqual([{ url: "https://brand.example/wordmark.png", kind: "header" }]);
+
+    const lazyDeadRealNet = fakeNet({
+      "https://brand.example/": html(lazyPngPage),
+      "https://brand.example/blank.png": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const lazyDropped = await brandExtract({ url: "https://brand.example/" }, lazyDeadRealNet);
+    expect(lazyDropped.logoCandidates).toEqual([]);
+
+    const avifFallbackPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="/logo.png" srcset="/logo.avif 2x" alt="Brand"></a></header></body></html>`;
+    const avifFallbackNet = fakeNet({
+      "https://brand.example/": html(avifFallbackPage),
+      "https://brand.example/logo.avif": { body: "x", headers: { "content-type": "image/avif" } },
+      "https://brand.example/logo.png": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const avifRecovered = await brandExtract({ url: "https://brand.example/" }, avifFallbackNet);
+    expect(avifRecovered.logoCandidates).toEqual([{ url: "https://brand.example/logo.png", kind: "header" }]);
+
+    const httpPrimaryPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="https://brand.example/logo.png" srcset="http://brand.example/logo-2x.png 2x" alt="Brand"></a></header></body></html>`;
+    const httpPrimaryNet = fakeNet({
+      "https://brand.example/": html(httpPrimaryPage),
+      "https://brand.example/logo.png": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const httpsRecovered = await brandExtract({ url: "https://brand.example/" }, httpPrimaryNet);
+    expect(httpsRecovered.logoCandidates).toEqual([{ url: "https://brand.example/logo.png", kind: "header" }]);
+
+    const hashedGuessPage = `<!doctype html><html><head><title>Brand</title></head><body><main><img src="/assets/brand-logo.png" srcset="/cdn/a1b2c3.png 2x"></main></body></html>`;
+    const hashedGuessNet = fakeNet({
+      "https://brand.example/": html(hashedGuessPage),
+      "https://brand.example/cdn/a1b2c3.png": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const hashedFound = await brandExtract({ url: "https://brand.example/" }, hashedGuessNet);
+    expect(hashedFound.logoCandidates).toEqual([{ url: "https://brand.example/cdn/a1b2c3.png", kind: "guess" }]);
+
+    const shopifyFallbackPage = `<!doctype html><html><head><title>Shop</title></head><body><header><a href="/"><img src="//shop.example/cdn/shop/files/logo.png?v=1&amp;width=105" srcset="https://dead.example/logo-2x.png 2x" alt="Shop"></a></header></body></html>`;
+    const shopifyFallbackNet = fakeNet({
+      "https://shop.example/": html(shopifyFallbackPage),
+      "https://shop.example/cdn/shop/files/logo.png?v=1": { body: "x", headers: { "content-type": "image/png" } },
+      "https://shop.example/cdn/shop/files/logo.png?v=1&width=105": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const shopifyFallbackUpgraded = await brandExtract({ url: "https://shop.example/" }, shopifyFallbackNet);
+    expect(shopifyFallbackUpgraded.logoCandidates).toEqual([{ url: "https://shop.example/cdn/shop/files/logo.png?v=1", kind: "header" }]);
+
+    const transparentLogoPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="/transparent.png" srcset="/logo.svg 2x" alt="Brand"></a></header></body></html>`;
+    const transparentLogoNet = fakeNet({
+      "https://brand.example/": html(transparentLogoPage),
+      "https://brand.example/logo.svg": { body: "<svg/>", headers: { "content-type": "image/svg+xml" } },
+      "https://brand.example/transparent.png": { body: "x", headers: { "content-type": "image/apng" } },
+    });
+    const transparentKept = await brandExtract({ url: "https://brand.example/" }, transparentLogoNet);
+    expect(transparentKept.logoCandidates).toEqual([{ url: "https://brand.example/transparent.png", kind: "header" }]);
+
+    // Unreachable srcset CDN (unknown) falls through to a live src instead of returning the unreachable URL.
+    const unreachableCdnPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="https://brand.example/logo.png" srcset="https://down.example/logo-2x.png 2x" alt="Brand"></a></header></body></html>`;
+    const unreachableCdnNet: Net = {
+      resolve: async (host) => (host === "down.example" ? Promise.reject(new Error("ENOTFOUND")) : ["93.184.216.34"]),
+      fetch: (async (u: string | URL | Request) => {
+        const key = String(u);
+        if (key === "https://brand.example/") return new Response(unreachableCdnPage, { status: 200, headers: { "content-type": "text/html" } });
+        if (key === "https://brand.example/logo.png") return new Response("x", { status: 200, headers: { "content-type": "image/png" } });
+        return new Response("no", { status: 404 });
+      }) as typeof fetch,
+    };
+    const unreachableRecovered = await brandExtract({ url: "https://brand.example/" }, unreachableCdnNet);
+    expect(unreachableRecovered.logoCandidates).toEqual([{ url: "https://brand.example/logo.png", kind: "header" }]);
+
+    // Two header images sharing a dead srcset keep the second image's distinct live src as a fallback.
+    const sharedSrcsetPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img srcset="/shared.png 2x" src="/dead-a.png" alt="Brand"></a><a href="/"><img srcset="/shared.png 2x" src="/live-b.png" alt="Brand"></a></header></body></html>`;
+    const sharedSrcsetNet = fakeNet({
+      "https://brand.example/": html(sharedSrcsetPage),
+      "https://brand.example/live-b.png": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const sharedRecovered = await brandExtract({ url: "https://brand.example/" }, sharedSrcsetNet);
+    expect(sharedRecovered.logoCandidates).toEqual([{ url: "https://brand.example/live-b.png", kind: "header" }]);
+
+    // With 4 srcset entries + 1 src, the probe budget tries the 3rd sharpest entry before the smallest one.
+    const fourSrcsetPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="/fallback.png" srcset="/w1000.png 1000w, /w600.png 600w, /w400.png 400w, /w200.png 200w" alt="Brand"></a></header></body></html>`;
+    const fourSrcsetNet = fakeNet({
+      "https://brand.example/": html(fourSrcsetPage),
+      "https://brand.example/w400.png": { body: "x", headers: { "content-type": "image/png" } },
+      "https://brand.example/w200.png": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const sharperPicked = await brandExtract({ url: "https://brand.example/" }, fourSrcsetNet);
+    expect(sharperPicked.logoCandidates).toEqual([{ url: "https://brand.example/w400.png", kind: "header" }]);
+
+    // transparent.png without lazyload class still yields to data-src when live.
+    const transparentLazyPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="/transparent.png" data-src="/real-logo.png" alt="Brand"></a></header></body></html>`;
+    const transparentLazyNet = fakeNet({
+      "https://brand.example/": html(transparentLazyPage),
+      "https://brand.example/transparent.png": { body: "x", headers: { "content-type": "image/png" } },
+      "https://brand.example/real-logo.png": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const transparentLazyPicked = await brandExtract({ url: "https://brand.example/" }, transparentLazyNet);
+    expect(transparentLazyPicked.logoCandidates).toEqual([{ url: "https://brand.example/real-logo.png", kind: "header" }]);
+
+    // Unsavable .avif and .gif entries do not crowd out a savable PNG data-src within the probe budget.
+    const avifCrowdPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img class="lazyload" src="/preview.gif" data-src="/logo.png" data-srcset="/a.avif 300w, /b.avif 600w, /c.avif 1200w" alt="Brand"></a></header></body></html>`;
+    const avifCrowdNet = fakeNet({
+      "https://brand.example/": html(avifCrowdPage),
+      "https://brand.example/a.avif": { body: "x", headers: { "content-type": "image/avif" } },
+      "https://brand.example/b.avif": { body: "x", headers: { "content-type": "image/avif" } },
+      "https://brand.example/c.avif": { body: "x", headers: { "content-type": "image/avif" } },
+      "https://brand.example/preview.gif": { body: "x", headers: { "content-type": "image/gif" } },
+      "https://brand.example/logo.png": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const avifCrowdPicked = await brandExtract({ url: "https://brand.example/" }, avifCrowdNet);
+    expect(avifCrowdPicked.logoCandidates).toEqual([{ url: "https://brand.example/logo.png", kind: "header" }]);
+
+    // Concurrent probes preserve rank order when a lower-ranked variant answers faster, and abort pending lower-ranked probes once a live hit wins.
+    const delayedPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="/small.png" srcset="/big.png 1200w, /mid.png 600w" alt="Brand"></a></header></body></html>`;
+    let pendingSignal: AbortSignal | undefined;
+    const delayedNet: Net = {
+      resolve: async () => ["93.184.216.34"],
+      fetch: (async (u: string | URL | Request, init?: RequestInit) => {
+        const key = String(u);
+        if (key === "https://brand.example/") return new Response(delayedPage, { status: 200, headers: { "content-type": "text/html" } });
+        if (key === "https://brand.example/mid.png") return new Response("x", { status: 200, headers: { "content-type": "image/png" } });
+        if (key === "https://brand.example/big.png") {
+          await new Promise((r) => setTimeout(r, 25));
+          return new Response("x", { status: 200, headers: { "content-type": "image/png" } });
+        }
+        if (key === "https://brand.example/small.png") {
+          pendingSignal = init?.signal ?? undefined;
+          return await new Promise<Response>((_, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+          });
+        }
+        return new Response("no", { status: 404 });
+      }) as typeof fetch,
+    };
+    const delayedPicked = await brandExtract({ url: "https://brand.example/" }, delayedNet);
+    expect(delayedPicked.logoCandidates).toEqual([{ url: "https://brand.example/big.png", kind: "header" }]);
+    expect(pendingSignal?.aborted).toBe(true);
+
+    // Oversized chunked Shopify original (no Content-Length) appearing both as src and as the upgrade of srcset yields to the savable resized variant.
+    const overlapShopifyPage = `<!doctype html><html><head><title>Shop</title></head><body><header><a href="/"><img src="//shop.example/cdn/shop/files/logo.png?v=1" srcset="//shop.example/cdn/shop/files/logo.png?v=1&amp;width=300 300w" alt="Shop"></a></header></body></html>`;
+    const overlapShopifyNet: Net = {
+      resolve: async () => ["93.184.216.34"],
+      fetch: (async (u: string | URL | Request) => {
+        const key = String(u);
+        if (key === "https://shop.example/") return new Response(overlapShopifyPage, { status: 200, headers: { "content-type": "text/html" } });
+        if (key === "https://shop.example/cdn/shop/files/logo.png?v=1") {
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              for (let chunk = 0; chunk < 9; chunk += 1) controller.enqueue(new Uint8Array(1024 * 1024));
+              controller.close();
+            },
+          });
+          return new Response(stream, { status: 200, headers: { "content-type": "image/png" } });
+        }
+        if (key === "https://shop.example/cdn/shop/files/logo.png?v=1&width=300") {
+          return new Response("x", { status: 200, headers: { "content-type": "image/png" } });
+        }
+        return new Response("no", { status: 404 });
+      }) as typeof fetch,
+    };
+    const overlapPicked = await brandExtract({ url: "https://shop.example/" }, overlapShopifyNet);
+    expect(overlapPicked.logoCandidates).toEqual([
+      { url: "https://shop.example/cdn/shop/files/logo.png?v=1&width=300", kind: "header" },
+    ]);
   });
 });
