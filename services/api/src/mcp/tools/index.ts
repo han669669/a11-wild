@@ -123,7 +123,7 @@ export function studioTools(parts: StudioParts) {
   const proposals = new ProposalStore(table, canon, learning, now);
   const brandNotes = new BrandNotes(table, now);
   const meta = new MetaStore(table, now);
-  const board = new BoardService({ batches, brands, truth, images, renders, checks, picks, critic: criticStore, tasteLog, pictures, copy, points: new PointStore(table, now), directions, now });
+  const board = new BoardService({ batches, brands, truth, images, renders, checks, picks, critic: criticStore, tasteLog, pictures, copy, points: new PointStore(table, now), directions });
   const calibration = new Calibration({ batches, picks, critic: criticStore });
   const critic = new CriticService({ batches, brands, truth, facts, board, critic: criticStore, images, pictures, renders, briefs });
   const conceptPicks = new ConceptPicks({ table, now, batches, brands, briefs, critic, tasteLog });

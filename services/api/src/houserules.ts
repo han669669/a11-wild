@@ -176,7 +176,7 @@ export const HOUSE_RULES: readonly HouseRule[] = [
     id: "v1-v2-redo",
     roles: MAKERS,
     kinds: ["v1", "v2"],
-    text: "A v1 or v2 draft whose checks reject it (a D item, or two F items) may be made again once with redo. A draft built round a skeleton may be made again round the same one. The new draft takes the old one's place and needs its own checks and a fresh critic rank. A redo is allowed while drafts are being made or, before a pick or final for that idea, when the board is checked or waiting for a pick. In an outreach batch, a draft with a warning stays pickable, so it is not made again.",
+    text: "A v1 or v2 draft whose checks reject it (a D item, or two F items) may be made again once with redo. A draft built round a skeleton may be made again round the same one. The new draft takes the old one's place and needs its own checks and a fresh critic rank. Make any redo before the critic ranks the drafts: once the board is checked, drafts are not made again. In an outreach batch, a draft with a warning stays pickable, so it is not made again.",
   },
   {
     id: "v3-finals",

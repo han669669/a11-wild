@@ -145,6 +145,9 @@ export class RenderService {
     if (input.redo !== undefined && batch.purpose === "outreach") {
       throw new Refusal("In an outreach batch, a draft with a warning stays pickable, so it is not made again.");
     }
+    if (input.redo !== undefined && (batch.state === "checked" || batch.state === "waiting_pick")) {
+      throw new Refusal("A draft is made again before the critic ranks the drafts. Once the board is checked, the owner picks among the drafts as they are.");
+    }
     if (input.kind === "rough" && batch.kind !== "v3") throw new Refusal("Only a batch of concept ads (v3) has roughs. A v1 or v2 batch starts with its drafts.");
     // A rough is made of any concept of the set. A draft or a final is made of an idea the batch chose.
     const idea: Idea | undefined = (input.kind === "rough" ? await batches.burst(batch.id) : await batches.ideas(batch.id)).find((saved) => saved.id === input.ideaId);
@@ -159,12 +162,6 @@ export class RenderService {
     };
 
     const [product, brand, all] = await Promise.all([brands.product(batch.productId), brands.brand(batch.brandId), renders.list(batch.id)]);
-    if (input.redo !== undefined) {
-      const picks = await this.deps.picks.all(batch.id);
-      if (picks.some((pick) => pick.ideaId === idea.id) || all.some((render) => render.kind === "final" && render.ideaId === idea.id)) {
-        throw new Refusal("The owner has already picked for this idea; a draft can no longer be made again.");
-      }
-    }
     const sent = all.filter((render) => render.kind === input.kind && live(render));
     const redone = new Set(sent.map((render) => render.redoOf));
     // A draft that was made again does not count: its redo stands in its place.
@@ -177,8 +174,6 @@ export class RenderService {
     let rough: BatchImage | undefined;
     let directionVersion: number | undefined;
     let redoOf: string | undefined;
-    let readyRedo = false;
-    let readyRedoState: "checked" | "waiting_pick" | undefined;
 
     if (input.kind === "rough") {
       if (!["ideas", "reviewed"].includes(batch.state)) requireMove(batch, "ideas", "render_submit");
@@ -191,9 +186,7 @@ export class RenderService {
       }
       count = ROUGHS_PER_BATCH;
     } else if (input.kind === "draft") {
-      readyRedoState = input.redo !== undefined && (batch.state === "checked" || batch.state === "waiting_pick") ? batch.state : undefined;
-      readyRedo = readyRedoState !== undefined;
-      if (![draftsFrom(batch), "priced", "waiting_spend", "drafting"].includes(batch.state) && !readyRedo) {
+      if (![draftsFrom(batch), "priced", "waiting_spend", "drafting"].includes(batch.state)) {
         // An ad with words waits for the owner's yes to them: no draft is paid for before it.
         if (batch.state === "judged" || (batch.kind === "v3" && batch.state === "worded")) throw new StateError(`render_submit cannot run yet: the batch is at "${batch.state}". The step that is missing: ${stepAfter(batch)}.`);
         requireMove(batch, "drafting", "render_submit");
@@ -303,32 +296,12 @@ export class RenderService {
       if (input.kind === "rough") await renders.releaseRough(batch.id, idea.id);
       throw error;
     }
-    let reopened = false;
-    let submitted = false;
     try {
-      if (readyRedo) {
-        batch = await batches.reopenDraftingForRedo(batch);
-        reopened = true;
-        const [picks, current] = await Promise.all([this.deps.picks.all(batch.id), renders.list(batch.id)]);
-        if (picks.some((pick) => pick.ideaId === idea.id) || current.some((render) => render.kind === "final" && render.ideaId === idea.id)) {
-          throw new Refusal("The owner has already picked for this idea; a draft can no longer be made again.");
-        }
-      }
       const referenceUrls = await Promise.all(keys.map((key) => pictures.viewUrl(key, REFERENCE_LINK_SECONDS)));
-      submitted = true;
       job = await fal.submit({ kind: input.kind, prompt: `${input.prompt.trim()}\n\n${renderRules(batch.kind)}`, referenceUrls });
     } catch (error) {
       // Only a sure refusal gives the money back. Any other failure may still be billed, and a rough that may be billed keeps its place.
-      if (readyRedo && reopened) {
-        try {
-          await batches.restoreAfterRedoRefusal(batch, readyRedoState!);
-        } catch (restoreError) {
-          log.error("redo_restore_failed", { error: restoreError instanceof Error ? restoreError.name : "unknown" });
-        }
-      }
-      if (error instanceof NotBilledError || (readyRedo && !submitted)) {
-        await ledger.release(reservation);
-      }
+      if (error instanceof NotBilledError) await ledger.release(reservation);
       if (error instanceof NotBilledError && input.kind === "rough") await renders.releaseRough(batch.id, idea.id);
       throw error;
     }
@@ -346,13 +319,6 @@ export class RenderService {
       reservation,
       stageCount: count,
     });
-    if (readyRedo) {
-      try {
-        batch = await batches.clearRedoSendingAt(batch);
-      } catch (error) {
-        log.error("redo_marker_clear_failed", { error: error instanceof Error ? error.name : "unknown" });
-      }
-    }
     if (input.kind === "draft" && (batch.state === "priced" || batch.state === "waiting_spend")) await batches.move(batch, "drafting", "render_submit");
     if (input.kind === "final" && batch.state === "waiting_pick") await batches.move(batch, "finals", "render_submit");
     // The critic has not seen this rough: its review of the concepts is no longer the whole of them.

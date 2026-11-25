@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { Pick } from "@a11-wild/shared";
 import { rankable } from "../../src/critic/packet.js";
 import { RenderStore } from "../../src/render/store.js";
 import { DRAFTS_PER_IDEA } from "../../src/render/service.js";
@@ -191,254 +190,19 @@ describe("render_submit", () => {
     expect(studio.fal.submits()).toHaveLength(2);
   });
 
-  it("allows a rejected redo from checked and waiting_pick, then requires checks and a fresh rank", async () => {
+  it("refuses a redo once a checked board is ready", async () => {
     const initial = await readyBoard();
     expect(await state()).toBe("checked");
-    const first = initial[0]!;
-    const sent = await draft({ redo: first.renderId });
-    if (!sent.ok) throw new Error(sent.error);
-    expect(await state()).toBe("drafting");
-    const done = await callTool(studio, "render_status", { batchId, renderId: sent.value.id });
-    await callTool(studio, "checks_save", { rulesVersion: RULES_VERSION, batchId, imageId: done.value.image.id, items: [] });
-    expect(await state()).toBe("drafting");
-    await rankDrafts(studio, batchId);
-    expect(await state()).toBe("checked");
-
-    await callTool(studio, "board_show", { batchId });
-    const waitingPickRedo = await draft({ ideaId: "idea-2", redo: initial[DRAFTS_PER_IDEA]!.renderId });
-    expect(waitingPickRedo.ok).toBe(true);
-    expect(await state()).toBe("drafting");
-  });
-
-  it("refuses a pick while fal is accepting a ready-board redo", async () => {
-    let holdPost = false;
-    let started = () => {};
-    let release = () => {};
-    const postStarted = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    const heldPost = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await batchAtIdeas({
-      fal: async (call) => {
-        if (holdPost && call.method === "POST") {
-          started();
-          await heldPost;
-        }
-        return undefined;
-      },
-    });
-    const initial = await readyBoard();
-    await callTool(studio, "board_show", { batchId });
-
-    holdPost = true;
-    const pending = draft({ redo: initial[0]!.renderId });
-    await postStarted;
-    const pick = await callTool(studio, "pick_save", {
-      batchId,
-      ideaId: "idea-1",
-      imageId: initial[0]!.imageId,
-      ownerSaid: "This one is ready.",
-    });
-    release();
-
-    expect(pick).toEqual(refused(/This batch is at "drafting"/));
-    expect((await pending).ok).toBe(true);
-    expect(await studio.services.picks.all(batchId)).toEqual([]);
-    expect((await studio.services.batches.get(batchId)).redoSendingAt).toBeUndefined();
-  });
-
-  it("restores and releases a ready-board redo when a pick appears before reopening", async () => {
-    const initial = await readyBoard();
-    const before = await studio.spend.ledger.summary(batchId);
-    const allPicks = studio.services.picks.all.bind(studio.services.picks);
-    const appeared: Pick = {
-      ideaId: "idea-1",
-      imageId: initial[0]!.imageId,
-      ownerSaid: "This one is ready.",
-      at: "2026-11-26T12:00:00.000Z",
-      by: "owner@example.com",
-    };
-    let reads = 0;
-    studio.services.picks.all = async (id) => {
-      reads += 1;
-      return reads === 2 ? [appeared] : allPicks(id);
-    };
-
-    expect(await draft({ redo: initial[0]!.renderId })).toEqual(refused(/The owner has already picked for this idea/));
-    expect(reads).toBe(2);
-    expect(await state()).toBe("checked");
-    expect((await studio.services.batches.get(batchId)).redoSendingAt).toBeUndefined();
-    const after = await studio.spend.ledger.summary(batchId);
-    expect(after.batchUsd).toBe(before.batchUsd);
-    expect(after.lines.some((line) => line.status === "released" && line.usd === 0)).toBe(true);
-  });
-
-  it("keeps a checked board pickable when the spend cap refuses a redo", async () => {
-    const initial = await readyBoard();
-    const spend = await studio.spend.ledger.summary();
-    await studio.spend.ledger.reserve({
-      service: "fal",
-      kind: "test",
-      ref: "Fill the monthly cap",
-      usd: spend.monthCapUsd - spend.monthUsd,
-    });
-
-    expect(await draft({ redo: initial[0]!.renderId })).toEqual(refused(/spend cap would be passed/));
-    expect(await state()).toBe("checked");
-    const picked = await callTool(studio, "pick_save", {
-      batchId,
-      ideaId: "idea-1",
-      imageId: initial[0]!.imageId,
-      ownerSaid: "This one is ready.",
-    });
-    expect(picked.ok).toBe(true);
-    expect(await state()).toBe("waiting_pick");
-  });
-
-  it("keeps a checked board unchanged when the draft gate refuses a redo", async () => {
-    const initial = await readyBoard();
-    await studio.spend.gate.price(batchId, "drafts", { firstUsd: 0.15, count: 100 });
-
-    expect(await draft({ redo: initial[0]!.renderId })).toEqual(refused(/waits for the owner's yes/));
+    expect(await draft({ redo: initial[0]!.renderId })).toEqual(refused(/A draft is made again before the critic ranks the drafts\. Once the board is checked, the owner picks among the drafts as they are\./));
     expect(await state()).toBe("checked");
   });
 
-  it("keeps a waiting-pick board unchanged when fal refuses a redo before it is saved", async () => {
-    let refuseRedo = false;
-    await batchAtIdeas({
-      fal: (call) => refuseRedo && call.method === "POST" ? { status: 422, json: { detail: "bad input" } } : undefined,
-    });
+  it("refuses a redo once the board is waiting for a pick", async () => {
     const initial = await readyBoard();
     await callTool(studio, "board_show", { batchId });
     expect(await state()).toBe("waiting_pick");
-    const before = await studio.spend.ledger.summary(batchId);
-
-    refuseRedo = true;
-    expect(await draft({ redo: initial[0]!.renderId })).toEqual(refused(/fal refused the render request \(status 422\)\. Nothing was charged/));
+    expect(await draft({ redo: initial[0]!.renderId })).toEqual(refused(/A draft is made again before the critic ranks the drafts\. Once the board is checked, the owner picks among the drafts as they are\./));
     expect(await state()).toBe("waiting_pick");
-    expect((await studio.services.renders.list(batchId)).some((render) => render.redoOf)).toBe(false);
-    expect((await studio.spend.ledger.summary(batchId)).batchUsd).toBe(before.batchUsd);
-    expect((await studio.services.batches.get(batchId)).redoSendingAt).toBeUndefined();
-    expect((await callTool(studio, "pick_save", {
-      batchId,
-      ideaId: "idea-1",
-      imageId: initial[0]!.imageId,
-      ownerSaid: "This one is ready.",
-    })).ok).toBe(true);
-  });
-
-  it("leaves a failed render-record save in drafting so board checks still gate picks", async () => {
-    const initial = await readyBoard();
-    const unchecked = initial.at(-1)!;
-    await studio.table.delete(`BATCH#${batchId}`, `CHECK#${unchecked.imageId}`);
-    const create = studio.services.renders.create;
-    studio.services.renders.create = async () => {
-      throw new Error("render record unavailable");
-    };
-
-    const priorSubmits = studio.fal.submits().length;
-    await expect(studio.services.render.submit({
-      batchId,
-      ideaId: "idea-1",
-      kind: "draft",
-      prompt: SCENE,
-      redo: initial[0]!.renderId,
-      references: [],
-    }).finally(() => {
-      studio.services.renders.create = create;
-    })).rejects.toThrow("render record unavailable");
-    expect(studio.fal.submits()).toHaveLength(priorSubmits + 1);
-    expect(await state()).toBe("drafting");
-    expect((await studio.services.batches.get(batchId)).redoSendingAt).toBe(studio.clock.now.toISOString());
-    expect((await studio.services.renders.list(batchId)).some((render) => render.redoOf)).toBe(false);
-    expect(await callTool(studio, "board_show", { batchId })).toEqual(refused(/a draft redo being sent/));
-    studio.clock.now = new Date(studio.clock.now.getTime() + 11 * 60 * 1000);
-    expect(await callTool(studio, "board_show", { batchId })).toEqual(refused(/The board is not ready: the drafts are not all checked/));
-    expect(await state()).toBe("drafting");
-  });
-
-  it("keeps board progress and picking closed while a ready-board redo is being sent", async () => {
-    let holdPost = false;
-    let started = () => {};
-    let release = () => {};
-    const postStarted = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    const heldPost = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await batchAtIdeas({
-      fal: async (call) => {
-        if (holdPost && call.method === "POST") {
-          started();
-          await heldPost;
-        }
-        return undefined;
-      },
-    });
-    const initial = await readyBoard();
-    await callTool(studio, "board_show", { batchId });
-
-    holdPost = true;
-    const pending = draft({ redo: initial[0]!.renderId });
-    await postStarted;
-    const checks = await callTool(studio, "checks_save", {
-      rulesVersion: RULES_VERSION,
-      batchId,
-      imageId: initial.at(-1)!.imageId,
-      items: [],
-    });
-    if (!checks.ok) throw new Error(checks.error);
-    expect(checks.value.state).toBe("drafting");
-    expect(await state()).toBe("drafting");
-    expect(await callTool(studio, "board_show", { batchId })).toEqual(refused(/a draft redo being sent/));
-    expect(await callTool(studio, "pick_save", {
-      batchId,
-      ideaId: "idea-1",
-      imageId: initial[0]!.imageId,
-      ownerSaid: "This one is ready.",
-    })).toEqual(refused(/This batch is at "drafting"/));
-
-    release();
-    expect((await pending).ok).toBe(true);
-    expect((await studio.services.batches.get(batchId)).redoSendingAt).toBeUndefined();
-  });
-
-  it("ignores a redo-sending marker older than ten minutes", async () => {
-    await batchAtIdeas();
-    await readyBoard();
-    const batch = await studio.services.batches.get(batchId);
-    await studio.services.batches.reopenDraftingForRedo(batch);
-    studio.clock.now = new Date(studio.clock.now.getTime() + 11 * 60 * 1000);
-
-    expect((await callTool(studio, "board_show", { batchId })).ok).toBe(true);
-    expect(await state()).toBe("waiting_pick");
-  });
-
-  it("refuses a ready-board redo after the owner has picked that idea", async () => {
-    const initial = await readyBoard();
-    await callTool(studio, "board_show", { batchId });
-    await callTool(studio, "pick_save", { batchId, ideaId: "idea-1", imageId: initial[0]!.imageId, ownerSaid: "This is the one." });
-    expect(await draft({ redo: initial[0]!.renderId })).toEqual(refused(/The owner has already picked for this idea; a draft can no longer be made again/));
-  });
-
-  it("refuses a ready-board redo when a final already exists for the idea", async () => {
-    const initial = await readyBoard();
-    await callTool(studio, "board_show", { batchId });
-    const original = await studio.services.renders.get(batchId, initial[0]!.renderId);
-    await studio.services.renders.create({
-      batchId,
-      ideaId: "idea-1",
-      kind: "final",
-      prompt: SCENE,
-      usd: original.usd,
-      fal: original.fal,
-      reservation: original.reservation,
-      stageCount: original.stageCount,
-    });
-    expect(await draft({ redo: initial[0]!.renderId })).toEqual(refused(/The owner has already picked for this idea; a draft can no longer be made again/));
   });
 
   it("holds drafting for a queued redo and requires checks and a fresh rank when it finishes", async () => {
@@ -463,6 +227,30 @@ describe("render_submit", () => {
     await studio.services.renders.end(queued, { status: "failed", error: "The render failed." });
     await callTool(studio, "checks_save", { rulesVersion: RULES_VERSION, batchId, imageId: initial.at(-1)!.imageId, items: [] });
     expect(await state()).toBe("checked");
+  });
+
+  it("does not hold v3 progress for a queued redo from a superseded direction", async () => {
+    const old = await draft();
+    if (!old.ok) throw new Error(old.error);
+    const { batchId: conceptBatchId } = await batchAtTruth(studio, { kind: "v3" });
+    const conceptBatch = await studio.services.batches.get(conceptBatchId);
+    await studio.table.put({ pk: "BATCH", sk: conceptBatchId, ...conceptBatch, state: "drafting" });
+    await studio.services.batches.saveIdeas(
+      conceptBatchId,
+      [1, 2, 3].map((number) => ({ ...idea(number), id: `idea-${number}` })),
+      "owner@example.com",
+    );
+    const direction = { ideaId: "idea-1", why: "An old plan.", risk: "low" as const, look: "Old look.", lockup: "flush_left" as const, drafts: [] };
+    await studio.services.directions.save(conceptBatchId, [direction], "owner@example.com");
+    const current = await studio.services.directions.save(conceptBatchId, [{ ...direction, look: "New look." }], "owner@example.com");
+    const previous = await studio.services.renders.get(batchId, old.value.id);
+    const { id, ...render } = previous;
+    await studio.services.renders.create({ ...render, batchId: conceptBatchId, ideaId: "idea-1", redoOf: id, directionVersion: 1, draft: 1 });
+
+    const progress = await studio.services.board.progress(await studio.services.batches.get(conceptBatchId));
+    expect(current.concepts[0]?.since).toBe(2);
+    expect(progress.missing).not.toContain("a queued draft redo to finish");
+    expect(progress.batch.state).toBe("drafting");
   });
 
   it("uses logo-stamped checks to allow a redo for either one D or two F items", async () => {

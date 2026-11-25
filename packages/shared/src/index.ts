@@ -286,8 +286,6 @@ export interface Batch {
   spec?: string;
   createdAt: string;
   updatedAt: string;
-  /** A ready-board draft redo being sent to fal; stale markers expire after ten minutes. */
-  redoSendingAt?: string;
   createdBy: string;
 }
 
