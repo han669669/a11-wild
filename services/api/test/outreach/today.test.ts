@@ -64,6 +64,38 @@ describe("the Today page", () => {
     });
   });
 
+  it("shows the current direct person and title in a contact check without an old target", async () => {
+    await loadRows(store, [row(1, { bestRoute: "DM phone +65 8000 0001", decisionMaker: "Amelia Lee", dmTitle: "Founder" })], now);
+    await ready("00001");
+    await loadRows(store, [row(1, { bestRoute: "DM email (valid) evelyn@example.com", decisionMaker: "Evelyn Tan", dmTitle: "Director" })], now);
+    const line = (await today()).firsts[0]!;
+    expect(line.routeCheck).toBe(true);
+    expect(line.sendTo).toMatchObject({ channel: "email", to: "evelyn@example.com", direct: true, person: "Evelyn Tan", title: "Director" });
+    expect(line.routeCheckTo).toMatchObject({ channel: "email", to: "evelyn@example.com", direct: true, person: "Evelyn Tan", title: "Director" });
+    expect(JSON.stringify(line)).not.toContain("6580000001");
+  });
+
+  it("offers a follow-up at the current contact after the contact changes", async () => {
+    await ready("00001");
+    await sequence.send("00001", { step: 0, title: 0 });
+    at("2026-11-26T10:00:00");
+    await loadRows(store, [row(1, { bestRoute: "Email (valid) replacement@example.com" })], now);
+
+    const line = (await today()).followUps[0]!;
+    expect(line.sendTo).toMatchObject({ channel: "email", to: "replacement@example.com" });
+    expect(line.messages?.[0]?.href).toMatch(/^mailto:replacement@example\.com\?subject=/);
+  });
+
+  it("puts the oldest ads first without changing the daily number", async () => {
+    const sixth = await store.get("00006");
+    await store.saveProfile({ ...sixth, newestAd: "2026-10-01" });
+    for (const id of ["00001", "00002", "00003", "00004", "00005", "00006"]) await ready(id);
+    const page = await today();
+    expect(page.daily).toBe(5);
+    expect(brands(page.firsts)).toEqual(["Brand 6", "Brand 1", "Brand 2", "Brand 3", "Brand 4"]);
+    expect(page.firsts[0]!.prospect).toMatchObject({ staleDays: 53 });
+  });
+
   it("offers two new brands when three of the five first messages are sent", async () => {
     for (const id of ["00001", "00002", "00003", "00004", "00005", "00006"]) await ready(id);
     for (const id of ["00001", "00002", "00003"]) await sequence.send(id, { step: 0, title: 0 });

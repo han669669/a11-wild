@@ -10,6 +10,8 @@ import { api, describeError, type ProspectFilter } from "@/lib/api";
 import { useLoad } from "@/lib/use-load";
 import { dayName } from "@/lib/when";
 
+type ViewFilter = ProspectFilter & { tired?: boolean };
+
 const COUNTS: [keyof Omit<OutreachNumbers, "prospects">, string][] = [
   ["sent", "Sent"],
   ["replied", "Replied"],
@@ -26,17 +28,17 @@ const PAGE = 50;
 
 /** Every brand of the list, the ones that wait for the owner first, with a search by name and three filters. The numbers of the campaign are folded below. */
 export function Prospects() {
-  const [filter, setFilter] = useState<ProspectFilter>({});
+  const [filter, setFilter] = useState<ViewFilter>({});
   const load = useCallback(() => api.prospects(filter), [filter]);
   const { value: page, error } = useLoad(load);
   const [shown, setShown] = useState(PAGE);
-  const set = (change: ProspectFilter) => (setShown(PAGE), setFilter((before) => ({ ...before, ...change })));
+  const set = (change: ViewFilter) => (setShown(PAGE), setFilter((before) => ({ ...before, ...change })));
   // A stable sort: within one rank the brands keep the order of the list.
   const rows = page ? [...page.rows].sort((a, b) => rank(a) - rank(b)) : [];
   const first = rows.some((row) => rank(row) < WAITS.length);
 
   return (
-    <>
+    <div className="reading">
       <PageHeader title="Prospects" lead="Every brand of your list, without its number and address, which are on the brand's own page." />
       <OutreachTabs />
       {page === undefined ? (
@@ -44,14 +46,18 @@ export function Prospects() {
       ) : (
         <>
           <Section title="Brands" count={page.rows.length} mark={first ? <span className="text-caption text-muted-foreground">Replies and the brands that wait for you are listed first</span> : null}>
-            <div className="mb-4 grid gap-3 sm:grid-cols-4">
+            <div className="mb-4 grid gap-3 sm:grid-cols-5">
               <label className="grid gap-1.5 text-caption text-muted-foreground">
                 Search by name
                 <input type="search" value={filter.q ?? ""} onChange={(event) => set({ q: event.target.value })} className={`${FIELD} text-foreground`} />
               </label>
-              <Choice label="Tier" value={filter.tier} options={OUTREACH_TIERS.map((tier) => [tier, `${tier} live ads`])} onChange={(tier) => set({ tier: tier as OutreachTier | undefined })} />
+              <Choice label="Ads running" value={filter.tier} options={OUTREACH_TIERS.map((count) => [count, `${count} ads running`])} onChange={(tier) => set({ tier: tier as OutreachTier | undefined })} />
               <Choice label="Sector" value={filter.sector} options={page.sectors.map((sector) => [sector, sector])} onChange={(sector) => set({ sector })} />
               <Choice label="Stage" value={filter.stage} options={OUTREACH_STAGES.map((stage) => [stage, STAGES[stage].label])} onChange={(stage) => set({ stage: stage as OutreachStage | undefined })} />
+              <label className="flex items-center gap-2 text-body text-muted-foreground">
+                <input type="checkbox" checked={filter.tired ?? false} onChange={(event) => set({ tired: event.target.checked || undefined })} />
+                Tired ads (30+ days)
+              </label>
             </div>
             {page.rows.length === 0 ? (
               <Empty>{page.numbers.prospects === 0 ? "The list is not loaded yet." : "No brand fits the search and the filters."}</Empty>
@@ -66,6 +72,14 @@ export function Prospects() {
                           {row.next ? `${STEPS[row.next.step]} is due ${dayName(row.next.due)}.` : null}
                           {row.sameContactAs ? ` Same contact as ${row.sameContactAs}.` : null}
                         </p>
+                      ) : null}
+                      {row.flags.duplicate || row.flags.blocked || row.flags.check || (row.staleDays !== undefined && row.staleDays >= 30) ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {row.flags.duplicate ? <span className="rounded-full border border-border px-2 py-0.5 text-caption">Possible duplicate</span> : null}
+                          {row.flags.blocked ? <span className="rounded-full border border-border px-2 py-0.5 text-caption">Do not send</span> : null}
+                          {row.flags.check ? <span className="rounded-full border border-border px-2 py-0.5 text-caption">Check how to reach it</span> : null}
+                          {row.staleDays !== undefined && row.staleDays >= 30 ? <span className="rounded-full border border-border px-2 py-0.5 text-caption">Tired ads</span> : null}
+                        </div>
                       ) : null}
                     </Card>
                   </li>
@@ -91,7 +105,7 @@ export function Prospects() {
           </div>
         </>
       )}
-    </>
+    </div>
   );
 }
 

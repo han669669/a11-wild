@@ -2,7 +2,7 @@ import type { OutreachChannel, OutreachEvent, OutreachSend, OutreachStep, Outrea
 import { Refusal } from "../mcp/registry.js";
 import { dueDay, singaporeDay } from "./days.js";
 import { checkTemplate, fill } from "./messages.js";
-import { channelOf, newestAd, optedOut, stageOf, verdictOf } from "./stage.js";
+import { newestAd, optedOut, routeCheckUnresolved, sendTarget, sendTargetUnavailable, stageOf, targetForChannel, verdictOf } from "./stage.js";
 import { contactKeys, type OutreachStore } from "./store.js";
 
 /** The owner's sequence: follow-up 1 three days after the first message, follow-up 2 four days after follow-up 1. */
@@ -31,7 +31,7 @@ export function sameContact(files: ProspectFile[]): Map<string, ProspectFile> {
   const first = new Map<string, ProspectFile>();
   const shared = new Map<string, ProspectFile>();
   for (const file of files) {
-    if (file.profile.test) continue;
+    if (file.profile.test || file.profile.mergedInto) continue;
     const keys = contactKeys(file.profile);
     const earlier = keys.map((key) => first.get(key)).find((found) => found !== undefined);
     if (earlier) shared.set(file.profile.id, earlier);
@@ -73,17 +73,38 @@ export class OutreachSequence {
   private async file(id: string): Promise<{ file: ProspectFile; files: ProspectFile[]; optOuts: Set<string> }> {
     const [files, optOuts] = await Promise.all([this.store.all(), this.store.optOuts()]);
     const file = files.find((entry) => entry.profile.id === id);
-    if (!file) throw new Refusal(`There is no prospect ${id}.`);
+    if (!file) {
+      await this.store.assertWritable(id);
+      throw new Refusal(`There is no prospect ${id}.`);
+    }
     return { file, files, optOuts };
   }
 
   /** Records a message the owner sent by hand: the day, the channel and the exact text. A second mark of the same step changes nothing. */
-  async send(id: string, input: { step: OutreachStep; title: 0 | 1 }): Promise<{ send: OutreachSend; already: boolean }> {
+  async send(id: string, input: { step: OutreachStep; title: 0 | 1; to?: string | undefined; channel?: OutreachChannel | undefined }): Promise<{ send: OutreachSend; already: boolean }> {
     const { file, files, optOuts } = await this.file(id);
     const { step } = input;
     const before = file.sends.find((send) => send.step === step);
     if (before) return { send: before, already: true };
-    if (optedOut(file, optOuts)) throw new Refusal("This contact opted out. No message to it is recorded, and none should be sent.");
+    if (step === 0 && optedOut(file, optOuts)) throw new Refusal("This contact opted out. No message to it is recorded, and none should be sent.");
+
+    const target = sendTarget(file, optOuts);
+    if (step === 0 && routeCheckUnresolved(file)) throw new Refusal("The best contact for this brand changed. Check it, then send.");
+    const suppliedTo = input.to;
+    const suppliedChannel = input.channel;
+    let recordTarget = target;
+    if ((suppliedTo !== undefined && suppliedTo !== target?.to) || (suppliedChannel !== undefined && suppliedChannel !== target?.channel)) {
+      let earlierTarget: typeof target = undefined;
+      if (step > 0 && suppliedTo !== undefined && suppliedChannel !== undefined) {
+        if (file.sends.some((send) => send.channel === suppliedChannel && send.to === suppliedTo)) {
+          earlierTarget = { channel: suppliedChannel, to: suppliedTo, direct: false };
+        }
+      }
+      if (!earlierTarget || sendTargetUnavailable(file, earlierTarget, optOuts)) {
+        throw new Refusal("The contact for this brand changed. Reload the page and check it before marking.");
+      }
+      recordTarget = earlierTarget;
+    }
     const day = singaporeDay(this.now());
     const stage = stageOf(file, optOuts);
     if (step === 0) {
@@ -98,15 +119,15 @@ export class OutreachSequence {
     }
     const templates = await this.templates();
     if (!templates) throw new Refusal("The message text is not loaded yet.");
-    const channel = channelOf(file);
-    if (!channel) throw new Refusal("This brand has no WhatsApp number and no verified address.");
+    if (!recordTarget) throw new Refusal("This brand has no checked number or address.");
+    const { channel } = recordTarget;
     const counted = step === 0 && !file.profile.test;
     // The place in the day's count is taken first, so two marks at once cannot pass the day's number.
     if (counted) {
       const daily = await this.daily();
       if (!(await this.store.takePlace(day, daily))) throw new Refusal(`Today's ${daily} first messages are sent. More can go tomorrow, or raise the daily number.`);
     }
-    const send: OutreachSend = { step, day, channel, ...fill(templates.steps[step], file.profile.brand, input.title), at: this.now().toISOString() };
+    const send: OutreachSend = { step, day, channel, to: recordTarget.to, ...fill(templates.steps[step], file.profile.brand, input.title), at: this.now().toISOString() };
     let put = false;
     try {
       put = await this.store.putSend(id, send);
@@ -121,7 +142,7 @@ export class OutreachSequence {
 
   /** Takes a mark back on the day it was made. Only the newest step can be taken back. */
   async takeBack(id: string, step: OutreachStep): Promise<void> {
-    const { file } = await this.file(id);
+    const { file, optOuts } = await this.file(id);
     const send = file.sends.find((entry) => entry.step === step);
     if (!send) throw new Refusal(`${STEP_NAMES[step]} of this brand is not marked as sent.`);
     if (file.sends.some((entry) => entry.step > step)) throw new Refusal("A later message of this brand is marked as sent. Take that one back first.");
@@ -129,7 +150,9 @@ export class OutreachSequence {
     if (send.day !== day || !(await this.store.deleteSend(id, step, day))) throw new Refusal(`A mark can be taken back on its own day only. This one is of ${send.day}.`);
     // The place goes back before the note of it is written: the mark is gone, so the day must not count it.
     if (step === 0 && !file.profile.test) await this.store.givePlace(day);
-    await this.store.addEvent(id, { type: "unsent", step }, "owner");
+    const current = sendTarget(file, optOuts);
+    const recheck = step === 0 && (send.channel !== current?.channel || send.to !== current?.to);
+    await this.store.addEvent(id, { type: "unsent", step, ...(recheck ? { recheck: true as const } : {}) }, "owner");
   }
 
   /** A reply the owner got. "no" is an opt-out, at once and for good. */
@@ -143,10 +166,12 @@ export class OutreachSequence {
 
   /** Final, and kept for the contact: every brand with that number or that address leaves every list. */
   async optOut(id: string): Promise<void> {
-    const profile = await this.store.get(id);
+    const { file } = await this.file(id);
+    const { profile } = file;
+    // The reply can't say which message drew it, so every address this brand was messaged at is closed.
     // The contact's own register is written first: if the second write fails, every brand with the contact is off the lists already, and a second try finishes it.
     // A test prospect's opt-out stays on the test prospect, so a test can neither block nor free a real contact.
-    if (!profile.test) await this.store.addOptOut(profile);
+    if (!profile.test) await this.store.addOptOut(profile, file.sends);
     await this.store.addEvent(id, { type: "optout" }, "owner");
   }
 
@@ -185,9 +210,19 @@ export class OutreachSequence {
   }
 
   async setChannel(id: string, channel: OutreachChannel): Promise<OutreachEvent> {
-    const profile = await this.store.get(id);
-    if (channel === "whatsapp" ? profile.whatsapp.length === 0 : !profile.email) throw new Refusal(channel === "whatsapp" ? "This brand has no WhatsApp number." : "This brand has no verified address.");
+    await this.store.get(id);
+    const file = (await this.store.all()).find((entry) => entry.profile.id === id);
+    if (!file || !targetForChannel(file, channel)) {
+      throw new Refusal(channel === "whatsapp" ? "This brand has no WhatsApp number." : "This brand has no verified address.");
+    }
     return this.store.addEvent(id, { type: "channel", channel }, "owner");
+  }
+
+  async confirmRoute(id: string): Promise<OutreachEvent> {
+    const { file, optOuts } = await this.file(id);
+    if (!routeCheckUnresolved(file)) throw new Refusal("There is no changed contact waiting for confirmation.");
+    if (!sendTarget(file, optOuts)) throw new Refusal("There is no contact to confirm yet.");
+    return this.store.addEvent(id, { type: "route", choice: "confirmed" }, "owner");
   }
 
   /** The owner chooses to send to a brand that shares its contact with an earlier one. */

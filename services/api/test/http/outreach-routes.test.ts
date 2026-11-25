@@ -38,6 +38,7 @@ const WRITES: [string, unknown][] = [
   ["/api/outreach/prospects/00001/stage", { stage: "lost" }],
   ["/api/outreach/prospects/00001/note", { text: "A note." }],
   ["/api/outreach/prospects/00001/channel", { channel: "email" }],
+  ["/api/outreach/prospects/00001/route", {}],
   ["/api/outreach/prospects/00001/kind", { kind: "service" }],
   ["/api/outreach/prospects/00001/choose", {}],
   ["/api/outreach/prospects/00001/remove", {}],
@@ -151,6 +152,38 @@ describe("the owner's day", () => {
     expect((await json(await get("/api/outreach/prospects/00001"))).prospect.stage).toBe("contacted");
   });
 
+  it("offers and records a follow-up at the current contact after an import without confirmation", async () => {
+    await ready();
+    await on("00001", "sent", { step: 0, title: 0 });
+    studio.clock.now = new Date("2026-11-26T02:00:00Z");
+    cookie = await sessionCookie(studio);
+    await loadProspects(studio, [row(1, { bestRoute: "Email (valid) replacement@example.com" })]);
+
+    const page = await json(await get("/api/outreach/prospects/00001"));
+    expect(page.prospect).toMatchObject({ stage: "contacted", next: { step: 1, due: "2026-11-26" } });
+    expect(page.check).toBeUndefined();
+    expect(page.sends).toMatchObject([{ step: 0, channel: "whatsapp", to: "6580000001" }]);
+    expect(page.message).toMatchObject({ step: 1, channel: "email" });
+    expect(page.contact.sendTo).toMatchObject({ channel: "email", to: "replacement@example.com" });
+    expect(page.message.messages[0].href).toMatch(/^mailto:replacement@example\.com\?subject=/);
+    const sent = await json(await on("00001", "sent", { step: 1, title: 0, channel: page.contact.sendTo.channel, to: page.contact.sendTo.to }));
+    expect(sent.sends[1]).toMatchObject({ step: 1, channel: "email", to: "replacement@example.com" });
+  });
+
+  it("refuses to mark a message at the contact shown before an import", async () => {
+    await ready([row(1, { bestRoute: "Email (valid) original@example.com", whatsapp: "", email: "" })]);
+    const shown = await json(await get("/api/outreach/prospects/00001"));
+    expect(shown.contact.sendTo).toMatchObject({ channel: "email", to: "original@example.com" });
+
+    await loadProspects(studio, [row(1, { bestRoute: "Email (valid) replacement@example.com", whatsapp: "", email: "" })]);
+    expect((await json(await get("/api/outreach/prospects/00001"))).check).toBe(true);
+    expect((await on("00001", "route", {})).status).toBe(200);
+    const refused = await on("00001", "sent", { step: 0, title: 0, channel: shown.contact.sendTo.channel, to: shown.contact.sendTo.to });
+    expect(refused.status).toBe(400);
+    expect((await json(refused)).message).toBe("The contact for this brand changed. Reload the page and check it before marking.");
+    expect((await outreach().store.all())[0]!.sends).toEqual([]);
+  });
+
   it("marks a message as sent once, with the title he used, and takes it back on the same day only", async () => {
     await ready();
     const sent = await json(await on("00001", "sent", { step: 0, title: 1 }));
@@ -219,17 +252,183 @@ describe("the owner's day", () => {
     expect((await get("/api/outreach/prospects/00009")).status).toBe(404);
   });
 
+  it("shows the current changed contact and confirms before sending", async () => {
+    await ready([row(1, { email: "brand1@example.com", bestRoute: "DM phone +65 8000 0001", decisionMaker: "Amelia Lee", dmTitle: "Founder" })]);
+    await loadProspects(studio, [row(1, { email: "new@example.com", bestRoute: "DM email (valid) new@example.com", decisionMaker: "Evelyn Tan", dmTitle: "Director" })]);
+    const waiting = await json(await get("/api/outreach/prospects/00001"));
+    expect(waiting.check).toBe(true);
+    expect(waiting.contact.sendTo).toMatchObject({ channel: "email", to: "new@example.com", person: "Evelyn Tan", title: "Director" });
+    expect(waiting.message.messages[0].href).toMatch(/^mailto:new@example\.com\?/);
+
+    const channelChanged = await json(await on("00001", "channel", { channel: "email" }));
+    expect(channelChanged.contact.sendTo).toMatchObject({ channel: "email", to: "new@example.com", person: "Evelyn Tan", title: "Director" });
+    expect(channelChanged.message.messages[0].href).toMatch(/^mailto:new@example\.com\?/);
+
+    expect((await on("00001", "route", { choice: "kept" })).status).toBe(400);
+    const confirmed = await json(await on("00001", "route", {}));
+    expect(confirmed.check).toBeUndefined();
+    expect(confirmed.contact.sendTo).toMatchObject({ channel: "email", to: "new@example.com", person: "Evelyn Tan", title: "Director" });
+    expect(confirmed.message.messages[0].href).toMatch(/^mailto:new@example\.com\?/);
+    expect(confirmed.events[0]).toMatchObject({ type: "route", choice: "confirmed", by: "owner" });
+    expect(confirmed.events[0]).not.toHaveProperty("to");
+    expect(confirmed.events[0]).not.toHaveProperty("target");
+    studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
+    const channelAfterRoute = await json(await on("00001", "channel", { channel: "whatsapp" }));
+    expect(channelAfterRoute.contact.sendTo).toMatchObject({ channel: "whatsapp", to: "6580000001" });
+    expect(channelAfterRoute.message.messages[0].href).toMatch(/^https:\/\/wa\.me\/6580000001/);
+    const sent = await json(await on("00001", "sent", { step: 0, title: 0 }));
+    expect(sent.sends[0].to).toBe(channelAfterRoute.contact.sendTo.to);
+  });
+
+  it("refreshes direct-recipient details from the current workbook row", async () => {
+    await ready([
+      row(1, { bestRoute: "DM phone +65 8000 0001", decisionMaker: "Amelia Lee" }),
+      row(2, { bestRoute: "DM phone +65 8000 0002" }),
+    ]);
+    const incoming = [
+      row(1, { bestRoute: "DM phone +65 8000 0001", decisionMaker: "Amelia Li", dmTitle: "Director" }),
+      row(2, { bestRoute: "DM phone +65 8000 0002" }),
+    ];
+    await loadProspects(studio, incoming);
+
+    const named = await json(await get("/api/outreach/prospects/00001"));
+    expect(named.contact.sendTo).toMatchObject({ person: "Amelia Li", title: "Director" });
+    expect(named.prospect.person).toBe("Amelia Li");
+    const unnamed = await json(await get("/api/outreach/prospects/00002"));
+    expect(unnamed.contact.sendTo).not.toHaveProperty("person");
+    expect(unnamed.contact.sendTo).not.toHaveProperty("title");
+    expect(unnamed.prospect.person).toBeUndefined();
+
+    const today = await json(await get("/api/outreach/today"));
+    const namedLine = today.firsts.find((line: { prospect: { id: string } }) => line.prospect.id === "00001");
+    const unnamedLine = today.firsts.find((line: { prospect: { id: string } }) => line.prospect.id === "00002");
+    expect(namedLine.sendTo).toMatchObject({ person: "Amelia Li", title: "Director" });
+    expect(namedLine.prospect.person).toBe("Amelia Li");
+    expect(unnamedLine.sendTo).not.toHaveProperty("person");
+    expect(unnamedLine.sendTo).not.toHaveProperty("title");
+    expect(unnamedLine.prospect.person).toBeUndefined();
+  });
+
+  it("hides every person and contact field from a prospect closed by a shared opted-out number", async () => {
+    const number = "+65 8000 0001";
+    await ready([
+      row(1, { whatsapp: number }),
+      row(2, { whatsapp: number, bestRoute: `DM phone ${number}`, decisionMaker: "Amelia Lee", dmTitle: "Founder", notes: "AUDIT-FLAG: hidden@example.com do not use" }),
+    ]);
+    await outreach().sequence.choose("00002");
+    const sent = await json(await on("00002", "sent", { step: 0, title: 0 }));
+    expect(sent.sends[0].to).toBe("6580000001");
+    await loadProspects(studio, [
+      row(2, { whatsapp: number, bestRoute: "DM email (valid) new@example.com", decisionMaker: "Amelia Lee", dmTitle: "Founder", notes: "AUDIT-FLAG: hidden@example.com do not use" }),
+    ]);
+    await outreach().store.addEvent("00002", {
+      type: "route",
+      choice: "kept",
+      target: { channel: "email", to: "old@example.com", direct: true, person: "Previous Person" },
+    } as never, "owner");
+    await outreach().sequence.optOut("00001");
+
+    const page = await json(await get("/api/outreach/prospects/00002"));
+    expect(page.prospect).toMatchObject({ stage: "opted_out" });
+    expect(page.prospect.person).toBeUndefined();
+    expect(page.contact).toEqual({ whatsapp: [] });
+    expect(page.check).toBeUndefined();
+    expect(page.flags).toEqual([]);
+    expect(page.sends[0].to).toBeUndefined();
+    expect(JSON.stringify(page)).not.toMatch(/Amelia Lee|6580000001|new@example\.com|old@example\.com|hidden@example\.com|Previous Person/);
+  });
+
+  it("does not expose a test prospect's contact when its number belongs to an opted-out brand", async () => {
+    await loadProspects(studio, [row(1, { whatsapp: "+65 8000 0001" })]);
+    await outreach().sequence.optOut("00001");
+    const test = await json(await post("/api/outreach/test-prospect", { whatsapp: "+65 8000 0001" }));
+    const profile = await outreach().store.get(test.id);
+    await outreach().store.saveProfile({
+      ...profile,
+      bestRoute: "WhatsApp +65 8000 0001",
+      secondRoute: "WhatsApp +65 8000 0001",
+      routeCheck: { since: studio.clock.now.toISOString(), channel: "whatsapp", direct: false },
+    });
+    await outreach().sequence.setChannel(test.id, "whatsapp");
+    await outreach().sequence.choose(test.id);
+    await outreach().sequence.saveTemplates(TEMPLATES as never);
+    const ad = await outreach().store.addAd(test.id, AD);
+    await outreach().sequence.verdict(test.id, { ad: ad.n, yes: true });
+
+    const today = await json(await get("/api/outreach/today"));
+    const line = today.firsts.find((entry: { prospect: { id: string } }) => entry.prospect.id === test.id);
+    expect(line).toMatchObject({ routeCheck: true, prospect: { id: test.id } });
+    expect(line.sendTo).toBeUndefined();
+    expect(line.routeCheckTo).toBeUndefined();
+    expect(line.prospect.person).toBeUndefined();
+    expect(JSON.stringify(line)).not.toContain("6580000001");
+
+    const page = await json(await get(`/api/outreach/prospects/${test.id}`));
+    expect(page.contact.whatsapp).toEqual([]);
+    expect(page.contact.sendTo).toBeUndefined();
+    expect(page.check).toBe(true);
+    expect(page.message).toMatchObject({ step: 0 });
+    expect(page.message.messages[0].href).toBeUndefined();
+    expect(JSON.stringify(page.contact)).not.toContain("6580000001");
+    expect(JSON.stringify(page)).not.toContain("6580000001");
+  });
+
+  it("hides a test prospect's shared plain number on its channel target, message and send history", async () => {
+    const number = "+65 8000 0001";
+    await loadProspects(studio, [row(1, { whatsapp: number, phone: number })]);
+    const test = await json(await post("/api/outreach/test-prospect", { whatsapp: number }));
+    const profile = await outreach().store.get(test.id);
+    await outreach().store.saveProfile({
+      ...profile,
+      phone: number,
+      dmPhone: number,
+      bestRoute: "Source note +65 8000 0001",
+      secondRoute: "Contact note +65 8000 0001",
+    });
+    await outreach().sequence.saveTemplates(TEMPLATES as never);
+    const added = await outreach().store.addAd(test.id, AD);
+    await outreach().sequence.verdict(test.id, { ad: added.n, yes: true });
+    await outreach().sequence.setChannel(test.id, "whatsapp");
+    await outreach().sequence.send(test.id, { step: 0, title: 0 });
+    await outreach().sequence.optOut("00001");
+
+    const sentPage = await json(await get(`/api/outreach/prospects/${test.id}`));
+    expect(sentPage.contact.whatsapp).toEqual([]);
+    expect(sentPage.contact.phone).toBeUndefined();
+    expect(sentPage.contact.sendTo).toBeUndefined();
+    expect(sentPage.contact.bestRoute).toBeUndefined();
+    expect(sentPage.contact.secondRoute).toBeUndefined();
+    expect(sentPage.contact.others.dmPhone).toBeUndefined();
+    expect(sentPage.check).toBeUndefined();
+    expect(sentPage.sends[0].to).toBeUndefined();
+    expect(JSON.stringify(sentPage)).not.toContain("6580000001");
+    expect(JSON.stringify(sentPage)).not.toContain("8000 0001");
+
+    await outreach().sequence.takeBack(test.id, 0);
+    const readyPage = await json(await get(`/api/outreach/prospects/${test.id}`));
+    expect(readyPage.contact.sendTo).toBeUndefined();
+    expect(readyPage.message).toMatchObject({ step: 0 });
+    expect(readyPage.message.messages[0].href).toBeUndefined();
+    expect(JSON.stringify(readyPage)).not.toContain("6580000001");
+    expect(JSON.stringify(readyPage)).not.toContain("8000 0001");
+  });
+
   it("gives the owner the contact, each link only from a checked value", async () => {
     await loadProspects(studio, [row(1, { phone: "+65 6123 4567", instagram: "@brand.one", decisionMaker: "A Person", dmTitle: "Founder", linkedin: "www.linkedin.com/in/a-person", bestRoute: "WhatsApp" }), row(2, { instagram: "javascript:alert(1)", linkedin: "https://evil.example/in/x" })]);
     expect((await json(await get("/api/outreach/prospects/00001"))).contact).toEqual({
       whatsapp: [{ number: "6580000001", href: "https://wa.me/6580000001" }],
-      email: { address: "hello@brand1.example", href: "mailto:hello@brand1.example" },
+      email: { address: "brand1@example.com", href: "mailto:brand1@example.com" },
       phone: "+65 6123 4567",
       instagram: { name: "@brand.one", href: "https://www.instagram.com/brand.one/" },
       decisionMaker: "A Person",
       dmTitle: "Founder",
       linkedin: { text: "www.linkedin.com/in/a-person", href: "https://www.linkedin.com/in/a-person" },
       bestRoute: "WhatsApp",
+      sendTo: { channel: "whatsapp", to: "6580000001", direct: false },
+      others: {
+        instagram: { name: "@brand.one", href: "https://www.instagram.com/brand.one/" },
+        linkedin: { text: "www.linkedin.com/in/a-person", href: "https://www.linkedin.com/in/a-person" },
+      },
     });
     expect((await json(await get("/api/outreach/prospects/00002"))).contact).toMatchObject({ instagram: { name: "javascript:alert(1)" }, linkedin: { text: "https://evil.example/in/x" } });
     expect((await json(await get("/api/outreach/prospects/00002"))).contact.instagram.href).toBeUndefined();
@@ -239,7 +438,7 @@ describe("the owner's day", () => {
 
 describe("the list and its numbers", () => {
   it("counts sent, replied, said more, opted out and clients, by tier and by channel, without the test prospect", async () => {
-    await ready([row(1), row(2, { tier: "5-19 live ads" }), row(3, { whatsapp: undefined }), row(4, { tier: "<5 live ads", sector: "Beauty" }), row(5)]);
+    await ready([row(1), row(2, { liveAds: 10, tier: "5-19 live ads" }), row(3, { whatsapp: undefined }), row(4, { liveAds: 2, tier: "<5 live ads", sector: "Beauty" }), row(5)]);
     const made = await json(await post("/api/outreach/test-prospect", { whatsapp: "+65 8999 0000" }));
     await on(made.id, "ad", { ad: 1, yes: true });
     for (const id of ["00001", "00002", "00003", "00004", made.id]) expect((await on(id, "sent", { step: 0, title: 0 })).status, id).toBe(200);
@@ -266,7 +465,7 @@ describe("the list and its numbers", () => {
   });
 
   it("searches by name and filters by tier, sector and stage", async () => {
-    await ready([row(1, { brand: "Koi Tea" }), row(2, { brand: "Tea Bar", tier: "5-19 live ads" }), row(3, { brand: "Glow Lab", sector: "Beauty" })]);
+    await ready([row(1, { brand: "Koi Tea" }), row(2, { brand: "Tea Bar", liveAds: 10, tier: "5-19 live ads" }), row(3, { brand: "Glow Lab", sector: "Beauty" })]);
     await on("00003", "stage", { stage: "lost" });
     const brands = async (query: string) => (await json(await get(`/api/outreach/prospects?${query}`))).rows.map((entry: { brand: string }) => entry.brand);
     expect(await brands("q=tea")).toEqual(["Koi Tea", "Tea Bar"]);
@@ -277,6 +476,27 @@ describe("the list and its numbers", () => {
     expect(await brands("q=nothing")).toEqual([]);
     expect((await get("/api/outreach/prospects?stage=sent")).status).toBe(400);
     expect((await get("/api/outreach/prospects?tier=big")).status).toBe(400);
+  });
+
+  it("filters tired ads and excludes merged brands from the list and its counts", async () => {
+    await loadProspects(studio, [row(1, { newestAd: "2026-10-01" }), row(2, { newestAd: "2026-11-01" })]);
+    await loadProspects(studio, [row(2, { mergedInto: 1, newestAd: "2026-11-01" })]);
+    const tired = await json(await get("/api/outreach/prospects?tired=true"));
+    expect(tired.rows.map((entry: { brand: string }) => entry.brand)).toEqual(["Brand 1"]);
+    const all = await json(await get("/api/outreach/prospects"));
+    expect(all.rows.map((entry: { brand: string }) => entry.brand)).toEqual(["Brand 1"]);
+    expect(all.numbers.prospects).toBe(1);
+    const contacts = await outreach().desk.contacts({ after: 0, limit: 1 });
+    expect(contacts.prospects.map((entry) => entry.brand)).toEqual(["Brand 1"]);
+    expect(contacts.more).toBe(false);
+    const next = await outreach().desk.next(10);
+    expect(next.brands.map((entry) => entry.brand)).toEqual(["Brand 1"]);
+    expect(JSON.stringify(await outreach().desk.state())).not.toContain("Brand 2");
+    expect((await get("/api/outreach/prospects/00002")).status).toBe(404);
+    expect((await json(await get("/api/outreach/today"))).firsts.map((line: { prospect: { brand: string } }) => line.prospect.brand)).not.toContain("Brand 2");
+    const refused = await post("/api/outreach/prospects/00002/note", { text: "A note." });
+    expect(refused.status).toBe(400);
+    expect((await json(refused)).message).toBe("This brand is merged into Brand 1.");
   });
 });
 
@@ -294,7 +514,7 @@ describe("the message text and the test prospect", () => {
   it("makes a test prospect with an ad that waits, and removes it with everything of it; no other prospect can be removed", async () => {
     await loadProspects(studio);
     const before = (await studio.table.query("OUTREACH")).length;
-    const made = await json(await post("/api/outreach/test-prospect", { email: "me@test.example" }));
+    const made = await json(await post("/api/outreach/test-prospect", { email: "me@example.com" }));
     const page = await json(await get(`/api/outreach/prospects/${made.id}`));
     expect(page).toMatchObject({ prospect: { brand: "TEST prospect", test: true, stage: "ad_waits", channel: "email" }, ads: [{ n: 1, viewUrl: expect.stringContaining("outreach/test-ad.png") }] });
     await on(made.id, "ad", { ad: 1, yes: true });

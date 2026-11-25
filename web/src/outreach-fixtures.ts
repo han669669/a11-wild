@@ -1,7 +1,7 @@
 import type { OutreachAdView, OutreachCandidate, OutreachCandidates, OutreachMessage, ProspectPage, ProspectRow, TodayLine, TodayPage } from "@a11-wild/shared";
 
 /** Made-up outreach data for the page tests. No real brand and no real contact. */
-export const prospectRow = (overrides: Partial<ProspectRow> = {}): ProspectRow => ({ id: "00001", n: 1, brand: "Koi Tea", sector: "F&B", liveAds: 24, tier: "20+", stage: "ready", channel: "whatsapp", adWaits: false, ...overrides });
+export const prospectRow = (overrides: Partial<ProspectRow> = {}): ProspectRow => ({ id: "00001", n: 1, brand: "Koi Tea", sector: "F&B", liveAds: 24, tier: "20+", stage: "ready", channel: "whatsapp", flags: { duplicate: false, blocked: false, check: false }, adWaits: false, ...overrides });
 
 export const adView = (overrides: Partial<OutreachAdView> = {}): OutreachAdView => ({
   n: 1,
@@ -21,7 +21,14 @@ export const messages = (brand = "Koi Tea"): [OutreachMessage, OutreachMessage] 
   { title: `${brand}, I made this for you`, text: `Hi, I made this ad for ${brand}.`, href: "https://wa.me/6580000001?text=two" },
 ];
 
-export const firstLine = (overrides: Partial<TodayLine> = {}): TodayLine => ({ prospect: prospectRow(), ad: adView({ verdict: "yes" }), step: 0, messages: messages(), ...overrides });
+export const firstLine = (overrides: Partial<TodayLine> = {}): TodayLine => ({
+  prospect: prospectRow(),
+  ad: adView({ verdict: "yes" }),
+  step: 0,
+  messages: messages(),
+  sendTo: { channel: "whatsapp", to: "6580000001", direct: false },
+  ...overrides,
+});
 
 export const todayPage = (overrides: Partial<TodayPage> = {}): TodayPage => ({
   day: "2026-11-23",
@@ -40,7 +47,12 @@ export const todayPage = (overrides: Partial<TodayPage> = {}): TodayPage => ({
 
 export const prospectPage = (overrides: Partial<ProspectPage> = {}): ProspectPage => ({
   prospect: prospectRow(),
-  contact: { whatsapp: [{ number: "6580000001", href: "https://wa.me/6580000001" }], email: { address: "hello@koitea.example", href: "mailto:hello@koitea.example" } },
+  contact: {
+    whatsapp: [{ number: "6580000001", href: "https://wa.me/6580000001" }],
+    email: { address: "owner@example.com", href: "mailto:owner@example.com" },
+    sendTo: { channel: "whatsapp", to: "6580000001", direct: false },
+  },
+  flags: [],
   ads: [adView({ verdict: "yes" })],
   sends: [],
   events: [],
@@ -72,4 +84,3 @@ export const candidates = (overrides: Partial<OutreachCandidates> = {}): Outreac
     ...overrides,
   };
 };
-

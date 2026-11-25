@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { Candidates } from "@/components/candidates";
 import { FIELD } from "@/components/canon-card";
 import { Loading, OutLink } from "@/components/loading";
-import { AdPicture, AdVerdict, BrandLine, CHANNELS, Failure, MessageCard, OutreachTabs, CheckNote, STAGES, STEPS, TAP, useWrite } from "@/components/outreach";
+import { AdPicture, AdVerdict, BrandLine, CHANNELS, Failure, MessageCard, OutreachTabs, CheckNote, outreachFlagText, STAGES, STEPS, TAP, useWrite } from "@/components/outreach";
 import { Card, Empty, Fold, PageHeader, Section, Step } from "@/components/page";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,8 @@ import { useLoad } from "@/lib/use-load";
 import { dayName, when } from "@/lib/when";
 
 const OWNER_STAGES = ["in_talks", "client", "lost", "parked"] as const;
+const OPT_OUT_CONFIRMATION = "This stops all messages to this brand's contacts and every number or address you messaged for it across all brands.";
+const TEST_OPT_OUT_CONFIRMATION = "This is a test brand: the opt-out stays on it and blocks no real contact.";
 
 /** One brand: the one step that is next first, then its ad and its message. How to reach it and what happened are folded below. */
 export function Prospect() {
@@ -21,11 +23,11 @@ export function Prospect() {
   const { value: page, error, setValue } = useLoad(load);
 
   return (
-    <>
+    <div className="reading">
       <PageHeader title="Prospect" lead="One brand of your list, with its number and its address shown only to you." />
       <OutreachTabs />
       {page === undefined ? <Loading error={error} /> : <Body page={page} done={setValue} />}
-    </>
+    </div>
   );
 }
 
@@ -34,6 +36,7 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
   const { write, busy, error, failed } = useWrite(prospect.id, done);
   // The reason a write failed is drawn beside its own action: one inside a closed fold would not be seen.
   const failure = (...actions: ProspectWrite["action"][]) => (failed && actions.includes(failed) ? <Failure error={error} /> : null);
+  const optOutConfirmation = prospect.test ? TEST_OPT_OUT_CONFIRMATION : OPT_OUT_CONFIRMATION;
   const newest = ads[0];
   const out = prospect.stage === "opted_out";
   const lastSend = sends.at(-1);
@@ -44,6 +47,17 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
       <Candidates id={prospect.id} brand={prospect.brand} candidates={page.candidates} done={done} />
     </Section>
   ) : null;
+  const routeWrite = () => write({ action: "route", body: {} } as unknown as ProspectWrite);
+  const routeBusy = (busy as string | undefined) === "route";
+  const routeError = (failed as string | undefined) === "route" ? error : undefined;
+  const routeName = (channel: string) => ({ whatsapp: "WhatsApp", email: "Email", instagram: "Instagram", facebook: "Facebook", call: "Phone" })[channel] ?? "another way";
+  const checkTarget = () => {
+    const target = contact.sendTo;
+    if (!target) return "the brand";
+    const recipient = target.direct && target.person ? `${target.person}${target.title ? `, ${target.title}` : ""}` : "the brand";
+    const value = target.channel === "whatsapp" && /^\d+$/.test(target.to) ? `+${target.to}` : target.to;
+    return `${routeName(target.channel)} to ${recipient} (${value})`;
+  };
 
   return (
     <>
@@ -55,6 +69,19 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
           {page.newestAd ? ` · newest ad ${dayName(page.newestAd)}` : ""}
           {page.sells ? ` · sells a ${page.sells}` : ""}
         </p>
+        {page.flags.length > 0 ? (
+          <div className="grid gap-2">
+            <div className="flex flex-wrap gap-1.5">
+              {page.flags.map((flag) => (
+                <Badge key={flag.text} color={flag.kind === "blocked" ? "red" : flag.kind === "duplicate" ? "amber" : "gray"}>
+                  {flag.kind === "duplicate" ? "Possible duplicate" : flag.kind === "blocked" ? "Do not use" : "Checked"}
+                </Badge>
+              ))}
+            </div>
+            {page.flags.filter((flag) => flag.kind === "blocked").map((flag) => <p key={flag.text} className="text-body">Do not use: {outreachFlagText(flag.text)}</p>)}
+            {page.flags.filter((flag) => flag.kind === "duplicate").map((flag) => <p key={flag.text} className="text-body">{outreachFlagText(flag.text)}</p>)}
+          </div>
+        ) : null}
         {prospect.sameContactAs ? (
           <div className="flex flex-wrap items-center gap-2 text-body">
             Same contact as {prospect.sameContactAs}: it gets no first message until you choose it.
@@ -80,12 +107,32 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
         </Section>
       ) : null}
 
+      {page.check ? (
+        <Section title="The best contact changed">
+          <Card className="grid gap-3">
+            <p className="text-body">The best contact changed. Now: {checkTarget()}.</p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="secondary" className={TAP} disabled={busy !== undefined} loading={routeBusy} onClick={routeWrite}>Use it</Button>
+            </div>
+            <Failure error={routeError} />
+          </Card>
+        </Section>
+      ) : null}
+
       {picking ? drafts : null}
 
       {page.message && !out ? (
         <Section title="The message to send now">
           <Card>
-            <MessageCard prospect={prospect} ad={ads.find((ad) => ad.verdict === "yes")} step={page.message.step} messages={page.message.messages} done={done} />
+            <MessageCard
+              prospect={{ ...prospect, channel: page.message.channel ?? prospect.channel }}
+              ad={ads.find((ad) => ad.verdict === "yes")}
+              step={page.message.step}
+              messages={page.message.messages}
+              done={done}
+              sendTo={contact.sendTo}
+              disabled={Boolean(page.check && page.message.step === 0)}
+            />
           </Card>
         </Section>
       ) : null}
@@ -131,24 +178,26 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
       {sends.length > 0 && !out ? (
         <Section title="Did they reply?">
           <Card>
-            <Reply id={prospect.id} done={done} />
+            <Reply id={prospect.id} done={done} confirmation={optOutConfirmation} />
           </Card>
         </Section>
       ) : null}
 
       <div className="mt-10">
-        <Fold title="How to reach it">
+        <Fold title="How to reach it" open>
           <dl className="grid gap-x-6 gap-y-2 text-body sm:grid-cols-[10rem_1fr]">
             {contact.whatsapp.map((entry) => (
               <Line key={entry.number} name="WhatsApp" text={`+${entry.number}`} href={entry.href} />
             ))}
             {contact.email ? <Line name="Email" text={contact.email.address} href={contact.email.href} /> : null}
             {contact.phone ? <Line name="Phone" text={contact.phone} /> : null}
-            {contact.instagram ? <Line name="Instagram" text={contact.instagram.name} href={contact.instagram.href} /> : null}
+            {contact.sendTo ? <Line name="Current choice" text={`${contact.sendTo.person ?? "The brand"}${contact.sendTo.title ? `, ${contact.sendTo.title}` : ""} · ${CHANNELS[contact.sendTo.channel]}`} /> : null}
             {contact.decisionMaker ? <Line name="Person" text={`${contact.decisionMaker}${contact.dmTitle ? `, ${contact.dmTitle}` : ""}`} /> : null}
-            {contact.linkedin ? <Line name="LinkedIn" text={contact.linkedin.text} href={contact.linkedin.href} /> : null}
-            {contact.bestRoute ? <Line name="Best route" text={contact.bestRoute} /> : null}
-            {contact.secondRoute ? <Line name="Second route" text={contact.secondRoute} /> : null}
+            {contact.others?.second ? <Line name="Another way" text={routeName(contact.others.second.channel)} /> : null}
+            {contact.others?.dmEmail ? <Line name="Direct email" text={`${contact.others.dmEmail.address} · ${contact.others.dmEmail.check}`} /> : null}
+            {contact.others?.dmPhone ? <Line name="Direct phone" text={contact.others.dmPhone} /> : null}
+            {contact.others?.instagram || contact.instagram ? <Line name="Instagram" text={(contact.others?.instagram ?? contact.instagram)!.name} href={(contact.others?.instagram ?? contact.instagram)?.href} /> : null}
+            {contact.others?.linkedin || contact.linkedin ? <Line name="LinkedIn" text={(contact.others?.linkedin ?? contact.linkedin)!.text} href={(contact.others?.linkedin ?? contact.linkedin)?.href} /> : null}
           </dl>
           {contact.whatsapp.length > 0 && contact.email && !out ? (
             <div className="mt-4 flex flex-wrap items-center gap-2 text-caption text-muted-foreground">
@@ -162,7 +211,7 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
         </Fold>
 
         {out ? null : (
-          <Fold title="Note, stage and opt-out">
+          <Fold title="Note, stage and opt-out" open>
             <div className="grid gap-6 px-2 py-1">
             <Note id={prospect.id} done={done} />
             <div className="grid gap-2">
@@ -193,7 +242,7 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
                   Take back "{STEPS[lastSend.step]} sent"
                 </Button>
               ) : null}
-              <OptOut onYes={() => write({ action: "optout" })} busy={busy === "optout"} />
+              <OptOut onYes={() => write({ action: "optout" })} busy={busy === "optout"} confirmation={optOutConfirmation} />
             </div>
             {failure("stage", "kind", "unsent", "optout")}
             </div>
@@ -232,7 +281,13 @@ function Next({ page }: { page: ProspectPage }) {
     );
   }
   if (ads[0] && !ads[0].verdict) return <Step who="you">Say yes or no to the ad.{first ? " A yes makes the first message ready." : ""}</Step>;
-  if (page.message) return <Step who="you">{STEPS[page.message.step]} is ready. Send it yourself, then mark it as sent.</Step>;
+  if (page.message) {
+    return page.contact.sendTo ? (
+      <Step who="you">{STEPS[page.message.step]} is ready. Send it yourself, then mark it as sent.</Step>
+    ) : (
+      <Step who="nobody">No contact to send this to yet.</Step>
+    );
+  }
   if (candidates?.agentOwes) return <Step who="agent">You picked. The agent makes the full-size version of your pick{first ? ", and the message is then ready" : ", and it then shows under Ads"}.</Step>;
   if (stage === "ready") {
     return (
@@ -329,11 +384,11 @@ function Line({ name, text, href }: { name: string; text: string; href?: string 
   );
 }
 
-function Reply({ id, done }: { id: string; done: (page: ProspectPage) => void }) {
+function Reply({ id, done, confirmation }: { id: string; done: (page: ProspectPage) => void; confirmation: string }) {
   const { write, busy, error } = useWrite(id, done);
   const [text, setText] = useState("");
   const log = async (reply: "more" | "no" | "other") => {
-    if (reply === "no" && !window.confirm("A no is an opt-out: this contact gets no message again, from any brand that shares it. Save it?")) return;
+    if (reply === "no" && !window.confirm(`${confirmation} Save it?`)) return;
     if (await write({ action: "reply", body: { reply, ...(text.trim() ? { text: text.trim() } : {}) } })) setText("");
   };
   return (
@@ -382,7 +437,7 @@ function Note({ id, done }: { id: string; done: (page: ProspectPage) => void }) 
 }
 
 /** The opt-out asks once before it saves: it is final. */
-function OptOut({ onYes, busy }: { onYes: () => void; busy: boolean }) {
+function OptOut({ onYes, busy, confirmation }: { onYes: () => void; busy: boolean; confirmation: string }) {
   const [asked, setAsked] = useState(false);
   if (!asked) {
     return (
@@ -393,7 +448,7 @@ function OptOut({ onYes, busy }: { onYes: () => void; busy: boolean }) {
   }
   return (
     <span className="flex flex-wrap items-center gap-2 text-caption">
-      Final: no message to this contact again, from any brand that shares it.
+      Final: {confirmation}
       <Button type="button" variant="destructive" size="compact" className={TAP} loading={busy} onClick={onYes}>
         Yes, opt out
       </Button>
@@ -419,6 +474,7 @@ const SAID: { [K in OutreachEvent["type"]]: (event: Extract<OutreachEvent, { typ
   unsent: (event) => `"${STEPS[event.step]} sent" was taken back.`,
   note: (event) => `Note: ${event.text}`,
   channel: (event) => `Channel set to ${CHANNELS[event.channel]}.`,
+  route: () => "Confirmed the current contact.",
   chosen: () => "You chose to send to this brand too.",
 };
 

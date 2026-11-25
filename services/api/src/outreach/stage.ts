@@ -1,4 +1,6 @@
-import type { OutreachAd, OutreachChannel, OutreachEvent, OutreachStage, Prospect, ProspectFile } from "@a11-wild/shared";
+import type { OutreachAd, OutreachChannel, OutreachEvent, OutreachStage, Prospect, ProspectFile, ProspectRoute, ProspectSendTarget, ProspectSells } from "@a11-wild/shared";
+import { blockedValues, isBlockedTarget, numberKey, type BlockedValues } from "./blocked.js";
+import { EMAIL } from "./messages.js";
 import { contactKeys } from "./store.js";
 
 /** Two tries at an ad the owner says yes to. After the second no the brand is parked. */
@@ -118,15 +120,67 @@ export function owedAnswer(file: ProspectFile): EventOf<"reply"> | undefined {
   return answered && answered.at >= reply.at ? undefined : reply;
 }
 
-const hasRoute = (profile: Prospect): boolean => profile.whatsapp.length > 0 || profile.email !== undefined;
+const sendable = (route: ProspectRoute | undefined): ProspectSendTarget | undefined =>
+  route && (route.channel === "whatsapp" || route.channel === "email")
+    ? {
+        channel: route.channel,
+        to: route.to,
+        direct: route.direct,
+        ...(route.person ? { person: route.person } : {}),
+        ...(route.title ? { title: route.title } : {}),
+      }
+    : undefined;
 
-/** WhatsApp when the brand has a number, else its verified address. The owner can choose the other for one brand. */
+export function legacyTargets(profile: Prospect): ProspectSendTarget[] {
+  const recipient = {
+    ...(profile.decisionMaker ? { person: profile.decisionMaker } : {}),
+    ...(profile.dmTitle ? { title: profile.dmTitle } : {}),
+  };
+  return [
+    ...(profile.whatsapp[0] ? [{ channel: "whatsapp" as const, to: profile.whatsapp[0], direct: false }] : []),
+    ...(profile.dmEmail && profile.dmVerify === "valid" && EMAIL.test(profile.dmEmail) ? [{ channel: "email" as const, to: profile.dmEmail, direct: true, ...recipient }] : []),
+    ...(profile.email ? [{ channel: "email" as const, to: profile.email, direct: false }] : []),
+  ];
+}
+
+/** True until the owner confirms a changed contact. */
+export function routeCheckUnresolved(file: ProspectFile): boolean {
+  const check = file.profile.routeCheck;
+  const confirmations = file.events.filter((event) => event.type === "route" && event.choice === "confirmed");
+  const latestConfirmation = confirmations.reduce((latest, event) => (event.at > latest ? event.at : latest), "");
+  return Boolean(
+    (check && !confirmations.some((event) => event.at >= check.since)) ||
+      file.events.some((event) => event.type === "unsent" && event.recheck === true && event.at > latestConfirmation),
+  );
+}
+
+/** The current checked email or number, using only contacts in the latest workbook row. */
+export function sendTarget(file: ProspectFile, optOuts?: ReadonlySet<string>): ProspectSendTarget | undefined {
+  if (optOuts && optedOut(file, optOuts)) return undefined;
+  const channelEvent = last(file.events, "channel");
+  const blocked = blockedValues(file.profile.flags ?? []);
+  return channelEvent ? targetForChannel(file, channelEvent.channel, blocked) ?? defaultTarget(file, blocked) : defaultTarget(file, blocked);
+}
+
+export function sendTargetUnavailable(file: ProspectFile, target: ProspectSendTarget, optOuts: ReadonlySet<string>): boolean {
+  const key = target.channel === "email" ? `E#${target.to.toLowerCase()}` : `W#${numberKey(target.to)}`;
+  return isBlockedTarget(blockedValues(file.profile.flags ?? []), target) || file.events.some((event) => event.type === "optout") || optOuts.has(key);
+}
+
+function defaultTarget(file: ProspectFile, blocked: BlockedValues): ProspectSendTarget | undefined {
+  return [sendable(file.profile.route), sendable(file.profile.second), ...legacyTargets(file.profile)]
+    .find((target) => target && !isBlockedTarget(blocked, target));
+}
+
+export function targetForChannel(file: ProspectFile, channel: OutreachChannel, blocked = blockedValues(file.profile.flags ?? [])): ProspectSendTarget | undefined {
+  const candidates = [sendable(file.profile.route), sendable(file.profile.second), ...legacyTargets(file.profile)];
+  return candidates.find((target) => target !== undefined && target.channel === channel && !isBlockedTarget(blocked, target));
+}
+
+export const hasRoute = (file: ProspectFile): boolean => sendTarget(file) !== undefined;
+
 export function channelOf(file: ProspectFile): OutreachChannel | undefined {
-  const { profile } = file;
-  const chosen = last(file.events, "channel")?.channel;
-  if (chosen === "whatsapp" && profile.whatsapp.length > 0) return chosen;
-  if (chosen === "email" && profile.email) return chosen;
-  return profile.whatsapp.length > 0 ? "whatsapp" : profile.email ? "email" : undefined;
+  return sendTarget(file)?.channel;
 }
 
 export function optedOut(file: ProspectFile, optOuts: ReadonlySet<string>): boolean {
@@ -148,7 +202,7 @@ export function stageOf(file: ProspectFile, optOuts: ReadonlySet<string>): Outre
   const ad = newestAd(file);
   // The studio makes no ad for a service. The owner's own picture is one, so the brand then goes on like any other.
   if (last(file.events, "kind")?.kind === "service" && ad?.from !== "owner") return "needs_service_ad";
-  if (!hasRoute(file.profile)) return "no_route";
+  if (!hasRoute(file)) return "no_route";
   const verdict = ad && verdictOf(file, ad);
   // His own picture is ready to send whatever the drafts wait for.
   if (ad?.from === "owner" && verdict?.type === "ad_yes") return "ready";
@@ -191,4 +245,11 @@ export function wantsAd(file: ProspectFile, optOuts: ReadonlySet<string>): { why
 }
 
 /** What the brand sells, when someone has said so. */
-export const kindOf = (file: ProspectFile): "product" | "service" | undefined => last(file.events, "kind")?.kind;
+export const sellsOf = (file: ProspectFile): ProspectSells | undefined => last(file.events, "kind")?.kind ?? file.profile.sells;
+
+export const kindOf = (file: ProspectFile): "product" | "service" | undefined => {
+  const saved = last(file.events, "kind")?.kind;
+  if (saved) return saved;
+  if (file.profile.sells === "service") return "service";
+  return file.profile.sells ? "product" : undefined;
+};

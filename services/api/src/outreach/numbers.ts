@@ -7,7 +7,7 @@ const none = (): OutreachCount => ({ all: 0, byTier: { "20+": 0, "5-19": 0, "<5"
 export function numbersOf(files: ProspectFile[], optOuts: ReadonlySet<string>): OutreachNumbers {
   const numbers: OutreachNumbers = { prospects: 0, sent: none(), replied: none(), saidMore: none(), optedOut: none(), clients: none() };
   for (const file of files) {
-    if (file.profile.test) continue;
+    if (file.profile.test || file.profile.mergedInto) continue;
     numbers.prospects += 1;
     // The channel of the first message when one was sent, else the one a message would take.
     const channel = file.sends.find((send) => send.step === 0)?.channel ?? channelOf(file);
@@ -31,20 +31,22 @@ export interface ProspectFilter {
   tier?: OutreachTier | undefined;
   sector?: string | undefined;
   stage?: OutreachStage | undefined;
+  tired?: boolean | undefined;
 }
 
 /** Reads the search and the filters of a request. A value that is no tier or no stage is refused, not ignored. */
 export function filterOf(query: Record<string, string | undefined>): ProspectFilter | undefined {
-  const { q, tier, sector, stage } = query;
+  const { q, tier, sector, stage, tired } = query;
   if (tier !== undefined && !OUTREACH_TIERS.includes(tier as OutreachTier)) return undefined;
   if (stage !== undefined && !OUTREACH_STAGES.includes(stage as OutreachStage)) return undefined;
+  if (tired !== undefined && tired !== "true" && tired !== "false") return undefined;
   if ((q?.length ?? 0) > 100 || (sector?.length ?? 0) > 100) return undefined;
-  return { q: q?.trim().toLowerCase() || undefined, tier: tier as OutreachTier | undefined, sector: sector || undefined, stage: stage as OutreachStage | undefined };
+  return { q: q?.trim().toLowerCase() || undefined, tier: tier as OutreachTier | undefined, sector: sector || undefined, stage: stage as OutreachStage | undefined, tired: tired === "true" };
 }
 
 /** The rows a search by name and the filters leave, in list order. A test prospect comes first. */
 export function filtered(rows: ProspectRow[], filter: ProspectFilter): ProspectRow[] {
   return rows
-    .filter((row) => (!filter.q || row.brand.toLowerCase().includes(filter.q)) && (!filter.tier || row.tier === filter.tier) && (!filter.sector || row.sector === filter.sector) && (!filter.stage || row.stage === filter.stage))
+    .filter((row) => (!filter.q || row.brand.toLowerCase().includes(filter.q)) && (!filter.tier || row.tier === filter.tier) && (!filter.sector || row.sector === filter.sector) && (!filter.stage || row.stage === filter.stage) && (!filter.tired || (row.staleDays ?? 0) >= 30))
     .sort((a, b) => a.n - b.n);
 }

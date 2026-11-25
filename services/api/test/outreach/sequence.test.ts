@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadRows, makeTestProspect } from "../../src/outreach/load.js";
-import { nextStep, OutreachSequence } from "../../src/outreach/sequence.js";
-import { stageOf } from "../../src/outreach/stage.js";
+import { nextStep, OutreachSequence, sameContact } from "../../src/outreach/sequence.js";
+import { routeCheckUnresolved, sendTarget, stageOf } from "../../src/outreach/stage.js";
 import { OutreachStore } from "../../src/outreach/store.js";
+import { inCampaign } from "../../src/outreach/desk.js";
 import { MemoryTable } from "../helpers/memory-table.js";
-import { row } from "./helpers.js";
+import { ad, event, file, profile, row } from "./helpers.js";
 
 const STEPS = [
   { titles: ["New ad for {Brand}", "{Brand}, I made this for you"], body: "Hi, I made this ad for {Brand}." },
@@ -48,6 +49,165 @@ describe("marking a message as sent", () => {
     expect(already).toBe(false);
     expect(send).toMatchObject({ step: 0, day: "2026-11-23", channel: "whatsapp", title: "Brand 1, I made this for you", text: "Hi, I made this ad for Brand 1." });
     expect(await stage("00001")).toBe("contacted");
+  });
+
+  it("checks a changed contact before sending, then allows it after confirmation", async () => {
+    await ready("00001");
+    await loadRows(store, [row(1, { bestRoute: "Email (valid) new@example.com" })], now);
+    await expect(sequence.send("00001", { step: 0, title: 0 })).rejects.toThrow(
+      "The best contact for this brand changed. Check it, then send.",
+    );
+    expect((await store.get("00001")).routeCheck).toMatchObject({ channel: "whatsapp", direct: false });
+    await sequence.confirmRoute("00001");
+    const sent = await sequence.send("00001", { step: 0, title: 0 });
+    expect(sent.send).toMatchObject({ channel: "email", to: "new@example.com" });
+  });
+
+  it("does not reopen a confirmed check on an identical re-import", async () => {
+    await ready("00001");
+    const changed = row(1, { bestRoute: "Email (valid) new@example.com" });
+    await loadRows(store, [changed], now);
+    await sequence.confirmRoute("00001");
+    await loadRows(store, [changed], now);
+    const file = (await store.all()).find((entry) => entry.profile.id === "00001")!;
+    expect(file.profile.routeCheck).toMatchObject({ channel: "whatsapp", direct: false });
+    expect(routeCheckUnresolved(file)).toBe(false);
+  });
+
+  it("refreshes route names and titles without creating a check for an unchanged contact", async () => {
+    await loadRows(store, [row(1, { bestRoute: "DM phone +65 8000 0001", decisionMaker: "Amelia Lee", dmTitle: "Founder" })], now);
+    await ready("00001");
+    await loadRows(store, [row(1, { bestRoute: "DM phone +65 8000 0001", decisionMaker: "Amelia Li", dmTitle: "Managing Director" })], now);
+
+    const saved = (await store.all()).find((file) => file.profile.id === "00001")!;
+    expect(saved.profile.route).toMatchObject({ channel: "whatsapp", to: "6580000001", person: "Amelia Li", title: "Managing Director" });
+    expect(saved.profile.routeCheck).toBeUndefined();
+    expect(sendTarget(saved)).toMatchObject({ channel: "whatsapp", to: "6580000001", person: "Amelia Li", title: "Managing Director" });
+  });
+
+  it("checks an email change selected by the owner's email preference", async () => {
+    await ready("00001");
+    await sequence.setChannel("00001", "email");
+    const incoming = row(1, { bestRoute: "WhatsApp +65 8000 0001", email: "replacement@example.com" });
+    await loadRows(store, [incoming], now);
+
+    expect((await store.get("00001")).routeCheck).toMatchObject({ channel: "email", direct: false });
+    expect((await store.get("00001")).routeCheck?.since).toBe((await store.get("00001")).loadedAt);
+  });
+
+  it("records confirmation without storing a contact", async () => {
+    await ready("00001");
+    const changed = row(1, { bestRoute: "Email (valid) new@example.com", email: "new@example.com" });
+    await loadRows(store, [changed], now);
+    const event = await sequence.confirmRoute("00001");
+    expect(event).toMatchObject({ type: "route", choice: "confirmed" });
+    expect(event).not.toHaveProperty("target");
+    expect(event).not.toHaveProperty("to");
+    expect(event).not.toHaveProperty("person");
+  });
+
+  it("keeps a check pending until a current contact is available to confirm", async () => {
+    await ready("00001");
+    await loadRows(store, [row(1, { bestRoute: "Email (valid) changed@example.com" })], now);
+    const pending = (await store.get("00001")).routeCheck;
+    expect(pending).toBeDefined();
+
+    await loadRows(store, [row(1, { bestRoute: undefined, secondRoute: undefined, whatsapp: "", email: "", phone: "", dmEmail: "", dmPhone: "" })], now);
+    expect(sendTarget((await store.all()).find((entry) => entry.profile.id === "00001")!)).toBeUndefined();
+    await expect(sequence.confirmRoute("00001")).rejects.toThrow("There is no contact to confirm yet.");
+
+    await loadRows(store, [row(1, { bestRoute: "Email (valid) replacement@example.com", whatsapp: "", email: "" })], now);
+    const file = (await store.all()).find((entry) => entry.profile.id === "00001")!;
+    expect(file.profile.routeCheck).toEqual(pending);
+    expect(routeCheckUnresolved(file)).toBe(true);
+  });
+
+  it("uses the current contact for a follow-up after an import without confirmation", async () => {
+    await ready("00001");
+    await sequence.send("00001", { step: 0, title: 0 });
+    at("2026-11-26T10:00:00");
+    await loadRows(store, [row(1, { bestRoute: "Email (valid) replacement@example.com" })], now);
+
+    const imported = (await store.all()).find((entry) => entry.profile.id === "00001")!;
+    expect(imported.profile.routeCheck).toBeUndefined();
+    expect(routeCheckUnresolved(imported)).toBe(false);
+    const followUp = await sequence.send("00001", { step: 1, title: 0 });
+    expect(followUp.send).toMatchObject({ channel: "email", to: "replacement@example.com" });
+  });
+
+  it("records a follow-up at an earlier destination sent by this brand", async () => {
+    await ready("00001");
+    const first = await sequence.send("00001", { step: 0, title: 0 });
+    at("2026-11-26T10:00:00");
+    await loadRows(store, [row(1, { bestRoute: "Email (valid) replacement@example.com", whatsapp: "", email: "" })], now);
+
+    const followUp = await sequence.send("00001", { step: 1, title: 0, channel: first.send.channel, to: first.send.to });
+    expect(followUp.send).toMatchObject({ channel: first.send.channel, to: first.send.to });
+  });
+
+  it("refuses a follow-up to a destination never sent by this brand", async () => {
+    await ready("00001");
+    await sequence.send("00001", { step: 0, title: 0 });
+    at("2026-11-26T10:00:00");
+    await loadRows(store, [row(1, { bestRoute: "Email (valid) replacement@example.com", whatsapp: "", email: "" })], now);
+
+    await expect(sequence.send("00001", { step: 1, title: 0, channel: "email", to: "never-sent@example.com" })).rejects.toThrow(
+      "The contact for this brand changed. Reload the page and check it before marking.",
+    );
+  });
+
+  it("returns an existing mark before checking its supplied destination", async () => {
+    await ready("00001");
+    const first = await sequence.send("00001", { step: 0, title: 0 });
+    at("2026-11-26T10:00:00");
+    await loadRows(store, [row(1, { bestRoute: "Email (valid) replacement@example.com" })], now);
+
+    const repeated = await sequence.send("00001", { step: 0, title: 1, channel: first.send.channel, to: first.send.to });
+    expect(repeated).toEqual({ send: first.send, already: true });
+    expect((await store.all()).find((entry) => entry.profile.id === "00001")?.sends).toHaveLength(1);
+  });
+
+  it("refuses a channel-only mismatch with the current contact", async () => {
+    await ready("00001");
+
+    await expect(sequence.send("00001", { step: 0, title: 0, channel: "email" })).rejects.toThrow(
+      "The contact for this brand changed. Reload the page and check it before marking.",
+    );
+    expect((await store.all()).find((entry) => entry.profile.id === "00001")?.sends).toEqual([]);
+  });
+
+  it("keeps an unresolved check when an identical import finds the brand parked", async () => {
+    await loadRows(store, [row(1, { bestRoute: "WhatsApp +65 8000 0001" })], now);
+    await ready("00001");
+    const changed = row(1, { bestRoute: "Email (valid) new@example.com" });
+    await loadRows(store, [changed], now);
+    await sequence.setStage("00001", "parked");
+    await loadRows(store, [changed], now);
+    const file = (await store.all()).find((entry) => entry.profile.id === "00001")!;
+    expect(file.profile.routeCheck).toMatchObject({ channel: "whatsapp", direct: false });
+    expect(routeCheckUnresolved(file)).toBe(true);
+  });
+
+  it("checks the next current contact when the preferred contact is quarantined", async () => {
+    const initial = row(1, {
+      bestRoute: "DM email (valid) first@example.com",
+      secondRoute: "DM email (valid) second@example.com",
+      decisionMaker: "Amelia Lee",
+      dmTitle: "Founder",
+    });
+    await loadRows(store, [initial], now);
+    await ready("00001");
+    const changed = row(1, {
+      bestRoute: "DM email (valid) first@example.com",
+      secondRoute: "DM email (valid) second@example.com",
+      decisionMaker: "Amelia Lee",
+      dmTitle: "Founder",
+      notes: "AUDIT-FLAG: first@example.com do not use",
+    });
+    await loadRows(store, [changed], now);
+    const file = (await store.all()).find((entry) => entry.profile.id === "00001")!;
+    expect(file.profile.routeCheck).toMatchObject({ channel: "email", direct: true });
+    expect(sendTarget(file)).toMatchObject({ channel: "email", to: "second@example.com", person: "Amelia Lee", title: "Founder" });
   });
 
   it("counts a send at 23:30 on Monday in Singapore on Monday", async () => {
@@ -180,6 +340,25 @@ describe("marking a message as sent", () => {
   });
 });
 
+describe("new contact and campaign membership rules", () => {
+  it("finds a shared decision-maker email or number", async () => {
+    await loadRows(store, [
+      row(1, { email: "brand1@example.com", dmEmail: "person@example.com", dmPhone: "+65 9123 4567" }),
+      row(2, { email: "brand2@example.com", dmEmail: "PERSON@example.com", dmPhone: "91234567" }),
+    ], now);
+    expect(sameContact(await store.all()).get("00002")?.profile.id).toBe("00001");
+  });
+
+  it("keeps started work in the campaign when the saved tier drops", () => {
+    expect(inCampaign(file({ profile: profile(1, { email: "person@example.com", tier: "<5" }) }))).toBe(false);
+    expect(inCampaign(file({ profile: profile(1, { email: "person@example.com", tier: "<5" }), ads: [ad(1)] }))).toBe(true);
+    expect(inCampaign(file({ profile: profile(1, { email: "person@example.com", tier: "<5" }), events: [event({ type: "candidates", batchId: "b", drafts: 2 }, "agent")] }))).toBe(true);
+    expect(inCampaign(file({ profile: profile(1, { email: "person@example.com", tier: "<5" }) }), "open-batch")).toBe(true);
+    expect(inCampaign(file({ profile: profile(1, { email: "person@example.com", tier: "20+" }) }))).toBe(true);
+    expect(inCampaign(file({ profile: profile(1, { email: "person@example.com", tier: "20+", test: true }), ads: [ad(1)] }))).toBe(false);
+  });
+});
+
 describe("a write that fails half way", () => {
   const down = new Error("the table is down");
 
@@ -221,6 +400,36 @@ describe("taking a mark back", () => {
     expect((await sequence.send("00001", { step: 0, title: 1 })).already).toBe(false);
   });
 
+  it("requires confirmation after taking back a first message sent to an outdated contact", async () => {
+    await ready("00001");
+    await loadRows(store, [row(1, { bestRoute: "Email (valid) original@example.com" })], now);
+    await sequence.confirmRoute("00001");
+    await sequence.send("00001", { step: 0, title: 0 });
+    const priorCheck = (await store.get("00001")).routeCheck;
+    at("2026-11-23T10:01:00");
+    await loadRows(store, [row(1, { bestRoute: "Email (valid) replacement@example.com" })], now);
+    const imported = (await store.all()).find((entry) => entry.profile.id === "00001")!;
+    expect(routeCheckUnresolved(imported)).toBe(false);
+
+    const saveProfile = vi.spyOn(store, "saveProfile");
+    await sequence.takeBack("00001", 0);
+    const file = (await store.all()).find((entry) => entry.profile.id === "00001")!;
+    expect(await stage("00001")).toBe("ready");
+    expect(saveProfile).not.toHaveBeenCalled();
+    expect(file.profile.routeCheck).toEqual(priorCheck);
+    expect(file.events.at(-1)).toMatchObject({ type: "unsent", step: 0, recheck: true });
+    expect(file.events.at(-1)).not.toHaveProperty("to");
+    expect(file.events.at(-1)).not.toHaveProperty("person");
+    expect(routeCheckUnresolved(file)).toBe(true);
+    await expect(sequence.send("00001", { step: 0, title: 0 })).rejects.toThrow("The best contact for this brand changed. Check it, then send.");
+
+    at("2026-11-23T10:02:00");
+    await sequence.confirmRoute("00001");
+    const confirmed = (await store.all()).find((entry) => entry.profile.id === "00001")!;
+    expect(routeCheckUnresolved(confirmed)).toBe(false);
+    expect((await sequence.send("00001", { step: 0, title: 0 })).send).toMatchObject({ channel: "email", to: "replacement@example.com" });
+  });
+
   it("is refused on the next day, and for a step that is not the newest", async () => {
     await ready("00001");
     await sequence.send("00001", { step: 0, title: 0 });
@@ -234,12 +443,64 @@ describe("taking a mark back", () => {
 });
 
 describe("a reply and the owner's choices", () => {
+  it("registers every sent contact when the brand opts out", async () => {
+    await ready("00001");
+    const first = await sequence.send("00001", { step: 0, title: 0 });
+    expect(first.send).toMatchObject({ channel: "whatsapp", to: "6580000001" });
+    at("2026-11-26T10:00:00");
+    await loadRows(
+      store,
+      [
+        row(1, { bestRoute: "Email (valid) replacement@example.com", whatsapp: "", email: "" }),
+        row(2, { bestRoute: "Email (valid) replacement@example.com", whatsapp: "", email: "" }),
+        row(3, { whatsapp: "+65 8000 0001" }),
+      ],
+      now,
+    );
+    await ready("00002");
+    await ready("00003");
+
+    const followUp = await sequence.send("00001", { step: 1, title: 0, channel: "email", to: "replacement@example.com" });
+    expect(followUp.send).toMatchObject({ channel: "email", to: "replacement@example.com" });
+
+    await sequence.optOut("00001");
+
+    expect(await store.optOuts()).toContain("E#replacement@example.com");
+    expect(await store.optOuts()).toContain("W#6580000001");
+    await expect(sequence.send("00002", { step: 0, title: 0 })).rejects.toThrow(/opted out/);
+    await expect(sequence.send("00003", { step: 0, title: 0 })).rejects.toThrow(/opted out/);
+  });
+
+  it("registers a sent contact that the workbook later dropped when the brand opts out", async () => {
+    await ready("00001");
+    const first = await sequence.send("00001", { step: 0, title: 0 });
+    expect(first.send).toMatchObject({ channel: "whatsapp", to: "6580000001" });
+    at("2026-11-26T10:00:00");
+    await loadRows(
+      store,
+      [
+        row(1, { bestRoute: "Email (valid) replacement@example.com", whatsapp: "", email: "" }),
+        row(2, { whatsapp: "+65 8000 0001" }),
+      ],
+      now,
+    );
+    await ready("00002");
+
+    await sequence.optOut("00001");
+
+    expect(await store.optOuts()).toContain("W#6580000001");
+    await expect(sequence.send("00001", { step: 1, title: 0, channel: first.send.channel, to: first.send.to })).rejects.toThrow(
+      "The contact for this brand changed. Reload the page and check it before marking.",
+    );
+    await expect(sequence.send("00002", { step: 0, title: 0 })).rejects.toThrow(/opted out/);
+  });
+
   it("makes a no an opt-out for the contact", async () => {
     await ready("00001");
     await sequence.send("00001", { step: 0, title: 0 });
     await sequence.reply("00001", { reply: "no" });
     expect(await stage("00001")).toBe("opted_out");
-    expect(await store.optOuts()).toEqual(new Set(["W#6580000001", "E#hello@brand1.example"]));
+    expect(await store.optOuts()).toEqual(new Set(["W#6580000001", "E#brand1@example.com"]));
   });
 
   it("refuses a reply for a brand that got no message", async () => {

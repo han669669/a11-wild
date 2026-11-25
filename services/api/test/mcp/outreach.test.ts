@@ -14,8 +14,8 @@ const TEMPLATES = [
   { titles: ["Last one, {Brand}", "{Brand}, one more before I go"], body: "Hi, last note from me." },
 ];
 /** Every private value of a full row. Only outreach_contacts may return one. */
-const PRIVATE = { whatsapp: "+65 8123 4567", email: "founder@secretbrand.example", phone: "+65 6123 4567", decisionMaker: "Private Person", dmTitle: "Chief Secret Officer", linkedin: "https://www.linkedin.com/in/private-person" };
-const LEAKS = /81234567|8123 4567|secretbrand|61234567|6123 4567|Private Person|Chief Secret|linkedin/i;
+const PRIVATE = { whatsapp: "+65 8123 4567", email: "contact@example.com", phone: "+65 6123 4567", decisionMaker: "Private Person", dmTitle: "Chief Secret Officer", linkedin: "https://www.linkedin.com/in/private-person" };
+const LEAKS = /81234567|8123 4567|contact@example\.com|secretbrand|61234567|6123 4567|Private Person|Chief Secret|linkedin/i;
 
 beforeEach(async () => {
   studio = await createStudio();
@@ -28,7 +28,7 @@ afterEach(() => {
 describe("outreach_load", () => {
   it("loads rows and the message text, and returns counts only", async () => {
     const loaded = await callTool(studio, "outreach_load", { rows: [row(1, PRIVATE), row(2)], templates: TEMPLATES });
-    expect(loaded.value).toEqual({ added: 2, updated: 0, refused: [], prospects: 2, templates: "saved" });
+    expect(loaded.value).toEqual({ added: 2, updated: 0, merged: 0, blocked: 0, refused: [], prospects: 2, templates: "saved" });
     expect((await outreach().store.get("00001")).whatsapp).toEqual(["6581234567"]);
   });
 
@@ -37,6 +37,14 @@ describe("outreach_load", () => {
     const again = await callTool(studio, "outreach_load", { templates: [{ titles: ["a", "b"], body: "Other words." }, TEMPLATES[1], TEMPLATES[2]] });
     expect(again.value.templates).toMatch(/kept/);
     expect((await outreach().sequence.templates())!.steps[0].body).toBe("Hi, I made this ad for {Brand}.");
+  });
+
+  it("refuses to merge a donor with an open outreach batch", async () => {
+    await loadProspects(studio, [row(1), row(2)]);
+    await batchAtTruth(studio, { prospectId: "00002" });
+    const merged = await callTool(studio, "outreach_load", { rows: [row(2, { mergedInto: 1 })] });
+    expect(merged.value.refused).toEqual([{ row: 2, field: "mergedInto", why: "the merged row has its own history: the owner decides" }]);
+    expect((await outreach().store.get("00002")).mergedInto).toBeUndefined();
   });
 
   it("names a refused row by its number and field, never by its value", async () => {
@@ -48,7 +56,7 @@ describe("outreach_load", () => {
   it("is refused for a member, and refuses an unknown field", async () => {
     expect(await callTool(studio, "outreach_load", { rows: [row(1)] }, { sub: "sub-member" })).toMatchObject({ ok: false });
     expect(await outreach().store.all()).toEqual([]);
-    expect(await callTool(studio, "outreach_load", { rows: [{ ...row(1), notes: "x" }] })).toMatchObject({ ok: false });
+    expect(await callTool(studio, "outreach_load", { rows: [{ ...row(1), notAWorkbookField: "x" }] })).toMatchObject({ ok: false });
   });
 
   it("refuses every outreach tool and an outreach batch to a member", async () => {
@@ -169,7 +177,7 @@ describe("outreach_contacts", () => {
     const { prospects } = (await callTool(studio, "outreach_contacts", {})).value;
     expect(prospects[0]).toEqual(expect.objectContaining({ id: "00001", stage: "opted_out" }));
     expect(JSON.stringify(prospects[0])).not.toMatch(/brand1|6123/);
-    expect(prospects[1]).toMatchObject({ id: "00002", stage: "new", instagram: "brand2", whatsapp: ["6580000002"] });
+    expect(prospects[1]).toMatchObject({ id: "00002", stage: "opted_out" });
     expect(JSON.stringify(prospects[1])).not.toMatch(/6123/);
     expect(prospects[2]).toMatchObject({ phone: "+65 6999 0000" });
     expect(JSON.stringify((await callTool(studio, "outreach_contacts", { prospectId: "00002" })).value)).not.toMatch(/6123/);
@@ -180,8 +188,8 @@ describe("outreach_contacts", () => {
     await loadProspects(studio, [row(1, { phone: "+65 8123 4567", email: undefined }), row(2, { whatsapp: "8123 4567 / 8000 0002" }), row(3, { whatsapp: "+65 8123 4567", email: undefined })]);
     await outreach().sequence.optOut("00001");
     const { prospects } = (await callTool(studio, "outreach_contacts", {})).value;
-    expect(prospects[1]).toMatchObject({ id: "00002", stage: "new", whatsapp: ["6580000002"] });
-    expect(prospects[2]).toMatchObject({ id: "00003", stage: "new" });
+    expect(prospects[1]).toMatchObject({ id: "00002", stage: "opted_out" });
+    expect(prospects[2]).toMatchObject({ id: "00003", stage: "opted_out" });
     expect(prospects[2]).not.toHaveProperty("whatsapp");
     expect(JSON.stringify(prospects)).not.toMatch(/8123/);
     expect(JSON.stringify((await callTool(studio, "outreach_contacts", { prospectId: "00003" })).value)).not.toMatch(/8123/);
@@ -217,7 +225,7 @@ describe("outreach_contacts", () => {
 
 describe("outreach_next", () => {
   it("gives the brands of the two top tiers with a route and no ad, in list order", async () => {
-    await loadProspects(studio, [row(5), row(2, { tier: "5-19 live ads" }), row(3, { tier: "<5 live ads" }), row(4, { whatsapp: undefined, email: undefined }), row(1)]);
+    await loadProspects(studio, [row(5), row(2, { liveAds: 10, tier: "5-19 live ads" }), row(3, { liveAds: 2, tier: "<5 live ads" }), row(4, { whatsapp: undefined, email: undefined }), row(1)]);
     expect(await names()).toEqual(["Brand 1", "Brand 2", "Brand 5"]);
     expect(await names(2)).toEqual(["Brand 1", "Brand 2"]);
   });
@@ -235,7 +243,7 @@ describe("outreach_next", () => {
   });
 
   it("gives a brand again with the owner's words after his no, and puts a more reply first", async () => {
-    await loadProspects(studio, [row(1), row(2), row(3, { tier: "<5 live ads" })]);
+    await loadProspects(studio, [row(1), row(2), row(3, { liveAds: 2, tier: "<5 live ads" })]);
     const { store, sequence } = outreach();
     await callTool(studio, "outreach_load", { templates: TEMPLATES });
     const adOf = { batchId: "b", imageId: "i", kind: "v1" as const, key: "k", why: "w" };
@@ -256,7 +264,9 @@ describe("outreach_next", () => {
   it("names the batch of a brand whose drafts are not shown yet, so a new session resumes it", async () => {
     await loadProspects(studio);
     const open = await outreachBatch(studio, "00001", { upTo: "checked" });
+    await callTool(studio, "outreach_load", { rows: [row(1, { liveAds: 2 })] });
     expect((await callTool(studio, "outreach_next", {})).value).toMatchObject({ owed: [], brands: [{ brand: "Brand 1", openBatchId: open }] });
+    expect((await outreach().store.get("00001")).tier).toBe("<5");
   });
 
   it("gives a brand to nobody while its drafts wait for the owner's pick", async () => {
@@ -292,7 +302,7 @@ describe("outreach_next", () => {
     await outreach().store.addEvent(id!, { type: "words", batchId, ideaId: "idea-1", imageId: view.drafts[0]!.imageId, ownerSaid: "say the price" }, "owner");
     studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
     expect((await callTool(studio, "outreach_next", {})).value.owed).toMatchObject([{ id, batchId, owes: "words", ownerSaid: "say the price" }]);
-    await expect(picks.pick(id!, view.drafts[0]!.imageId, "owner@studio.example")).rejects.toThrow(/setting the other words/);
+    await expect(picks.pick(id!, view.drafts[0]!.imageId, "studio@example.com")).rejects.toThrow(/setting the other words/);
     // The drafts go back to him only with the other words on them (the v2 flow test sets them).
     expect(await callTool(studio, "outreach_show", { batchId })).toMatchObject({ ok: false, error: expect.stringMatching(/asked for other words/) });
     expect((await callTool(studio, "outreach_state", {})).value.stages).toMatchObject({ pick_made: 1 });
@@ -343,7 +353,7 @@ describe("outreach_mark", () => {
 
 describe("an outreach batch and outreach_attach", () => {
   it("starts a batch only for a brand that needs an ad", async () => {
-    await loadProspects(studio, [row(1), row(2, { tier: "<5 live ads" }), row(3)]);
+    await loadProspects(studio, [row(1), row(2, { liveAds: 2, tier: "<5 live ads" }), row(3)]);
     const { brand, product } = await batchAtTruth(studio);
     const create = (prospectId: string) => callTool(studio, "batch_create", { kind: "v1", brandId: brand.id, productId: product.id, prospectId });
     expect(await create("00009")).toMatchObject({ ok: false, error: expect.stringMatching(/no prospect 00009/) });
@@ -446,8 +456,8 @@ describe("an outreach batch and outreach_attach", () => {
     const view = (await picks.view((await store.all())[0]!, new Set()))!;
     const [first, second] = view.drafts;
     expect(first).toMatchObject({ blocked: "You said no to its full-size version." });
-    await expect(picks.pick(id!, first!.imageId, "owner@studio.example")).rejects.toThrow(/cannot be picked yet/);
-    await picks.pick(id!, second!.imageId, "owner@studio.example");
+    await expect(picks.pick(id!, first!.imageId, "studio@example.com")).rejects.toThrow(/cannot be picked yet/);
+    await picks.pick(id!, second!.imageId, "studio@example.com");
     tick();
     expect(await stages()).toMatchObject({ pick_made: 1 });
     expect((await callTool(studio, "outreach_next", {})).value.owed).toMatchObject([{ batchId, owes: "final", imageId: second!.imageId }]);
@@ -478,9 +488,9 @@ describe("an outreach batch and outreach_attach", () => {
     };
     tick();
     const [first, second] = (await picks.view((await store.all())[0]!, new Set()))!.drafts;
-    await picks.pick(id!, second!.imageId, "owner@studio.example");
+    await picks.pick(id!, second!.imageId, "studio@example.com");
     tick();
-    await picks.pick(id!, first!.imageId, "owner@studio.example");
+    await picks.pick(id!, first!.imageId, "studio@example.com");
     tick();
     expect((await callTool(studio, "outreach_next", {})).value.owed).toMatchObject([{ batchId, owes: "final", imageId: first!.imageId }]);
     // Its final is made already: the batch is done again with it, it is attached as the ad of his newest pick, and nothing stays owed.

@@ -1,4 +1,4 @@
-import { OUTREACH_STAGES, type Batch, type OutreachAd, type OutreachStage, type OutreachTier, type ProspectBrief, type ProspectContacts, type ProspectFile } from "@a11-wild/shared";
+import { OUTREACH_STAGES, type Batch, type OutreachAd, type OutreachStage, type OutreachTier, type ProspectBrief, type ProspectContacts, type ProspectFile, type ProspectRoute } from "@a11-wild/shared";
 import type { BatchStore } from "../batch/store.js";
 import type { IdeaFinal } from "../board/service.js";
 import { Refusal } from "../mcp/registry.js";
@@ -6,7 +6,7 @@ import { noteText } from "./candidates.js";
 import type { SpendLedger } from "../spend/ledger.js";
 import { chosen, sameContact } from "./sequence.js";
 import { adWaits, candidatesWait, kindOf, optedOut, owedNow, stageOf, standingAd, TAKES_NO_AD, wantsAd } from "./stage.js";
-import type { OutreachStore } from "./store.js";
+import { contactKeys, type OutreachStore } from "./store.js";
 
 /** The owner's campaign: the first 50 product brands of his two top tiers, in list order. */
 export const CAMPAIGN = { brands: 50, tiers: ["20+", "5-19"] as readonly OutreachTier[] } as const;
@@ -52,26 +52,39 @@ function briefOf(file: ProspectFile): ProspectBrief {
   return { id, n, brand, sector, liveAds, tier, ...(newestAd ? { newestAd } : {}), ...(instagram ? { instagram } : {}) };
 }
 
-const inCampaign = (file: ProspectFile): boolean => !file.profile.test && CAMPAIGN.tiers.includes(file.profile.tier);
+export const inCampaign = (file: ProspectFile, openBatchId?: string): boolean =>
+  !file.profile.test && (CAMPAIGN.tiers.includes(file.profile.tier) || file.ads.length > 0 || file.events.some((event) => event.type === "candidates") || openBatchId !== undefined);
+
+function openBatchIdByProspect(files: ProspectFile[], all: Batch[]): Map<string, string> {
+  const refused = new Set(files.flatMap((file) => file.events.flatMap((event) => (event.type === "none" ? [event.batchId] : []))));
+  const open = new Map<string, string>();
+  for (const batch of all) {
+    if (batch.purpose !== "outreach" || !batch.prospectId) continue;
+    // A batch whose drafts the owner refused whole is not resumed: the next try is a new batch.
+    if (batch.state !== "done" && !open.has(batch.prospectId) && !refused.has(batch.id)) open.set(batch.prospectId, batch.id);
+  }
+  return open;
+}
 
 /** The agent's side of the outreach: which brand needs an ad, where a finished ad goes, and the contacts of the list. */
 export class OutreachDesk {
   constructor(private readonly deps: Deps) {}
 
+  async openBatchIds(): Promise<ReadonlyMap<string, string>> {
+    const [files, batches] = await Promise.all([this.deps.store.all(), this.deps.batches.list()]);
+    return openBatchIdByProspect(files, batches);
+  }
+
   private async read() {
     const { store, batches } = this.deps;
     const [files, optOuts, all] = await Promise.all([store.all(), store.optOuts(), batches.list()]);
-    // Newest first, so the first one found for a prospect is its newest.
-    const refused = new Set(files.flatMap((file) => file.events.flatMap((event) => (event.type === "none" ? [event.batchId] : []))));
-    const open = new Map<string, string>();
     const newest = new Map<string, Batch>();
     for (const batch of all) {
       if (batch.purpose !== "outreach" || !batch.prospectId) continue;
       if (!newest.has(batch.prospectId)) newest.set(batch.prospectId, batch);
-      // A batch whose drafts the owner refused whole is not resumed: the next try is a new batch.
-      if (batch.state !== "done" && !open.has(batch.prospectId) && !refused.has(batch.id)) open.set(batch.prospectId, batch.id);
     }
-    const started = files.filter((file) => inCampaign(file) && (file.ads.length > 0 || file.events.some((event) => event.type === "candidates"))).length;
+    const open = openBatchIdByProspect(files, all);
+    const started = files.filter((file) => inCampaign(file, open.get(file.profile.id)) && (file.ads.length > 0 || file.events.some((event) => event.type === "candidates"))).length;
     return { files, optOuts, open, started, shared: sameContact(files) };
   }
 
@@ -98,7 +111,7 @@ export class OutreachDesk {
         more.push({ at: asked?.at ?? "", brand });
         continue;
       }
-      if (!inCampaign(file)) continue;
+      if (!inCampaign(file, openBatchId)) continue;
       // One person gets the first message once: a brand that shares its contact with an earlier one waits for the owner's choice.
       if (shared.has(file.profile.id) && !chosen(file)) continue;
       if (want.why === "first") {
@@ -114,7 +127,10 @@ export class OutreachDesk {
   private async file(id: string) {
     const read = await this.read();
     const file = read.files.find((entry) => entry.profile.id === id);
-    if (!file) throw new Refusal(`There is no prospect ${id}. outreach_next gives the brands that need an ad.`);
+    if (!file) {
+      await this.deps.store.assertWritable(id);
+      throw new Refusal(`There is no prospect ${id}. outreach_next gives the brands that need an ad.`);
+    }
     return { ...read, file };
   }
 
@@ -211,21 +227,48 @@ export class OutreachDesk {
   async contacts(input: { prospectId?: string | undefined; after: number; limit: number }): Promise<{ prospects: ProspectContacts[]; more: boolean }> {
     const { files: all, optOuts, file: one } = input.prospectId ? await this.file(input.prospectId) : { ...(await this.read()), file: undefined };
     // The register keeps WhatsApp numbers and addresses. A phone number is free text, so it is compared by its digits.
-    const closed = new Set([...optOuts].flatMap((key) => (key.startsWith("W#") ? [key.slice(2)] : [])));
+    const closed = new Set(optOuts);
     for (const file of all) {
       if (file.profile.test || !optedOut(file, optOuts)) continue;
-      for (const number of [file.profile.phone ?? "", ...file.profile.whatsapp]) if (digitsOf(number)) closed.add(digitsOf(number));
+      contactKeys(file.profile).forEach((key) => closed.add(key));
     }
     const listed = one ? [one] : all.filter((file) => !file.profile.test && file.profile.n > input.after).sort((a, b) => a.profile.n - b.profile.n);
     const prospects = listed.slice(0, input.limit).map((file): ProspectContacts => {
       const stage = stageOf(file, optOuts);
       const { instagram: _instagram, ...named } = briefOf(file);
       if (stage === "opted_out") return { ...named, stage };
-      const { bestRoute, secondRoute, email, decisionMaker, dmTitle, linkedin } = file.profile;
-      const open = (number: string): boolean => !closed.has(digitsOf(number));
-      const phone = file.profile.phone && open(file.profile.phone) ? file.profile.phone : undefined;
-      const whatsapp = file.profile.whatsapp.filter(open);
-      const known = Object.fromEntries(Object.entries({ bestRoute, secondRoute, email, phone, decisionMaker, dmTitle, linkedin }).filter(([, value]) => value));
+      const { profile } = file;
+      const openNumber = (number: string | undefined): boolean => Boolean(number && !closed.has(`W#${digitsOf(number)}`));
+      const openEmail = (address: string | undefined): boolean => Boolean(address && !closed.has(`E#${address.toLowerCase()}`));
+      const routeOpen = (route: ProspectRoute | undefined): boolean => {
+        if (!route) return false;
+        const key =
+          route.channel === "email"
+            ? `E#${route.to.toLowerCase()}`
+            : route.channel === "whatsapp" || route.channel === "call"
+              ? `W#${digitsOf(route.to)}`
+              : `${route.channel === "instagram" ? "I" : "F"}#${route.to.toLowerCase()}`;
+        return !closed.has(key);
+      };
+      const whatsapp = profile.whatsapp.filter(openNumber);
+      const known = Object.fromEntries(
+        Object.entries({
+          bestRoute: profile.bestRoute,
+          secondRoute: profile.secondRoute,
+          sells: profile.sells,
+          dmVerify: openEmail(profile.dmEmail) ? profile.dmVerify : undefined,
+          dmEmail: openEmail(profile.dmEmail) ? profile.dmEmail : undefined,
+          dmPhone: profile.dmPhone && openNumber(profile.dmPhone) ? profile.dmPhone : undefined,
+          flags: profile.flags,
+          route: routeOpen(profile.route) ? profile.route : undefined,
+          second: routeOpen(profile.second) ? profile.second : undefined,
+          email: openEmail(profile.email) ? profile.email : undefined,
+          phone: profile.phone && openNumber(profile.phone) ? profile.phone : undefined,
+          decisionMaker: profile.decisionMaker,
+          dmTitle: profile.dmTitle,
+          linkedin: profile.linkedin,
+        }).filter(([, value]) => value !== undefined),
+      );
       return { ...briefOf(file), stage, ...known, ...(whatsapp.length > 0 ? { whatsapp } : {}) };
     });
     return { prospects, more: listed.length > input.limit };
@@ -233,18 +276,18 @@ export class OutreachDesk {
 
   /** The campaign in numbers. It names no brand and holds no contact. */
   async state() {
-    const { files, optOuts, started } = await this.read();
+    const { files, optOuts, started, open } = await this.read();
     const count = (of: ProspectFile[]) => {
       const stages = Object.fromEntries(OUTREACH_STAGES.map((stage) => [stage, 0])) as Record<OutreachStage, number>;
       for (const file of of) stages[stageOf(file, optOuts)] += 1;
       return stages;
     };
     const real = files.filter((file) => !file.profile.test);
-    const campaign = real.filter(inCampaign);
+    const campaign = real.filter((file) => inCampaign(file, open.get(file.profile.id)));
     const wants = { first: 0, again: 0, more: 0 };
     for (const file of real) {
       const want = wantsAd(file, optOuts);
-      if (want && (want.why === "more" || inCampaign(file))) wants[want.why] += 1;
+      if (want && (want.why === "more" || inCampaign(file, open.get(file.profile.id)))) wants[want.why] += 1;
     }
     const spend = (await this.deps.ledger.summary()).campaign;
     return {

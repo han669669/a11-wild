@@ -1,4 +1,4 @@
-import type { OutreachAdView, OutreachChannel, OutreachMessage, OutreachStage, OutreachStep, ProspectPage, ProspectRow } from "@a11-wild/shared";
+import type { OutreachAdView, OutreachChannel, OutreachMessage, OutreachStage, OutreachStep, ProspectPage, ProspectRow, ProspectSendTarget } from "@a11-wild/shared";
 import { ChevronDown } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Link, NavLink } from "react-router";
@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 
 export const STAGES: Record<OutreachStage, { label: string; color: "green" | "amber" | "gray" | "red" }> = {
   new: { label: "New", color: "gray" },
-  no_route: { label: "No route", color: "gray" },
+  no_route: { label: "No checked way to reach it", color: "gray" },
   needs_service_ad: { label: "Needs a service ad", color: "gray" },
   pick_waits: { label: "Pick an ad", color: "amber" },
   pick_made: { label: "Waits for the agent", color: "gray" },
@@ -28,6 +28,7 @@ export const STAGES: Record<OutreachStage, { label: string; color: "green" | "am
 };
 export const STEPS: Record<OutreachStep, string> = { 0: "First message", 1: "Follow-up 1", 2: "Follow-up 2" };
 export const CHANNELS: Record<OutreachChannel, string> = { whatsapp: "WhatsApp", email: "Email" };
+export const outreachFlagText = (text: string): string => text.replace(/^(?:AUDIT-FLAG|DUP-CHECK|QA-FLAG):\s*/i, "").trim();
 /** A button large enough for a thumb: the pages are used on a phone first. */
 export const TAP = "min-h-11 sm:min-h-0";
 
@@ -54,7 +55,7 @@ export function OutreachTabs() {
   );
 }
 
-/** The brand as a line: its name as a link to its page, its tier, its live ads and its stage. */
+/** The brand as a line: its name as a link to its page, its ads, and its stage. */
 export function BrandLine({ prospect }: { prospect: ProspectRow }) {
   const stage = STAGES[prospect.stage];
   return (
@@ -65,7 +66,7 @@ export function BrandLine({ prospect }: { prospect: ProspectRow }) {
       {prospect.test ? <Badge color="amber">Test</Badge> : null}
       <Badge color={stage.color}>{stage.label}</Badge>
       <span className="text-caption text-muted-foreground">
-        {prospect.tier} live ads tier · {prospect.liveAds} live · {prospect.sector}
+        {prospect.liveAds} ads running · {prospect.sector}
         {prospect.channel ? ` · ${CHANNELS[prospect.channel]}` : ""}
       </span>
     </div>
@@ -231,12 +232,16 @@ export function MessageCard({
   step,
   messages,
   done,
+  sendTo,
+  disabled = false,
 }: {
   prospect: ProspectRow;
   ad: OutreachAdView | undefined;
   step: OutreachStep;
   messages: [OutreachMessage, OutreachMessage];
   done: (page: ProspectPage) => void;
+  sendTo?: ProspectSendTarget;
+  disabled?: boolean;
 }) {
   const { write, busy, error } = useWrite(prospect.id, done);
   const [title, setTitle] = useState<0 | 1>(0);
@@ -263,6 +268,7 @@ export function MessageCard({
           {STEPS[step]}
           {prospect.channel ? ` by ${CHANNELS[prospect.channel]}` : ""}
         </p>
+        {!sendTo ? <p className="text-body">No contact to send this to.</p> : null}
         <fieldset className="grid gap-2">
           <legend className="mb-1 text-caption text-muted-foreground">{email ? "Subject" : "Title"}: use either one</legend>
           {messages.map((version, index) => (
@@ -278,7 +284,7 @@ export function MessageCard({
           <Button type="button" variant="secondary" className={TAP} onClick={copy}>
             {copied ? "Copied" : "Copy the text"}
           </Button>
-          {message.href ? (
+          {message.href && sendTo && !disabled ? (
             <Button asChild variant="secondary" className={TAP}>
               <a href={message.href} target="_blank" rel="noopener noreferrer">
                 {email ? "Open the mail program" : "Open WhatsApp"}
@@ -290,9 +296,11 @@ export function MessageCard({
               <a href={ad.downloadUrl}>Save the picture</a>
             </Button>
           ) : null}
-          <Button type="button" className={TAP} loading={busy === "sent"} onClick={() => write({ action: "sent", body: { step, title } })}>
-            Mark as sent
-          </Button>
+          {sendTo ? (
+            <Button type="button" className={TAP} disabled={disabled} loading={busy === "sent"} onClick={() => write({ action: "sent", body: { step, title, to: sendTo.to, channel: sendTo.channel } })}>
+              Mark as sent
+            </Button>
+          ) : null}
         </div>
         <Failure error={error} />
       </div>

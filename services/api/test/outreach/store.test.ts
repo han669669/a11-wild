@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { loadRows, makeTestProspect } from "../../src/outreach/load.js";
 import { stageOf } from "../../src/outreach/stage.js";
-import { OutreachStore } from "../../src/outreach/store.js";
+import { contactKeys, OutreachStore } from "../../src/outreach/store.js";
 import { MemoryTable } from "../helpers/memory-table.js";
 import { row } from "./helpers.js";
 
@@ -59,12 +59,26 @@ describe("the outreach store", () => {
   });
 
   it("keeps an opt-out for the contact: a second brand with the same number, or the same address in other letters, is opted out", async () => {
-    await loadRows(store, [row(1), row(2, { whatsapp: "+65 8000 0001", email: "other@brand2.example" }), row(3, { whatsapp: undefined, email: "Hello@Brand1.Example" }), row(4)], now);
+    await loadRows(store, [row(1), row(2, { whatsapp: "+65 8000 0001", email: "other2@example.com" }), row(3, { whatsapp: undefined, email: "Brand1@Example.com" }), row(4)], now);
     await store.addEvent("00001", { type: "optout" }, "owner");
     await store.addOptOut(await store.get("00001"));
     const optOuts = await store.optOuts();
     const stages = Object.fromEntries((await store.all()).map((file) => [file.profile.n, stageOf(file, optOuts)]));
     expect(stages).toEqual({ 1: "opted_out", 2: "opted_out", 3: "opted_out", 4: "new" });
+  });
+
+  it("registers direct emails and numbers from both checked ways to reach the brand", async () => {
+    await loadRows(store, [
+      row(1, { email: "brand1@example.com", dmEmail: "person@example.com", dmPhone: "+65 9123 4567", bestRoute: "DM email (valid) person@example.com", secondRoute: "DM phone +65 9123 4567" }),
+      row(2, { email: "brand2@example.com", dmEmail: "PERSON@example.com", dmPhone: "91234567" }),
+    ], now);
+    const first = (await store.all())[0]!.profile;
+    expect(contactKeys(first)).toContain("E#person@example.com");
+    expect(contactKeys(first)).toContain("W#6591234567");
+    await store.addEvent("00001", { type: "optout" }, "owner");
+    await store.addOptOut(await store.get("00001"));
+    const optOuts = await store.optOuts();
+    expect(stageOf((await store.all())[1]!, optOuts)).toBe("opted_out");
   });
 
   it("removes a test prospect with all its items, and refuses for a prospect of the list", async () => {
