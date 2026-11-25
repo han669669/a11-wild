@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Refusal } from "../../src/mcp/registry.js";
 import { HOME, wongiNet } from "../brand/extract.test.js";
 import { approvedClient, callTool, createStudio, type Studio } from "../helpers/deps.js";
 import { fakeNet } from "../helpers/net.js";
@@ -183,6 +184,87 @@ describe("brand tools", () => {
     expect(await studio.services.batches.logoFree(batch.id)).toBe(true);
   });
 
+  it("retries a failed settled-batch mark after saving the logo", async () => {
+    const brand = await savedBrandWithoutLogo();
+    const extract = await studio.services.brands.offer({
+      kind: "brand",
+      url: "https://wongi.example/",
+      pageUrl: "https://wongi.example/",
+      logos: [LOGO, WWW_LOGO],
+      photos: [],
+      productPages: [],
+      colours: [],
+    });
+    const createV1Batch = () =>
+      studio.services.batches.create({
+        kind: "v1",
+        brandId: brand.id,
+        productId: "product-1",
+        format: "static_4x5",
+        createdBy: "owner@example.com",
+      });
+    let settling = await createV1Batch();
+    for (const state of ["truth", "ideas", "judged", "priced", "drafting"] as const) {
+      settling = await studio.services.batches.move(settling, state, "test");
+    }
+    studio.clock.now = new Date(studio.clock.now.getTime() + 1_000);
+    let settled = await createV1Batch();
+    for (const state of ["truth", "ideas", "judged", "priced", "drafting", "checked"] as const) {
+      settled = await studio.services.batches.move(settled, state, "test");
+    }
+    expect((await studio.services.batches.list()).map(({ id }) => id)).toEqual([settled.id, settling.id]);
+
+    const markLogoFree = studio.services.batches.markLogoFree.bind(studio.services.batches);
+    let interrupted = false;
+    vi.spyOn(studio.services.batches, "markLogoFree").mockImplementation(async (batchId) => {
+      if (batchId === settling.id && (await studio.services.brands.brand(brand.id)).logo && !interrupted) {
+        interrupted = true;
+        throw new Refusal("mark interrupted");
+      }
+      return markLogoFree(batchId);
+    });
+    const putPicture = studio.pictures.put.bind(studio.pictures);
+    const putPictureSpy = vi.spyOn(studio.pictures, "put").mockImplementation(async (key, body, type) => {
+      expect(await studio.services.batches.logoFree(settled.id)).toBe(true);
+      await putPicture(key, body, type);
+      await studio.services.batches.move(await studio.services.batches.get(settling.id), "checked", "test");
+    });
+    const saveBrandSpy = vi.spyOn(studio.services.brands, "saveBrand");
+
+    const first = await callTool(studio, "brand_logo_save", { brandId: brand.id, extractId: extract.id, logoUrl: LOGO });
+    expect(first).toEqual({ ok: false, error: "mark interrupted" });
+    expect((await studio.services.brands.brand(brand.id)).logo).toMatchObject({ sourceUrl: LOGO });
+    expect(await studio.services.batches.logoFree(settled.id)).toBe(true);
+    expect(await studio.services.batches.logoFree(settling.id)).toBe(false);
+    expect(putPictureSpy).toHaveBeenCalledTimes(1);
+    expect(saveBrandSpy).toHaveBeenCalledTimes(1);
+
+    const retry = await callTool(studio, "brand_logo_save", { brandId: brand.id, extractId: extract.id, logoUrl: LOGO });
+    expect(retry.value).toEqual({ brandId: brand.id, logo: { sourceUrl: LOGO } });
+    expect(await studio.services.batches.logoFree(settled.id)).toBe(true);
+    expect(await studio.services.batches.logoFree(settling.id)).toBe(true);
+    expect(putPictureSpy).toHaveBeenCalledTimes(1);
+    expect(saveBrandSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a retry with a different logo candidate", async () => {
+    const brand = await savedBrandWithoutLogo();
+    const extract = await studio.services.brands.offer({
+      kind: "brand",
+      url: "https://wongi.example/",
+      pageUrl: "https://wongi.example/",
+      logos: [LOGO, WWW_LOGO],
+      photos: [],
+      productPages: [],
+      colours: [],
+    });
+
+    const saved = await callTool(studio, "brand_logo_save", { brandId: brand.id, extractId: extract.id, logoUrl: LOGO });
+    expect(saved.ok).toBe(true);
+    const refused = await callTool(studio, "brand_logo_save", { brandId: brand.id, extractId: extract.id, logoUrl: WWW_LOGO });
+    expect(refused).toEqual({ ok: false, error: "This brand has its logo. A saved logo is not replaced." });
+  });
+
   it("does not mark a waiting-pick v2 batch logoFree or expose the field in batch_get", async () => {
     const brand = await savedBrandWithoutLogo();
     const product = await studio.services.brands.saveProduct({
@@ -208,6 +290,8 @@ describe("brand tools", () => {
     const saved = await callTool(studio, "brand_logo_save", { brandId: brand.id, extractId: extract.value.extractId, logoUrl: LOGO });
     expect(saved.ok).toBe(true);
     expect(await studio.services.batches.logoFree(batch.id)).toBe(false);
+    expect(await studio.services.batches.markLogoFree(batch.id)).toBe(true);
+    expect(await studio.services.batches.logoFree(batch.id)).toBe(true);
 
     const view = await callTool(studio, "batch_get", { batchId: batch.id });
     expect(view.ok).toBe(true);
@@ -255,12 +339,14 @@ describe("brand tools", () => {
     expect(studio.pictures.files.size).toBe(0);
   });
 
-  it("refuses to replace a saved brand logo", async () => {
+  it("returns the saved logo on a repeat save with the same source", async () => {
     const extract = await callTool(studio, "brand_extract", { url: "https://wongi.example/" });
     const brand = await callTool(studio, "brand_save", { extractId: extract.value.extractId, name: "WonGi", logoUrl: LOGO, palette });
 
+    const picturesBefore = studio.pictures.files.size;
     const saved = await callTool(studio, "brand_logo_save", { brandId: brand.value.brand.id, extractId: extract.value.extractId, logoUrl: LOGO });
-    expect(saved).toEqual({ ok: false, error: "This brand has its logo. A saved logo is not replaced." });
+    expect(saved.value).toEqual({ brandId: brand.value.brand.id, logo: { sourceUrl: LOGO } });
+    expect(studio.pictures.files.size).toBe(picturesBefore);
   });
 
   it("refuses a product extract for a brand logo", async () => {

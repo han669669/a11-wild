@@ -132,19 +132,29 @@ export function brandTools({ batches, brands, parallel, pictures, net }: BrandTo
         if (!offer.pageUrl) throw new Refusal("Run brand_extract again on the brand's site.");
         const brand = await brands.brand(brandId);
         if (siteHost(offer.pageUrl) !== siteHost(brand.url)) throw new Refusal("That extract is of another site, not this brand's.");
-        if (brand.logo) throw new Refusal("This brand has its logo. A saved logo is not replaced.");
         if (!offer.logos.includes(logoUrl)) throw new Refusal(SAVED_LOGO_NOT_CANDIDATE);
         const candidateHost = new URL(logoUrl).hostname.toLowerCase();
         if (siteHost(logoUrl) !== siteHost(brand.url) && candidateHost !== "cdn.shopify.com") {
           throw new Refusal("That logo is not on this brand's site.");
         }
 
+        const markSettledV1Batches = async () => {
+          for (const batch of await batches.list()) {
+            if (batch.kind === "v1" && batch.brandId === brandId) await batches.markLogoFree(batch.id);
+          }
+        };
+
+        if (brand.logo) {
+          if (brand.logo.sourceUrl !== logoUrl) throw new Refusal("This brand has its logo. A saved logo is not replaced.");
+          await markSettledV1Batches();
+          return { brandId, logo: { sourceUrl: brand.logo.sourceUrl } };
+        }
+
+        await markSettledV1Batches();
         const copied = await copyPicture({ url: logoUrl, folder: `brands/${brandId}`, what: "The logo" }, net, pictures);
         const { createdAt: _createdAt, ...kit } = brand;
         await brands.saveBrand({ ...kit, logo: { key: copied.key, sourceUrl: copied.sourceUrl }, savedBy: context.user.email });
-        for (const batch of await batches.list()) {
-          if (batch.kind === "v1" && batch.brandId === brandId) await batches.markLogoFree(batch.id);
-        }
+        await markSettledV1Batches();
         return { brandId, logo: { sourceUrl: copied.sourceUrl } };
       },
     }),
