@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { brandExtract } from "../../src/brand/extract.js";
+import type { Net } from "../../src/urlsafety.js";
 import { fakeNet } from "../helpers/net.js";
 
 export const HOME = `<!doctype html><html><head>
@@ -159,13 +160,46 @@ describe("brandExtract", () => {
     const shopifyFallbackUpgraded = await brandExtract({ url: "https://shop.example/" }, shopifyFallbackNet);
     expect(shopifyFallbackUpgraded.logoCandidates).toEqual([{ url: "https://shop.example/cdn/shop/files/logo.png?v=1", kind: "header" }]);
 
-    const transparentLogoPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="/logo-transparent.png" srcset="/logo.svg 2x" alt="Brand"></a></header></body></html>`;
+    const transparentLogoPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="/transparent.png" srcset="/logo.svg 2x" alt="Brand"></a></header></body></html>`;
     const transparentLogoNet = fakeNet({
       "https://brand.example/": html(transparentLogoPage),
       "https://brand.example/logo.svg": { body: "<svg/>", headers: { "content-type": "image/svg+xml" } },
-      "https://brand.example/logo-transparent.png": { body: "x", headers: { "content-type": "image/x-png" } },
+      "https://brand.example/transparent.png": { body: "x", headers: { "content-type": "image/apng" } },
     });
     const transparentKept = await brandExtract({ url: "https://brand.example/" }, transparentLogoNet);
-    expect(transparentKept.logoCandidates).toEqual([{ url: "https://brand.example/logo-transparent.png", kind: "header" }]);
+    expect(transparentKept.logoCandidates).toEqual([{ url: "https://brand.example/transparent.png", kind: "header" }]);
+
+    // Unreachable srcset CDN (unknown) falls through to a live src instead of returning the unreachable URL.
+    const unreachableCdnPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="https://brand.example/logo.png" srcset="https://down.example/logo-2x.png 2x" alt="Brand"></a></header></body></html>`;
+    const unreachableCdnNet: Net = {
+      resolve: async (host) => (host === "down.example" ? Promise.reject(new Error("ENOTFOUND")) : ["93.184.216.34"]),
+      fetch: (async (u: string | URL | Request) => {
+        const key = String(u);
+        if (key === "https://brand.example/") return new Response(unreachableCdnPage, { status: 200, headers: { "content-type": "text/html" } });
+        if (key === "https://brand.example/logo.png") return new Response("x", { status: 200, headers: { "content-type": "image/png" } });
+        return new Response("no", { status: 404 });
+      }) as typeof fetch,
+    };
+    const unreachableRecovered = await brandExtract({ url: "https://brand.example/" }, unreachableCdnNet);
+    expect(unreachableRecovered.logoCandidates).toEqual([{ url: "https://brand.example/logo.png", kind: "header" }]);
+
+    // Two header images sharing a dead srcset keep the second image's distinct live src as a fallback.
+    const sharedSrcsetPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img srcset="/shared.png 2x" src="/dead-a.png" alt="Brand"></a><a href="/"><img srcset="/shared.png 2x" src="/live-b.png" alt="Brand"></a></header></body></html>`;
+    const sharedSrcsetNet = fakeNet({
+      "https://brand.example/": html(sharedSrcsetPage),
+      "https://brand.example/live-b.png": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const sharedRecovered = await brandExtract({ url: "https://brand.example/" }, sharedSrcsetNet);
+    expect(sharedRecovered.logoCandidates).toEqual([{ url: "https://brand.example/live-b.png", kind: "header" }]);
+
+    // With 4 srcset entries + 1 src, the probe budget tries the 3rd sharpest entry before the smallest one.
+    const fourSrcsetPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="/fallback.png" srcset="/w1000.png 1000w, /w600.png 600w, /w400.png 400w, /w200.png 200w" alt="Brand"></a></header></body></html>`;
+    const fourSrcsetNet = fakeNet({
+      "https://brand.example/": html(fourSrcsetPage),
+      "https://brand.example/w400.png": { body: "x", headers: { "content-type": "image/png" } },
+      "https://brand.example/w200.png": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const sharperPicked = await brandExtract({ url: "https://brand.example/" }, fourSrcsetNet);
+    expect(sharperPicked.logoCandidates).toEqual([{ url: "https://brand.example/w400.png", kind: "header" }]);
   });
 });

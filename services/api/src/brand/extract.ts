@@ -62,8 +62,8 @@ const top = <T extends string>(counts: Map<T, number>, n: number, boost?: T | nu
 const LOGOS_MAX = 6;
 const PRODUCT_PAGES_MAX = 30;
 
-/** Raster MIME types (including legacy PNG/JPEG aliases) that copyPicture accepts. */
-const SAVABLE_RASTER_MIME = new Set(["image/png", "image/x-png", "image/jpeg", "image/jpg", "image/pjpeg", "image/webp"]);
+/** Raster MIME types (including legacy PNG/JPEG aliases and APNG) that copyPicture accepts. */
+const SAVABLE_RASTER_MIME = new Set(["image/png", "image/x-png", "image/apng", "image/jpeg", "image/jpg", "image/pjpeg", "image/webp"]);
 /** Max probe attempts per logo candidate across srcset/src/data-src fallbacks. */
 const PROBE_ATTEMPTS_MAX = 4;
 
@@ -200,7 +200,13 @@ export async function brandExtract(input: { url: string }, net: Net) {
       if (u && !/\.ico(\?|$)/i.test(u) && !resolved.includes(u)) resolved.push(u);
     }
     const [u, ...fallbacks] = resolved;
-    if (!u || logoCandidates.some((c) => fileKey(c.url) === fileKey(u))) return;
+    if (!u) return;
+    const existing = logoCandidates.find((c) => fileKey(c.url) === fileKey(u));
+    if (existing) {
+      const extra = fallbacks.filter((f) => f !== existing.url && !existing.fallbacks?.includes(f));
+      if (extra.length) existing.fallbacks = [...(existing.fallbacks ?? []), ...extra];
+      return;
+    }
     logoCandidates.push(fallbacks.length ? { url: u, fallbacks, kind } : { url: u, kind });
   };
   let inlineSvgLogo = false;
@@ -217,12 +223,14 @@ export async function brandExtract(input: { url: string }, net: Net) {
     const resolved = await Promise.all(
       list.map(async (c) => {
         const all = [c.url, ...(c.fallbacks ?? [])];
-        const urls = all.length <= PROBE_ATTEMPTS_MAX ? all : [...all.slice(0, PROBE_ATTEMPTS_MAX - 2), ...all.slice(-2)];
+        const urls = all.length <= PROBE_ATTEMPTS_MAX ? all : [...all.slice(0, PROBE_ATTEMPTS_MAX - 1), all[all.length - 1]!];
         const triedFull = new Set<string>();
         // Share one 4s budget across all opportunistic Shopify upgrade probes for this candidate so fallbacks keep >= 6s.
         const upgradeSignal = AbortSignal.any([probeSignal, AbortSignal.timeout(4_000)]);
+        let firstUnknown: string | undefined;
         let lastState: "live" | "svg" | "dead" | "unknown" = "dead";
         for (const u of urls) {
+          if (probeSignal.aborted) break;
           const full = fullSizeShopifyLogo(u);
           if (full && !triedFull.has(full) && !upgradeSignal.aborted) {
             triedFull.add(full);
@@ -231,9 +239,11 @@ export async function brandExtract(input: { url: string }, net: Net) {
             }
           }
           const state = await probeLogo(net, u, probeSignal);
-          if (state === "live" || state === "unknown") return { candidate: { url: u, kind: c.kind }, state };
-          lastState = state;
+          if (state === "live") return { candidate: { url: u, kind: c.kind }, state };
+          if (state === "unknown") firstUnknown ??= u;
+          else lastState = state;
         }
+        if (firstUnknown) return { candidate: { url: firstUnknown, kind: c.kind }, state: "unknown" as const };
         return { candidate: { url: c.url, kind: c.kind }, state: lastState };
       }),
     );

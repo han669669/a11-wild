@@ -179,5 +179,9 @@ describe("cubic review fixes", () => {
     expect(headerLogos(lazy, page, "Brand")).toEqual([{ kind: "img", url: "https://brand.example/logo-800.png" }]);
     const plainWithDataSrc = `<header><a href="/"><img src="/live.png" data-src="/other.png"></a></header>`;
     expect(headerLogos(plainWithDataSrc, page, "Brand")).toEqual([{ kind: "img", url: "https://brand.example/live.png" }]);
+    const widerSrc = `<header><a href="/"><img src="//shop.example/cdn/shop/files/logo.png?width=600" srcset="//shop.example/cdn/shop/files/logo.png?width=180 180w, //shop.example/cdn/shop/files/logo.png?width=360 360w"></a></header>`;
+    expect(headerLogos(widerSrc, "https://shop.example/", "Shop")).toEqual([
+      { kind: "img", url: "https://shop.example/cdn/shop/files/logo.png?width=600" },
+    ]);
   });
 });

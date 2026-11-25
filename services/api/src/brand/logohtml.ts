@@ -187,10 +187,8 @@ function parseSrcset(srcset: string): SrcsetEntry[] {
   return out;
 }
 
-/** Rank srcset entries best-first: widest <= 2000w, then smallest > 2000w, then highest x density, then remaining reversed. */
-function rankedSrcset(srcset: string | undefined): string[] {
-  if (!srcset) return [];
-  const entries = parseSrcset(srcset);
+/** Rank parsed srcset entries best-first: widest <= 2000w, then smallest > 2000w, then highest x density, then remaining reversed. */
+function rankSrcsetEntries(entries: SrcsetEntry[]): string[] {
   if (!entries.length) return [];
   const widths = entries.filter((e) => e.kind === "w");
   const fits = widths.filter((e) => e.value <= LOGO_SRCSET_MAX_W).sort((a, b) => b.value - a.value);
@@ -200,28 +198,48 @@ function rankedSrcset(srcset: string | undefined): string[] {
   return [...fits, ...over, ...densities, ...rest].map((e) => e.href);
 }
 
+/** Rank srcset entries best-first: widest <= 2000w, then smallest > 2000w, then highest x density, then remaining reversed. */
+function rankedSrcset(srcset: string | undefined): string[] {
+  return srcset ? rankSrcsetEntries(parseSrcset(srcset)) : [];
+}
+
 /** Pick the highest-resolution usable entry from a srcset attribute (ignoring data: URIs). */
 export function largestSrcset(srcset: string | undefined): string | undefined {
   return rankedSrcset(srcset)[0];
 }
 
-const LAZY_SRC = /(?:^|\/)(blank|placeholder|spacer|transparent|pixel|1x1|loading)\.[a-z0-9]+(?:[?#]|$)/i;
+const LAZY_SRC = /(?:^|\/)(blank|placeholder|spacer|pixel|1x1|loading)\.[a-z0-9]+(?:[?#]|$)/i;
 
-/** Ordered image addresses from an <img> tag, best-first: srcset, data-srcset, then src / data-src (preferring data-src when lazy-loaded and dropping placeholder src files). */
+function urlWidth(raw: string): number | undefined {
+  const m = /[?&](?:width|w)=(\d+)\b/i.exec(decode(raw));
+  return m ? Number.parseInt(m[1]!, 10) : undefined;
+}
+
+/** Ordered image addresses from an <img> tag, best-first: widest usable source first, preferring data-src when lazy-loaded and dropping placeholder src files when a raster alternative exists. */
 export function imgSrcCandidates(imgTag: string): string[] {
   const src = attr(imgTag, "src");
   const dataSrc = attr(imgTag, "data-src");
-  const srcset = rankedSrcset(attr(imgTag, "srcset"));
-  const dataSrcset = rankedSrcset(attr(imgTag, "data-srcset"));
+  const srcsetRaw = attr(imgTag, "srcset");
+  const dataSrcsetRaw = attr(imgTag, "data-srcset");
+  const srcsetEntries = srcsetRaw ? parseSrcset(srcsetRaw) : [];
+  const dataSrcsetEntries = dataSrcsetRaw ? parseSrcset(dataSrcsetRaw) : [];
+  const srcset = rankSrcsetEntries(srcsetEntries);
+  const dataSrcset = rankSrcsetEntries(dataSrcsetEntries);
   const srcIsPlaceholder = !!src && LAZY_SRC.test(src);
-  const hasRealAlt = !!dataSrc || srcset.length > 0 || dataSrcset.length > 0;
+  const isRasterAlt = (u: string | undefined) => !!u && !u.startsWith("data:") && !/\.svg(?:[?#]|$)/i.test(decode(u));
+  const hasRasterAlt = isRasterAlt(dataSrc) || srcset.some(isRasterAlt) || dataSrcset.some(isRasterAlt);
   const isLazy = !!dataSrc && (/\blazyload\b/i.test(attr(imgTag, "class") ?? "") || srcIsPlaceholder);
-  const usableSrc = srcIsPlaceholder && hasRealAlt ? undefined : src;
-  const raw = [
-    ...srcset,
-    ...dataSrcset,
-    ...(isLazy ? [dataSrc, usableSrc] : [usableSrc, dataSrc]),
-  ];
+  const usableSrc = srcIsPlaceholder && hasRasterAlt ? undefined : src;
+  const maxFitSrcsetW = [...srcsetEntries, ...dataSrcsetEntries]
+    .filter((e) => e.kind === "w" && e.value <= LOGO_SRCSET_MAX_W)
+    .reduce((m, e) => Math.max(m, e.value), 0);
+  const preferredDirect = isLazy ? dataSrc : usableSrc;
+  const otherDirect = isLazy ? usableSrc : dataSrc;
+  const directW = preferredDirect ? urlWidth(preferredDirect) : undefined;
+  const directBeatsSrcset = !!directW && directW <= LOGO_SRCSET_MAX_W && maxFitSrcsetW > 0 && directW > maxFitSrcsetW;
+  const raw = directBeatsSrcset
+    ? [preferredDirect, ...srcset, ...dataSrcset, otherDirect]
+    : [...srcset, ...dataSrcset, preferredDirect, otherDirect];
   const seen = new Set<string>();
   const out: string[] = [];
   for (const item of raw) {
@@ -240,6 +258,7 @@ export function bestImgSrc(imgTag: string): string | undefined {
 function logosIn(region: string, pageUrl: string, brand: string): HeaderLogoCandidate[] {
   const out: HeaderLogoCandidate[] = [];
   const seen = new Set<string>();
+  const byPrimary = new Map<string, { kind: "img"; url: string; fallbacks?: string[] }>();
   for (const m of region.matchAll(/<(a|div|span|figure|picture|svg|img|h1|p)\b[^>]*>/gi)) {
     if (out.length >= 2) break;
     const tag = m[0];
@@ -282,9 +301,16 @@ function logosIn(region: string, pageUrl: string, brand: string): HeaderLogoCand
           }
         }
         const [primary, ...fallbacks] = urls;
-        if (primary && !seen.has(primary)) {
-          seen.add(primary);
-          out.push(fallbacks.length ? { kind: "img", url: primary, fallbacks } : { kind: "img", url: primary });
+        if (primary) {
+          const existing = byPrimary.get(primary);
+          if (existing) {
+            const extra = fallbacks.filter((u) => u !== existing.url && !existing.fallbacks?.includes(u));
+            if (extra.length) existing.fallbacks = [...(existing.fallbacks ?? []), ...extra];
+          } else {
+            const entry: { kind: "img"; url: string; fallbacks?: string[] } = fallbacks.length ? { kind: "img", url: primary, fallbacks } : { kind: "img", url: primary };
+            byPrimary.set(primary, entry);
+            out.push(entry);
+          }
           break;
         }
       }
