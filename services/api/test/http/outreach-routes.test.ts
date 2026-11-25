@@ -248,6 +248,40 @@ describe("the owner's day", () => {
     expect(sent.sends[0].to).toBe(channelAfterRoute.contact.sendTo.to);
   });
 
+  it("keeps saved direct-recipient details after Keep instead of filling from the new row", async () => {
+    await ready([
+      row(1, { bestRoute: "DM phone +65 8000 0001", decisionMaker: "Amelia Lee" }),
+      row(2, { bestRoute: "DM phone +65 8000 0002" }),
+    ]);
+    const incoming = [
+      row(1, { bestRoute: "DM email (valid) new1@example.com", email: "new1@example.com", decisionMaker: "Evelyn Tan", dmTitle: "Director" }),
+      row(2, { bestRoute: "DM email (valid) new2@example.com", email: "new2@example.com", decisionMaker: "New Person", dmTitle: "Director" }),
+    ];
+    await loadProspects(studio, incoming);
+    await on("00001", "route", { choice: "kept" });
+    await on("00002", "route", { choice: "kept" });
+    await loadProspects(studio, incoming);
+
+    const named = await json(await get("/api/outreach/prospects/00001"));
+    expect(named.contact.sendTo).toMatchObject({ person: "Amelia Lee" });
+    expect(named.contact.sendTo).not.toHaveProperty("title");
+    expect(named.prospect.person).toBe("Amelia Lee");
+    const unnamed = await json(await get("/api/outreach/prospects/00002"));
+    expect(unnamed.contact.sendTo).not.toHaveProperty("person");
+    expect(unnamed.contact.sendTo).not.toHaveProperty("title");
+    expect(unnamed.prospect.person).toBeUndefined();
+
+    const today = await json(await get("/api/outreach/today"));
+    const namedLine = today.firsts.find((line: { prospect: { id: string } }) => line.prospect.id === "00001");
+    const unnamedLine = today.firsts.find((line: { prospect: { id: string } }) => line.prospect.id === "00002");
+    expect(namedLine.sendTo).toMatchObject({ person: "Amelia Lee" });
+    expect(namedLine.sendTo).not.toHaveProperty("title");
+    expect(namedLine.prospect.person).toBe("Amelia Lee");
+    expect(unnamedLine.sendTo).not.toHaveProperty("person");
+    expect(unnamedLine.sendTo).not.toHaveProperty("title");
+    expect(unnamedLine.prospect.person).toBeUndefined();
+  });
+
   it("hides every person and contact field from a prospect closed by a shared opted-out number", async () => {
     const number = "+65 8000 0001";
     await ready([

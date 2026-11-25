@@ -1,4 +1,5 @@
-import type { OutreachAd, OutreachChannel, OutreachEvent, OutreachStage, ProspectFile, ProspectRoute, ProspectSendTarget, ProspectSells } from "@a11-wild/shared";
+import type { OutreachAd, OutreachChannel, OutreachEvent, OutreachStage, Prospect, ProspectFile, ProspectRoute, ProspectSendTarget, ProspectSells } from "@a11-wild/shared";
+import { EMAIL } from "./messages.js";
 import { contactKeys } from "./store.js";
 
 /** Two tries at an ad the owner says yes to. After the second no the brand is parked. */
@@ -129,14 +130,21 @@ const sendable = (route: ProspectRoute | undefined): ProspectSendTarget | undefi
       }
     : undefined;
 
-const legacyTargets = (file: ProspectFile): ProspectSendTarget[] => {
-  const { profile } = file;
-  const whatsapp = profile.whatsapp[0];
+export function legacyTargets(profile: Prospect): ProspectSendTarget[] {
+  const phone = profile.dmPhone?.replace(/[\s().-]/g, "").replace(/^\+/, "");
+  const digits = phone && /^\d+$/.test(phone) ? (phone.length === 8 ? `65${phone}` : phone) : undefined;
+  const dmPhone = digits && /^65[89]\d{7}$/.test(digits) ? digits : undefined;
+  const recipient = {
+    ...(profile.decisionMaker ? { person: profile.decisionMaker } : {}),
+    ...(profile.dmTitle ? { title: profile.dmTitle } : {}),
+  };
   return [
-    ...(whatsapp ? [{ channel: "whatsapp" as const, to: whatsapp, direct: false }] : []),
+    ...(dmPhone ? [{ channel: "whatsapp" as const, to: dmPhone, direct: true, ...recipient }] : []),
+    ...(profile.dmEmail && profile.dmVerify === "valid" && EMAIL.test(profile.dmEmail) ? [{ channel: "email" as const, to: profile.dmEmail, direct: true, ...recipient }] : []),
+    ...(profile.whatsapp[0] ? [{ channel: "whatsapp" as const, to: profile.whatsapp[0], direct: false }] : []),
     ...(profile.email ? [{ channel: "email" as const, to: profile.email, direct: false }] : []),
   ];
-};
+}
 
 /** True while a changed contact waits for the owner's choice. */
 export function routeHeldUnresolved(file: ProspectFile): boolean {
@@ -153,16 +161,16 @@ export function sendTarget(file: ProspectFile): ProspectSendTarget | undefined {
   const heldTarget = sendable(profile.routeHeld);
   if (routeHeldUnresolved(file) && heldTarget) return heldTarget;
   if (channelEvent && (!routeEvent || channelEvent.at > routeEvent.at)) {
-    return targetForChannel(file, channelEvent.channel) ?? sendable(profile.route) ?? sendable(profile.second) ?? legacyTargets(file)[0];
+    return targetForChannel(file, channelEvent.channel) ?? sendable(profile.route) ?? sendable(profile.second) ?? legacyTargets(profile)[0];
   }
   if (routeEvent?.choice === "kept" && heldTarget) return heldTarget;
-  return sendable(profile.route) ?? sendable(profile.second) ?? legacyTargets(file)[0];
+  return sendable(profile.route) ?? sendable(profile.second) ?? legacyTargets(profile)[0];
 }
 
 export function targetForChannel(file: ProspectFile, channel: OutreachChannel): ProspectSendTarget | undefined {
   const routeEvent = last(file.events, "route");
   const held = file.profile.routeHeld && (routeHeldUnresolved(file) || (routeEvent?.choice === "kept" && routeEvent.at >= file.profile.loadedAt)) ? file.profile.routeHeld : undefined;
-  const candidates = [sendable(file.profile.route), sendable(file.profile.second), sendable(held), ...legacyTargets(file)];
+  const candidates = [sendable(file.profile.route), sendable(file.profile.second), sendable(held), ...legacyTargets(file.profile)];
   return candidates.find((target) => target?.channel === channel);
 }
 
@@ -170,7 +178,7 @@ export function defaultRoute(file: ProspectFile): ProspectRoute | undefined {
   const { profile } = file;
   const route = [profile.route, profile.second].find((candidate) => sendable(candidate) !== undefined);
   if (route) return route;
-  const target = legacyTargets(file)[0];
+  const target = legacyTargets(profile)[0];
   return target ? { ...target, label: profile.bestRoute ?? (target.channel === "whatsapp" ? "WhatsApp" : "Email") } : undefined;
 }
 

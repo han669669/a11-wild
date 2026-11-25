@@ -128,6 +128,24 @@ describe("what a prospect needs next", () => {
     expect(hasRoute(file({ profile: profile(1, { whatsapp: [], email: undefined as never }) }))).toBe(false);
   });
 
+  it("uses the profile's name and title on direct legacy targets", () => {
+    expect(sendTarget(file({ profile: profile(1, {
+      whatsapp: [],
+      email: undefined as never,
+      dmEmail: "person@example.com",
+      dmVerify: "valid",
+      decisionMaker: "Amelia Lee",
+      dmTitle: "Founder",
+    }) }))).toEqual({ channel: "email", to: "person@example.com", direct: true, person: "Amelia Lee", title: "Founder" });
+    expect(sendTarget(file({ profile: profile(1, {
+      whatsapp: [],
+      email: undefined as never,
+      dmPhone: "+65 9123 4567",
+      decisionMaker: "Amelia Lee",
+      dmTitle: "Founder",
+    }) }))).toEqual({ channel: "whatsapp", to: "6591234567", direct: true, person: "Amelia Lee", title: "Founder" });
+  });
+
   it("uses a checked second route when the first one cannot be sent", () => {
     const secondary = { channel: "email" as const, to: "person@example.com", direct: true, label: "DM email (valid) person@example.com" };
     const profileWithSocialPrimary = profile(1, {

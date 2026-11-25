@@ -120,7 +120,7 @@ describe("loading the additional list fields", () => {
     expect(profile.secondRoute).toBe("Email (valid)");
   });
 
-  it("blocks an email with a slash in its local part and the address after the slash", async () => {
+  it("blocks a slash-local-part email without blocking its suffix as another address", async () => {
     await loadRows(store, [
       listed(10, {
         email: "a/b@example.com",
@@ -132,11 +132,11 @@ describe("loading the additional list fields", () => {
     ], now);
     const profile = await store.get("00010");
     expect(profile.email).toBeUndefined();
-    expect(profile.dmEmail).toBeUndefined();
+    expect(profile.dmEmail).toBe("b@example.com");
     expect(profile.route).toBeUndefined();
-    expect(profile.second).toBeUndefined();
+    expect(profile.second).toMatchObject({ channel: "email", to: "b@example.com" });
     expect(profile.bestRoute).toBe("Email (valid)");
-    expect(profile.secondRoute).toBe("Email (valid)");
+    expect(profile.secondRoute).toBe("Email (valid) b@example.com");
   });
 
   it("applies the row limits and accepts 500 characters of raw notes", async () => {

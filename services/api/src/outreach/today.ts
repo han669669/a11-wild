@@ -29,7 +29,7 @@ export function rowOf(file: ProspectFile, optOuts: ReadonlySet<string>, shared: 
     tier: profile.tier,
     stage,
     ...(channel ? { channel } : {}),
-    ...(stage !== "opted_out" && target?.direct && profile.decisionMaker ? { person: profile.decisionMaker } : {}),
+    ...(stage !== "opted_out" && target?.direct && target.person ? { person: target.person } : {}),
     ...(staleDays !== undefined ? { staleDays } : {}),
     flags: {
       duplicate: profile.flags?.some((flag) => flag.kind === "duplicate") ?? false,
@@ -134,14 +134,7 @@ export async function todayPage(deps: { store: OutreachStore; sequence: Outreach
           }
         : undefined;
     const target = step !== undefined && templates ? sendTarget(file) : undefined;
-    const targetIsHeld = Boolean(target && file.profile.routeHeld?.channel === target.channel && file.profile.routeHeld.to === target.to);
-    const sendTo = target
-      ? {
-          ...target,
-          ...(target.direct && !target.person && !targetIsHeld && file.profile.decisionMaker ? { person: file.profile.decisionMaker } : {}),
-          ...(target.direct && !target.title && !targetIsHeld && file.profile.dmTitle ? { title: file.profile.dmTitle } : {}),
-        }
-      : undefined;
+    const sendTo = target;
     return {
       prospect: rowOf(file, optOuts, shared, now),
       ...(ad ? { ad: await adView(file, ad, pictures) } : {}),

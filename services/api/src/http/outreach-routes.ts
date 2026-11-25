@@ -94,14 +94,7 @@ export function outreachRoutes(
     };
     if (optedOut(file, optOuts)) return { whatsapp: [] };
     const target = sendTarget(file);
-    const targetIsHeld = Boolean(target && profile.routeHeld?.channel === target.channel && profile.routeHeld.to === target.to);
-    const sendTo = target && routeOpen(target, closed)
-      ? {
-          ...target,
-          ...(target.direct && !target.person && !targetIsHeld && profile.decisionMaker ? { person: profile.decisionMaker } : {}),
-          ...(target.direct && !target.title && !targetIsHeld && profile.dmTitle ? { title: profile.dmTitle } : {}),
-        }
-      : undefined;
+    const sendTo = target && routeOpen(target, closed) ? target : undefined;
     const dmCheck = { valid: "checked", risky: "risky", invalid: "invalid", unknown: "not checked" } as const;
     return {
       whatsapp: profile.whatsapp.filter(openNumber).map((number) => ({ number, ...link(/^\d{10,15}$/.test(number) ? `https://wa.me/${number}` : undefined) })),

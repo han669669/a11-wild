@@ -3,7 +3,7 @@ import { OUTREACH_TIERS, type OutreachTier, type Prospect, type ProspectFlag, ty
 import { Refusal } from "../mcp/registry.js";
 import { EMAIL } from "./messages.js";
 import { routeOf } from "./routes.js";
-import { defaultRoute, sendTarget, stageOf } from "./stage.js";
+import { defaultRoute, legacyTargets, sendTarget, stageOf } from "./stage.js";
 import { type OutreachStore, prospectId } from "./store.js";
 
 /** One row of the owner's list, as plain text and numbers. The spreadsheet is read outside the server. */
@@ -143,7 +143,6 @@ function flagsFrom(notes: string | undefined): ProspectFlag[] {
 }
 
 const digits = (value: string): string => value.replace(/\D/g, "");
-const EMAIL_ADDRESS = /^[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}$/i;
 const EMAIL_IN_TEXT = /[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}/gi;
 const numberKey = (value: string): string => {
   const found = digits(value);
@@ -155,11 +154,8 @@ function blockedValues(flags: ProspectFlag[]): { emails: Set<string>; numbers: S
   const numbers = new Set<string>();
   for (const flag of flags) {
     if (flag.kind !== "blocked") continue;
-    for (const found of flag.text.match(EMAIL_IN_TEXT) ?? []) {
-      emails.add(found.toLowerCase());
-      const afterSlash = found.slice(found.lastIndexOf("/") + 1);
-      if (afterSlash !== found && EMAIL_ADDRESS.test(afterSlash)) emails.add(afterSlash.toLowerCase());
-    }
+    const text = flag.text.replace(/(\.[a-z]{2,})\/(?=[^\s@/]+@)/gi, "$1 ");
+    for (const found of text.match(EMAIL_IN_TEXT) ?? []) emails.add(found.toLowerCase());
     for (const found of flag.text.match(/\+?\d[\d().\s-]{5,}\d/g) ?? []) {
       const key = numberKey(found);
       if (key.length >= 8) numbers.add(key);
@@ -253,6 +249,18 @@ export function profileOf(row: LoadRow, loadedAt: string): Prospect {
 
 const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
+function workbookTarget(profile: Prospect): { channel: "whatsapp" | "email"; to: string } | undefined {
+  const route = [routeOf(profile.bestRoute), routeOf(profile.secondRoute)].find(
+    (candidate) => candidate?.channel === "whatsapp" || candidate?.channel === "email",
+  );
+  if (route?.channel === "whatsapp" || route?.channel === "email") return { channel: route.channel, to: route.to };
+  const target = legacyTargets(profile)[0];
+  return target ? { channel: target.channel, to: target.to } : undefined;
+}
+
+const sameTarget = (a: { channel: string; to: string } | undefined, b: { channel: string; to: string } | undefined) =>
+  (!a && !b) || Boolean(a && b && a.channel === b.channel && a.to === b.to);
+
 /**
  * Loads rows of the list. It can be run again: it adds new rows and updates the list's own fields.
  * It writes profiles and the opt-out register, without changing history, ads, sends or existing opt-outs.
@@ -312,35 +320,31 @@ export async function loadRows(
         const routeEvent = [...file.events].filter((event) => event.type === "route").sort((a, b) => a.at.localeCompare(b.at)).at(-1);
         const resolved = Boolean(before.routeHeld && routeEvent && routeEvent.at >= before.loadedAt);
         const oldTarget = sendTarget(previous);
-        const priorSourceRoute = routeOf(before.bestRoute);
-        const sameSourceRoute =
-          (!priorSourceRoute && !profile.route) ||
-          (priorSourceRoute?.channel === profile.route?.channel && priorSourceRoute?.to === profile.route?.to);
-        if (sameSourceRoute && before.route) {
-          if (!profile.route || before.route.channel !== profile.route.channel || before.route.to !== profile.route.to) {
-            profile.route = before.route;
+        const newTarget = workbookTarget(profile);
+        const sameWorkbookTarget = sameTarget(workbookTarget(before), newTarget);
+        if (sameWorkbookTarget) {
+          if (resolved && before.routeHeld) {
+            if (routeEvent?.choice === "kept") profile.route = before.routeHeld;
+            delete profile.routeHeld;
           } else {
-            const updatedRoute = { ...before.route, ...profile.route };
-            if (!profile.route.person) delete updatedRoute.person;
-            if (!profile.route.title) delete updatedRoute.title;
-            profile.route = updatedRoute;
+            if (before.route) profile.route = before.route;
+            if (before.routeHeld) profile.routeHeld = before.routeHeld;
           }
         }
-        if (resolved && before.routeHeld) {
-          if (routeEvent?.choice === "kept") profile.route = before.routeHeld;
-          delete profile.routeHeld;
-        } else if (before.routeHeld) {
-          profile.routeHeld = before.routeHeld;
-        }
-        if ((!before.routeHeld || resolved) && ["pick_waits", "pick_made", "ad_waits", "ready", "contacted", "replied", "in_talks", "client"].includes(stageOf(previous, optOuts))) {
-          const newTarget = sendTarget({ ...file, profile });
-          if (oldTarget && newTarget && (oldTarget.channel !== newTarget.channel || oldTarget.to !== newTarget.to)) {
-            const oldRoute =
-              [before.route, before.second, ...legacyRoutes(before)]
-                .find((route) => route?.channel === oldTarget.channel && route.to === oldTarget.to) ??
-              { channel: oldTarget.channel, to: oldTarget.to, direct: oldTarget.direct, label: before.bestRoute ?? (oldTarget.channel === "whatsapp" ? "WhatsApp" : "Email") };
-            profile.routeHeld = withRoutePerson(oldRoute, before.decisionMaker, before.dmTitle);
-          }
+        if (
+          !sameWorkbookTarget &&
+          oldTarget &&
+          newTarget &&
+          !sameTarget(oldTarget, newTarget) &&
+          ["pick_waits", "pick_made", "ad_waits", "ready", "contacted", "replied", "in_talks", "client"].includes(stageOf(previous, optOuts))
+        ) {
+          const oldRoute =
+            [before.route, before.second, before.routeHeld].find((route) => route?.channel === oldTarget.channel && route.to === oldTarget.to) ??
+            {
+              ...oldTarget,
+              label: before.bestRoute ?? (oldTarget.direct ? (oldTarget.channel === "whatsapp" ? "DM phone" : "DM email") : oldTarget.channel === "whatsapp" ? "WhatsApp" : "Email"),
+            };
+          profile.routeHeld = oldRoute;
         }
         if (before.newestAd && (!profile.newestAd || before.newestAd > profile.newestAd)) profile.newestAd = before.newestAd;
       }
@@ -364,14 +368,6 @@ export async function loadRows(
     }
   }
   return { added, updated, merged, held, blocked, refused: refused.sort((a, b) => a.index - b.index).map((entry) => entry.refusal) };
-}
-
-function legacyRoutes(profile: Prospect): ProspectRoute[] {
-  const whatsapp = profile.whatsapp[0];
-  return [
-    ...(whatsapp ? [{ channel: "whatsapp" as const, to: whatsapp, direct: false, label: profile.bestRoute ?? "WhatsApp" }] : []),
-    ...(profile.email ? [{ channel: "email" as const, to: profile.email, direct: false, label: profile.bestRoute ?? "Email" }] : []),
-  ];
 }
 
 /** A prospect made to try the pages. Its name says what it is. */

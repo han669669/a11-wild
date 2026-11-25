@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadRows, makeTestProspect } from "../../src/outreach/load.js";
 import { nextStep, OutreachSequence, sameContact } from "../../src/outreach/sequence.js";
-import { stageOf } from "../../src/outreach/stage.js";
+import { sendTarget, stageOf } from "../../src/outreach/stage.js";
 import { OutreachStore } from "../../src/outreach/store.js";
 import { inCampaign } from "../../src/outreach/desk.js";
 import { MemoryTable } from "../helpers/memory-table.js";
@@ -109,6 +109,31 @@ describe("marking a message as sent", () => {
     expect((await store.get("00001")).routeHeld).toBeUndefined();
     const sent = await sequence.send("00001", { step: 0, title: 0 });
     expect(sent.send).toMatchObject({ channel: "whatsapp", to: "6580000001" });
+  });
+
+  it("compares fallback targets across Keep, changes and removal", async () => {
+    const initial = row(1, { bestRoute: undefined, secondRoute: undefined, whatsapp: undefined, email: "first@example.com" });
+    await loadRows(store, [initial], now);
+    await ready("00001");
+    const changed = row(1, { bestRoute: undefined, secondRoute: undefined, whatsapp: undefined, email: "new@example.com" });
+    await loadRows(store, [changed], now);
+    expect((await store.get("00001")).routeHeld).toMatchObject({ channel: "email", to: "first@example.com" });
+
+    await sequence.setRoute("00001", "kept");
+    await loadRows(store, [changed], now);
+    expect((await store.get("00001")).routeHeld).toBeUndefined();
+    expect((await store.get("00001")).route).toMatchObject({ channel: "email", to: "first@example.com" });
+    await loadRows(store, [changed], now);
+    expect((await store.get("00001")).routeHeld).toBeUndefined();
+    expect((await sequence.send("00001", { step: 0, title: 0 })).send).toMatchObject({ channel: "email", to: "first@example.com" });
+
+    const later = row(1, { bestRoute: undefined, secondRoute: undefined, whatsapp: undefined, email: "later@example.com" });
+    await loadRows(store, [later], now);
+    expect((await store.get("00001")).routeHeld).toMatchObject({ channel: "email", to: "first@example.com" });
+    const removed = row(1, { bestRoute: undefined, secondRoute: undefined, whatsapp: undefined, email: undefined });
+    await loadRows(store, [removed], now);
+    expect((await store.get("00001")).routeHeld).toBeUndefined();
+    expect(sendTarget((await store.all()).find((file) => file.profile.id === "00001")!)).toBeUndefined();
   });
 
   it("counts a send at 23:30 on Monday in Singapore on Monday", async () => {
