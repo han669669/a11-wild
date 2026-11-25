@@ -55,9 +55,31 @@ export class BatchStore {
     if (batch.kind === "v3" || batch.purpose === "outreach" || (batch.state !== "checked" && batch.state !== "waiting_pick")) {
       throw new StateError("Only a checked or waiting-pick v1 or v2 batch can return to drafting for a redo.");
     }
-    const moved: Batch = { ...batch, state: "drafting", updatedAt: this.now().toISOString() };
+    const at = this.now().toISOString();
+    const moved: Batch = { ...batch, state: "drafting", redoSendingAt: at, updatedAt: at };
     await this.table.put({ pk: PK, sk: moved.id, ...moved });
     return moved;
+  }
+
+  async restoreAfterRedoRefusal(batch: Batch, state: "checked" | "waiting_pick"): Promise<Batch> {
+    if (batch.state !== "drafting" || (state !== "checked" && state !== "waiting_pick")) {
+      throw new StateError("Only a drafting batch can return to checked or waiting-pick after a redo refusal.");
+    }
+    const restored: Batch = { ...batch, state, updatedAt: this.now().toISOString() };
+    delete restored.redoSendingAt;
+    await this.table.put({ pk: PK, sk: restored.id, ...restored });
+    return restored;
+  }
+
+  async clearRedoSendingAt(batch: Batch): Promise<Batch> {
+    const sendingAt = batch.redoSendingAt;
+    if (!sendingAt) return batch;
+    const current = await this.get(batch.id);
+    if (current.redoSendingAt !== sendingAt) return current;
+    const cleared: Batch = { ...current, updatedAt: this.now().toISOString() };
+    delete cleared.redoSendingAt;
+    const saved = await this.table.put({ pk: PK, sk: cleared.id, ...cleared }, { ifEquals: { attribute: "redoSendingAt", value: sendingAt } });
+    return saved ? cleared : this.get(batch.id);
   }
 
   async saveIdeas(batchId: string, ideas: Idea[], by: string): Promise<void> {

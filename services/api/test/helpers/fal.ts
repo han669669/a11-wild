@@ -8,12 +8,13 @@ export interface FalCall {
 }
 
 type Reply = { status?: number; json?: unknown; bytes?: Uint8Array; location?: string } | Error;
+export type FalAnswer = (call: FalCall) => Reply | undefined | Promise<Reply | undefined>;
 
 /**
  * A stand-in for fal's queue. By default each job is taken, is done at its first read and gives a
  * small JPEG. `answer` can change any reply: return nothing to keep the default.
  */
-export function fakeFal(answer: (call: FalCall) => Reply | undefined = () => undefined) {
+export function fakeFal(answer: FalAnswer = () => undefined) {
   const calls: FalCall[] = [];
   let jobs = 0;
   const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -24,7 +25,7 @@ export function fakeFal(answer: (call: FalCall) => Reply | undefined = () => und
       body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
     };
     calls.push(call);
-    let reply = answer(call);
+    let reply = await answer(call);
     if (!reply) {
       if (call.method === "POST") {
         const id = `req-${++jobs}`;

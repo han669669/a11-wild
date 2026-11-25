@@ -19,6 +19,7 @@ import type { TruthStore } from "../truth/store.js";
 export { PACK_CHECK };
 
 const TEST_PICK = "This is a test batch: the pick is saved for the batch only. It is not in the taste log and not in the calibration.";
+const REDO_SENDING_HOLD_MS = 10 * 60 * 1000;
 
 /** The states in which the owner picks. A checked batch moves to `waiting_pick` with his first pick. */
 // A finished batch still takes a newer choice: the owner may pick a draft of an idea he passed on.
@@ -40,6 +41,7 @@ interface Deps {
   copy: CopyStore;
   points: PointStore;
   directions: DirectionStore;
+  now: () => Date;
 }
 
 /** The kinds of picture that repair a draft or a final and then stand for it. */
@@ -296,6 +298,9 @@ export class BoardService implements FinalRule {
       ]);
       if (renders.some((render) => render.kind === "draft" && render.redoOf && render.status !== "done" && render.status !== "failed")) {
         missing.push("a queued draft redo to finish");
+      }
+      if (batch.redoSendingAt && this.deps.now().getTime() - new Date(batch.redoSendingAt).getTime() < REDO_SENDING_HOLD_MS) {
+        missing.push("a draft redo being sent");
       }
       const approved = hasWords(batch.kind) ? await this.deps.copy.list(batch.id) : [];
       const ideas = await batches.ideas(batch.id);
