@@ -157,6 +157,10 @@ describe("the owner's day", () => {
     await on("00001", "sent", { step: 0, title: 0 });
     studio.clock.now = new Date("2026-11-26T02:00:00Z");
     cookie = await sessionCookie(studio);
+    const shown = await json(await get("/api/outreach/prospects/00001"));
+    expect(shown.message).toMatchObject({ step: 1, channel: "whatsapp" });
+    expect(shown.contact.sendTo).toMatchObject({ channel: "whatsapp", to: "6580000001" });
+
     await loadProspects(studio, [row(1, { bestRoute: "Email (valid) replacement@example.com" })]);
 
     const page = await json(await get("/api/outreach/prospects/00001"));
@@ -165,20 +169,25 @@ describe("the owner's day", () => {
     expect(page.sends).toMatchObject([{ step: 0, channel: "whatsapp", to: "6580000001" }]);
     expect(page.message).toMatchObject({ step: 1, channel: "email" });
     expect(page.message.messages[0].href).toMatch(/^mailto:replacement@example\.com\?subject=/);
-    const sent = await json(await on("00001", "sent", { step: 1, title: 0 }));
-    expect(sent.sends[1]).toMatchObject({ step: 1, channel: "email", to: "replacement@example.com" });
+    const sent = await json(await on("00001", "sent", { step: 1, title: 0, channel: shown.contact.sendTo.channel, to: shown.contact.sendTo.to }));
+    expect(sent.sends[1]).toMatchObject({ step: 1, channel: "whatsapp", to: "6580000001" });
+    studio.clock.now = new Date("2026-11-30T02:00:00Z");
+    cookie = await sessionCookie(studio);
+    const next = await json(await on("00001", "sent", { step: 2, title: 0 }));
+    expect(next).toHaveProperty("sends");
+    expect(next.sends[2]).toMatchObject({ step: 2, channel: "email", to: "replacement@example.com" });
   });
 
-  it("refuses to mark a message at the contact shown before an import", async () => {
+  it("records the page's first-message contact while the new route check is pending", async () => {
     await ready([row(1, { bestRoute: "Email (valid) original@example.com", whatsapp: "", email: "" })]);
     const shown = await json(await get("/api/outreach/prospects/00001"));
     expect(shown.contact.sendTo).toMatchObject({ channel: "email", to: "original@example.com" });
 
     await loadProspects(studio, [row(1, { bestRoute: "Email (valid) replacement@example.com", whatsapp: "", email: "" })]);
-    const refused = await on("00001", "sent", { step: 0, title: 0, channel: shown.contact.sendTo.channel, to: shown.contact.sendTo.to });
-    expect(refused.status).toBe(400);
-    expect((await json(refused)).message).toBe("The contact for this brand changed. Reload the page and check it before marking.");
-    expect((await outreach().store.all())[0]!.sends).toEqual([]);
+    expect((await json(await get("/api/outreach/prospects/00001"))).check).toBe(true);
+    const marked = await json(await on("00001", "sent", { step: 0, title: 0, channel: shown.contact.sendTo.channel, to: shown.contact.sendTo.to }));
+    expect(marked.sends[0]).toMatchObject({ step: 0, channel: "email", to: "original@example.com" });
+    expect(marked.check).toBe(true);
   });
 
   it("marks a message as sent once, with the title he used, and takes it back on the same day only", async () => {

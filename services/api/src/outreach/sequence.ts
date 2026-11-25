@@ -1,8 +1,8 @@
-import type { OutreachChannel, OutreachEvent, OutreachSend, OutreachStep, OutreachTemplates, ProspectFile } from "@a11-wild/shared";
+import type { OutreachChannel, OutreachEvent, OutreachSend, OutreachStep, OutreachTemplates, ProspectFile, ProspectSendTarget } from "@a11-wild/shared";
 import { Refusal } from "../mcp/registry.js";
 import { dueDay, singaporeDay } from "./days.js";
 import { checkTemplate, fill } from "./messages.js";
-import { newestAd, optedOut, routeCheckUnresolved, sendTarget, stageOf, targetForChannel, verdictOf } from "./stage.js";
+import { newestAd, optedOut, routeCheckUnresolved, sendTarget, sendTargetUnavailable, stageOf, targetForChannel, verdictOf } from "./stage.js";
 import { contactKeys, type OutreachStore } from "./store.js";
 
 /** The owner's sequence: follow-up 1 three days after the first message, follow-up 2 four days after follow-up 1. */
@@ -11,6 +11,10 @@ export const STEP_NAMES = ["the first message", "follow-up 1", "follow-up 2"] as
 
 export const DAILY = { name: "DAILY", standard: 5, min: 1, max: 20 } as const;
 const TEMPLATES = "TEMPLATES";
+
+function validManualTarget(target: Pick<ProspectSendTarget, "channel" | "to">): boolean {
+  return target.channel === "whatsapp" ? /^\d{8,15}$/.test(target.to) : /^[^@\s]+@[^@\s]+$/.test(target.to);
+}
 
 /** The next message of a contacted prospect and the day it is due, or nothing when the sequence is over. */
 export function nextStep(file: ProspectFile): { step: 1 | 2; due: string } | undefined {
@@ -84,15 +88,24 @@ export class OutreachSequence {
   async send(id: string, input: { step: OutreachStep; title: 0 | 1; to?: string | undefined; channel?: OutreachChannel | undefined }): Promise<{ send: OutreachSend; already: boolean }> {
     const { file, files, optOuts } = await this.file(id);
     const { step } = input;
-    const target = sendTarget(file, optOuts);
-    if ((input.to !== undefined && input.to !== target?.to) || (input.channel !== undefined && input.channel !== target?.channel)) {
-      throw new Refusal("The contact for this brand changed. Reload the page and check it before marking.");
-    }
     const before = file.sends.find((send) => send.step === step);
     if (before) return { send: before, already: true };
+    if (step === 0 && optedOut(file, optOuts)) throw new Refusal("This contact opted out. No message to it is recorded, and none should be sent.");
+
+    const target = sendTarget(file, optOuts);
+    const destinationChanged =
+      input.to !== undefined && (input.to !== target?.to || (input.channel !== undefined && input.channel !== target?.channel));
+    let recordTarget = target;
+    if (input.to !== undefined) {
+      const channel = input.channel ?? target?.channel;
+      const suppliedTarget = channel ? { channel, to: input.to, direct: false } : undefined;
+      if (!suppliedTarget || !validManualTarget(suppliedTarget) || sendTargetUnavailable(file, suppliedTarget, optOuts)) {
+        throw new Refusal("That contact can't be used any more, so this can't be recorded.");
+      }
+      recordTarget = suppliedTarget;
+    }
     if (step === 0) {
-      if (optedOut(file, optOuts)) throw new Refusal("This contact opted out. No message to it is recorded, and none should be sent.");
-      if (routeCheckUnresolved(file)) throw new Refusal("The best contact for this brand changed. Check it, then send.");
+      if (routeCheckUnresolved(file) && !destinationChanged) throw new Refusal("The best contact for this brand changed. Check it, then send.");
     }
     const day = singaporeDay(this.now());
     const stage = stageOf(file, optOuts);
@@ -108,15 +121,15 @@ export class OutreachSequence {
     }
     const templates = await this.templates();
     if (!templates) throw new Refusal("The message text is not loaded yet.");
-    if (!target) throw new Refusal("This brand has no checked number or address.");
-    const { channel } = target;
+    if (!recordTarget) throw new Refusal("This brand has no checked number or address.");
+    const { channel } = recordTarget;
     const counted = step === 0 && !file.profile.test;
     // The place in the day's count is taken first, so two marks at once cannot pass the day's number.
     if (counted) {
       const daily = await this.daily();
       if (!(await this.store.takePlace(day, daily))) throw new Refusal(`Today's ${daily} first messages are sent. More can go tomorrow, or raise the daily number.`);
     }
-    const send: OutreachSend = { step, day, channel, to: target.to, ...fill(templates.steps[step], file.profile.brand, input.title), at: this.now().toISOString() };
+    const send: OutreachSend = { step, day, channel, to: recordTarget.to, ...fill(templates.steps[step], file.profile.brand, input.title), at: this.now().toISOString() };
     let put = false;
     try {
       put = await this.store.putSend(id, send);

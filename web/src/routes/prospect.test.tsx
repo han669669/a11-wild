@@ -82,6 +82,7 @@ describe("Prospect page", () => {
     });
     open();
     expect(await screen.findByText("No contact to send this to.")).toBeInTheDocument();
+    expect(screen.getByText("No contact to send this to yet.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Mark as sent" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Open WhatsApp" })).not.toBeInTheDocument();
   });

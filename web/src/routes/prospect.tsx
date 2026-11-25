@@ -278,7 +278,13 @@ function Next({ page }: { page: ProspectPage }) {
     );
   }
   if (ads[0] && !ads[0].verdict) return <Step who="you">Say yes or no to the ad.{first ? " A yes makes the first message ready." : ""}</Step>;
-  if (page.message) return <Step who="you">{STEPS[page.message.step]} is ready. Send it yourself, then mark it as sent.</Step>;
+  if (page.message) {
+    return page.contact.sendTo ? (
+      <Step who="you">{STEPS[page.message.step]} is ready. Send it yourself, then mark it as sent.</Step>
+    ) : (
+      <Step who="nobody">No contact to send this to yet.</Step>
+    );
+  }
   if (candidates?.agentOwes) return <Step who="agent">You picked. The agent makes the full-size version of your pick{first ? ", and the message is then ready" : ", and it then shows under Ads"}.</Step>;
   if (stage === "ready") {
     return (

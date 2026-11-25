@@ -135,16 +135,28 @@ describe("marking a message as sent", () => {
     expect(followUp.send).toMatchObject({ channel: "email", to: "replacement@example.com" });
   });
 
-  it("refuses a follow-up marked against the contact shown before an import", async () => {
+  it("returns an existing mark before checking its supplied destination", async () => {
     await ready("00001");
     const first = await sequence.send("00001", { step: 0, title: 0 });
     at("2026-11-26T10:00:00");
     await loadRows(store, [row(1, { bestRoute: "Email (valid) replacement@example.com" })], now);
 
-    await expect(sequence.send("00001", { step: 1, title: 0, channel: first.send.channel, to: first.send.to })).rejects.toThrow(
-      "The contact for this brand changed. Reload the page and check it before marking.",
-    );
+    const repeated = await sequence.send("00001", { step: 0, title: 1, channel: first.send.channel, to: first.send.to });
+    expect(repeated).toEqual({ send: first.send, already: true });
     expect((await store.all()).find((entry) => entry.profile.id === "00001")?.sends).toHaveLength(1);
+  });
+
+  it("refuses supplied contacts that are blocked or malformed", async () => {
+    await loadRows(store, [row(1, { notes: "AUDIT-FLAG: blocked@example.com do not use" })], now);
+    await ready("00001");
+
+    await expect(sequence.send("00001", { step: 0, title: 0, channel: "email", to: "blocked@example.com" })).rejects.toThrow(
+      "That contact can't be used any more, so this can't be recorded.",
+    );
+    await expect(sequence.send("00001", { step: 0, title: 0, channel: "whatsapp", to: "658000 0001" })).rejects.toThrow(
+      "That contact can't be used any more, so this can't be recorded.",
+    );
+    expect((await store.all()).find((entry) => entry.profile.id === "00001")?.sends).toEqual([]);
   });
 
   it("keeps an unresolved check when an identical import finds the brand parked", async () => {
