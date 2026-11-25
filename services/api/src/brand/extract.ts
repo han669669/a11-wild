@@ -66,6 +66,8 @@ const PRODUCT_PAGES_MAX = 30;
 const SAVABLE_RASTER_MIME = new Set(["image/png", "image/x-png", "image/apng", "image/jpeg", "image/jpg", "image/pjpeg", "image/webp"]);
 /** Max probe attempts per logo candidate across srcset/src/data-src fallbacks. */
 const PROBE_ATTEMPTS_MAX = 4;
+/** Extensions that copyPicture cannot store; deprioritised behind likely-savable URLs when probing fallbacks. */
+const UNSAVABLE_EXT = /\.(?:svg|avif|gif)(?:[?#]|$)/i;
 
 /** Strip Shopify CDN thumbnail resize params (`width`, `height`) to get the full-size raster logo when live. */
 function fullSizeShopifyLogo(url: string): string | null {
@@ -223,7 +225,9 @@ export async function brandExtract(input: { url: string }, net: Net) {
     const resolved = await Promise.all(
       list.map(async (c) => {
         const all = [c.url, ...(c.fallbacks ?? [])];
-        const urls = all.length <= PROBE_ATTEMPTS_MAX ? all : [...all.slice(0, PROBE_ATTEMPTS_MAX - 1), all[all.length - 1]!];
+        const likelySavable = all.filter((u) => !UNSAVABLE_EXT.test(u));
+        const ordered = likelySavable.length ? [...likelySavable, ...all.filter((u) => UNSAVABLE_EXT.test(u))] : all;
+        const urls = ordered.length <= PROBE_ATTEMPTS_MAX ? ordered : [...ordered.slice(0, PROBE_ATTEMPTS_MAX - 1), ordered[ordered.length - 1]!];
         const triedFull = new Set<string>();
         // Share one 4s budget across all opportunistic Shopify upgrade probes for this candidate so fallbacks keep >= 6s.
         const upgradeSignal = AbortSignal.any([probeSignal, AbortSignal.timeout(4_000)]);

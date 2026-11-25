@@ -201,5 +201,28 @@ describe("brandExtract", () => {
     });
     const sharperPicked = await brandExtract({ url: "https://brand.example/" }, fourSrcsetNet);
     expect(sharperPicked.logoCandidates).toEqual([{ url: "https://brand.example/w400.png", kind: "header" }]);
+
+    // transparent.png without lazyload class still yields to data-src when live.
+    const transparentLazyPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="/transparent.png" data-src="/real-logo.png" alt="Brand"></a></header></body></html>`;
+    const transparentLazyNet = fakeNet({
+      "https://brand.example/": html(transparentLazyPage),
+      "https://brand.example/transparent.png": { body: "x", headers: { "content-type": "image/png" } },
+      "https://brand.example/real-logo.png": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const transparentLazyPicked = await brandExtract({ url: "https://brand.example/" }, transparentLazyNet);
+    expect(transparentLazyPicked.logoCandidates).toEqual([{ url: "https://brand.example/real-logo.png", kind: "header" }]);
+
+    // Unsavable .avif and .gif entries do not crowd out a savable PNG data-src within the probe budget.
+    const avifCrowdPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img class="lazyload" src="/preview.gif" data-src="/logo.png" data-srcset="/a.avif 300w, /b.avif 600w, /c.avif 1200w" alt="Brand"></a></header></body></html>`;
+    const avifCrowdNet = fakeNet({
+      "https://brand.example/": html(avifCrowdPage),
+      "https://brand.example/a.avif": { body: "x", headers: { "content-type": "image/avif" } },
+      "https://brand.example/b.avif": { body: "x", headers: { "content-type": "image/avif" } },
+      "https://brand.example/c.avif": { body: "x", headers: { "content-type": "image/avif" } },
+      "https://brand.example/preview.gif": { body: "x", headers: { "content-type": "image/gif" } },
+      "https://brand.example/logo.png": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const avifCrowdPicked = await brandExtract({ url: "https://brand.example/" }, avifCrowdNet);
+    expect(avifCrowdPicked.logoCandidates).toEqual([{ url: "https://brand.example/logo.png", kind: "header" }]);
   });
 });
