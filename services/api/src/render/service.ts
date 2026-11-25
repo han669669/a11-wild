@@ -296,7 +296,6 @@ export class RenderService {
       const billed = billedOf(all, input.kind);
       const usedMicro = billed.micro + sent.reduce((sum, render) => sum + render.reservation.micro, 0);
       batch = await this.passGate(batch, input.kind, sent, { usedMicro, micro: toMicro(usd), billed });
-      if (readyRedo) batch = await batches.reopenDraftingForRedo(batch);
       reservation = await ledger.reserve({ service: "fal", kind: input.kind, ref: `${idea.id}: ${idea.title}`, batchId: batch.id, usd });
     } catch (error) {
       if (input.kind === "rough") await renders.releaseRough(batch.id, idea.id);
@@ -327,6 +326,7 @@ export class RenderService {
       reservation,
       stageCount: count,
     });
+    if (readyRedo) batch = await batches.reopenDraftingForRedo(batch);
     if (input.kind === "draft" && (batch.state === "priced" || batch.state === "waiting_spend")) await batches.move(batch, "drafting", "render_submit");
     if (input.kind === "final" && batch.state === "waiting_pick") await batches.move(batch, "finals", "render_submit");
     // The critic has not seen this rough: its review of the concepts is no longer the whole of them.

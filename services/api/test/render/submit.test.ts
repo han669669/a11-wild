@@ -209,6 +209,51 @@ describe("render_submit", () => {
     expect(await state()).toBe("drafting");
   });
 
+  it("keeps a checked board pickable when the spend cap refuses a redo", async () => {
+    const initial = await readyBoard();
+    const spend = await studio.spend.ledger.summary();
+    await studio.spend.ledger.reserve({
+      service: "fal",
+      kind: "test",
+      ref: "Fill the monthly cap",
+      usd: spend.monthCapUsd - spend.monthUsd,
+    });
+
+    expect(await draft({ redo: initial[0]!.renderId })).toEqual(refused(/spend cap would be passed/));
+    expect(await state()).toBe("checked");
+    const picked = await callTool(studio, "pick_save", {
+      batchId,
+      ideaId: "idea-1",
+      imageId: initial[0]!.imageId,
+      ownerSaid: "This one is ready.",
+    });
+    expect(picked.ok).toBe(true);
+    expect(await state()).toBe("waiting_pick");
+  });
+
+  it("keeps a checked board unchanged when the draft gate refuses a redo", async () => {
+    const initial = await readyBoard();
+    await studio.spend.gate.price(batchId, "drafts", { firstUsd: 0.15, count: 100 });
+
+    expect(await draft({ redo: initial[0]!.renderId })).toEqual(refused(/waits for the owner's yes/));
+    expect(await state()).toBe("checked");
+  });
+
+  it("keeps a waiting-pick board unchanged when fal refuses a redo before it is saved", async () => {
+    let refuseRedo = false;
+    await batchAtIdeas({
+      fal: (call) => refuseRedo && call.method === "POST" ? { status: 422, json: { detail: "bad input" } } : undefined,
+    });
+    const initial = await readyBoard();
+    await callTool(studio, "board_show", { batchId });
+    expect(await state()).toBe("waiting_pick");
+
+    refuseRedo = true;
+    expect(await draft({ redo: initial[0]!.renderId })).toEqual(refused(/fal refused the render request \(status 422\)\. Nothing was charged/));
+    expect(await state()).toBe("waiting_pick");
+    expect((await studio.services.renders.list(batchId)).some((render) => render.redoOf)).toBe(false);
+  });
+
   it("refuses a ready-board redo after the owner has picked that idea", async () => {
     const initial = await readyBoard();
     await callTool(studio, "board_show", { batchId });
