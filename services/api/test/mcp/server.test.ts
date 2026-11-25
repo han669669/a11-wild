@@ -105,6 +105,7 @@ describe("MCP server", () => {
     expect(text.indexOf("Step 0. Ask first")).toBeGreaterThan(-1);
     expect(text.indexOf("which brand")).toBeLessThan(text.indexOf("Step 1."));
     expect(text.indexOf("which product")).toBeLessThan(text.indexOf("Step 1."));
+    expect(text).toContain("A batch marked logoFree finishes without the logo.");
   });
 
   it("answers an unknown method, an unknown tool and an unknown prompt with JSON-RPC errors", async () => {

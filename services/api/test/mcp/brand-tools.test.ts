@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { HOME, wongiNet } from "../brand/extract.test.js";
 import { approvedClient, callTool, createStudio, type Studio } from "../helpers/deps.js";
 import { fakeNet } from "../helpers/net.js";
@@ -154,6 +154,33 @@ describe("brand tools", () => {
 
     const saved = await callTool(studio, "brand_logo_save", { brandId: brand.id, extractId: extract.value.extractId, logoUrl: SHOPIFY_LOGO });
     expect(saved.value.logo.sourceUrl).toBe(SHOPIFY_LOGO);
+  });
+
+  it("marks a batch that settles during the logo copy as logoFree", async () => {
+    const brand = await savedBrandWithoutLogo();
+    const extract = await callTool(studio, "brand_extract", { url: "https://wongi.example/" });
+    let batch = await studio.services.batches.create({
+      kind: "v1",
+      brandId: brand.id,
+      productId: "product-1",
+      format: "static_4x5",
+      createdBy: "owner@example.com",
+    });
+    for (const state of ["truth", "ideas", "judged", "priced", "drafting"] as const) {
+      batch = await studio.services.batches.move(batch, state, "test");
+    }
+    expect(batch.state).toBe("drafting");
+
+    const putPicture = studio.pictures.put.bind(studio.pictures);
+    vi.spyOn(studio.pictures, "put").mockImplementation(async (key, body, type) => {
+      await putPicture(key, body, type);
+      await studio.services.batches.move(await studio.services.batches.get(batch.id), "checked", "test");
+    });
+
+    const saved = await callTool(studio, "brand_logo_save", { brandId: brand.id, extractId: extract.value.extractId, logoUrl: LOGO });
+    expect(saved.ok).toBe(true);
+    expect((await studio.services.batches.get(batch.id)).state).toBe("checked");
+    expect(await studio.services.batches.logoFree(batch.id)).toBe(true);
   });
 
   it("refuses an older brand offer without the fetched page address", async () => {

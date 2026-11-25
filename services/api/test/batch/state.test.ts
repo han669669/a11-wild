@@ -83,6 +83,18 @@ describe("batch state", () => {
     });
   });
 
+  it("shows the logo-free exemption when a settled batch is resumed", async () => {
+    const { batchId } = await batchAtTruth(studio);
+    let batch = await studio.services.batches.get(batchId);
+    for (const state of ["ideas", "judged", "priced", "drafting", "checked"] as const) {
+      batch = await studio.services.batches.move(batch, state, "test");
+    }
+    expect(await studio.services.batches.markLogoFree(batchId)).toBe(true);
+
+    const resumed = await callTool(studio, "batch_get", { batchId });
+    expect(resumed.value).toMatchObject({ batch: { id: batchId, state: "checked" }, logoFree: true });
+  });
+
   it("refuses ideas before the truth sheet, and names it", async () => {
     const { brand, product } = await savedProduct(studio);
     const made = await callTool(studio, "batch_create", { kind: "v1", brandId: brand.id, productId: product.id });

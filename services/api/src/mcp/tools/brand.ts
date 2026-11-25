@@ -139,12 +139,12 @@ export function brandTools({ batches, brands, parallel, pictures, net }: BrandTo
           throw new Refusal("That logo is not on this brand's site.");
         }
 
-        for (const batch of await batches.list()) {
-          if (batch.brandId === brandId) await batches.markLogoFree(batch.id);
-        }
         const copied = await copyPicture({ url: logoUrl, folder: `brands/${brandId}`, what: "The logo" }, net, pictures);
         const { createdAt: _createdAt, ...kit } = brand;
         await brands.saveBrand({ ...kit, logo: { key: copied.key, sourceUrl: copied.sourceUrl }, savedBy: context.user.email });
+        for (const batch of await batches.list()) {
+          if (batch.brandId === brandId) await batches.markLogoFree(batch.id);
+        }
         return { brandId, logo: { sourceUrl: copied.sourceUrl } };
       },
     }),
