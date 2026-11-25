@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { rankable } from "../../src/critic/packet.js";
+import { CriticStore } from "../../src/critic/store.js";
 import { RenderStore } from "../../src/render/store.js";
 import { DRAFTS_PER_IDEA } from "../../src/render/service.js";
 import { RULES_VERSION } from "../../src/houserules.js";
@@ -47,7 +48,7 @@ const doneDraft = async (extra: object = {}) => {
   if (!done.ok) throw new Error(done.error);
   return { renderId: sent.value.id as string, imageId: done.value.image.id as string };
 };
-async function readyBoard(leaveLastMissing = false) {
+async function readyBoard(leaveLastMissing = false, rank = true) {
   const drafts: { ideaId: string; renderId: string; imageId: string }[] = [];
   for (const ideaId of ["idea-1", "idea-2", "idea-3"]) {
     for (let n = 0; n < DRAFTS_PER_IDEA; n++) drafts.push({ ideaId, ...(await doneDraft({ ideaId })) });
@@ -61,7 +62,7 @@ async function readyBoard(leaveLastMissing = false) {
       items: index === 0 || index === DRAFTS_PER_IDEA ? [{ code: "D11", note: "The pouch is too tall." }] : [],
     });
   }
-  await rankDrafts(studio, batchId);
+  if (rank) await rankDrafts(studio, batchId);
   return drafts;
 }
 
@@ -173,6 +174,34 @@ describe("render_submit", () => {
     expect(studio.fal.submits()).toHaveLength(1);
   });
 
+  it("refuses a redo after that idea is ranked, but allows one for an unranked idea while checks remain", async () => {
+    const drafts: { ideaId: string; renderId: string; imageId: string }[] = [];
+    for (const ideaId of ["idea-1", "idea-2", "idea-3"]) {
+      for (let n = 0; n < DRAFTS_PER_IDEA; n++) drafts.push({ ideaId, ...(await doneDraft({ ideaId })) });
+    }
+    for (const [index, made] of drafts.entries()) {
+      if (index === drafts.length - 1) continue;
+      await callTool(studio, "checks_save", {
+        rulesVersion: RULES_VERSION,
+        batchId,
+        imageId: made.imageId,
+        items: index === 0 || index === DRAFTS_PER_IDEA ? [{ code: "D11", note: "The pouch is too tall." }] : [],
+      });
+    }
+    const ranked = drafts.filter((made) => made.ideaId === "idea-1");
+    await new CriticStore(studio.table, () => studio.clock.now).saveRank(batchId, {
+      ideaId: "idea-1",
+      order: ranked.map(({ imageId }) => ({ imageId, shownId: imageId, reason: "The scene reads at once." })),
+    });
+
+    expect(await state()).toBe("drafting");
+    expect(await draft({ redo: ranked[0]!.renderId })).toEqual(
+      refused(/A draft is made again before the critic ranks the drafts\. Once the board is checked, the owner picks among the drafts as they are\./),
+    );
+    const unranked = drafts.find((made) => made.ideaId === "idea-2")!;
+    expect((await draft({ ideaId: "idea-2", redo: unranked.renderId })).ok).toBe(true);
+  });
+
   it("refuses to redo a redo or to redo the original a second time", async () => {
     const first = await doneDraft();
     await callTool(studio, "checks_save", {
@@ -206,7 +235,7 @@ describe("render_submit", () => {
   });
 
   it("holds drafting for a queued redo and requires checks and a fresh rank when it finishes", async () => {
-    const initial = await readyBoard(true);
+    const initial = await readyBoard(true, false);
     const redo = await draft({ redo: initial[0]!.renderId });
     if (!redo.ok) throw new Error(redo.error);
     await callTool(studio, "checks_save", { rulesVersion: RULES_VERSION, batchId, imageId: initial.at(-1)!.imageId, items: [] });
@@ -220,11 +249,12 @@ describe("render_submit", () => {
   });
 
   it("releases the board hold when a queued redo fails", async () => {
-    const initial = await readyBoard(true);
+    const initial = await readyBoard(true, false);
     const redo = await draft({ redo: initial[0]!.renderId });
     if (!redo.ok) throw new Error(redo.error);
     const queued = await studio.services.renders.get(batchId, redo.value.id);
     await studio.services.renders.end(queued, { status: "failed", error: "The render failed." });
+    await rankDrafts(studio, batchId);
     await callTool(studio, "checks_save", { rulesVersion: RULES_VERSION, batchId, imageId: initial.at(-1)!.imageId, items: [] });
     expect(await state()).toBe("checked");
   });

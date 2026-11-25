@@ -6,6 +6,7 @@ import type { BrandStore } from "../brand/store.js";
 import { estimateUsd, type FalClient } from "../fal/client.js";
 import type { ImageStore } from "../images/store.js";
 import type { PickStore } from "../picks/store.js";
+import type { CriticStore } from "../critic/store.js";
 import { Refusal } from "../mcp/registry.js";
 import type { Pictures } from "../pictures/store.js";
 import { GateError, type GateStage, type SpendGate } from "../spend/gate.js";
@@ -72,6 +73,7 @@ interface Deps {
   images: ImageStore;
   renders: RenderStore;
   picks: PickStore;
+  critic: CriticStore;
   ledger: SpendLedger;
   gate: SpendGate;
   fal: FalClient;
@@ -81,6 +83,7 @@ interface Deps {
 }
 
 const STAGE: Record<RenderKind, GateStage> = { rough: "roughs", draft: "drafts", final: "finals" };
+const REDO_AFTER_RANK = "A draft is made again before the critic ranks the drafts. Once the board is checked, the owner picks among the drafts as they are.";
 const live = (render: Render) => render.status !== "failed";
 /** What the failed renders of one kind were charged all the same, and the places of the stage they hold. A charged rough keeps its place among the roughs of the batch; a draft or a final is sent again. */
 function billedOf(all: StoredRender[], kind: RenderKind): { micro: number; places: number } {
@@ -146,12 +149,13 @@ export class RenderService {
       throw new Refusal("In an outreach batch, a draft with a warning stays pickable, so it is not made again.");
     }
     if (input.redo !== undefined && (batch.state === "checked" || batch.state === "waiting_pick")) {
-      throw new Refusal("A draft is made again before the critic ranks the drafts. Once the board is checked, the owner picks among the drafts as they are.");
+      throw new Refusal(REDO_AFTER_RANK);
     }
     if (input.kind === "rough" && batch.kind !== "v3") throw new Refusal("Only a batch of concept ads (v3) has roughs. A v1 or v2 batch starts with its drafts.");
     // A rough is made of any concept of the set. A draft or a final is made of an idea the batch chose.
     const idea: Idea | undefined = (input.kind === "rough" ? await batches.burst(batch.id) : await batches.ideas(batch.id)).find((saved) => saved.id === input.ideaId);
     if (!idea) throw new Refusal(`This batch has no ${input.kind === "rough" ? "concept" : "idea"} ${input.ideaId}. batch_get gives ${input.kind === "rough" ? "its concepts in burst" : "its ideas"}.`);
+    if (input.redo !== undefined && (await this.deps.critic.ranks(batch.id)).has(idea.id)) throw new Refusal(REDO_AFTER_RANK);
     await fal.ready();
     const realPhotos = () => {
       // Real photos first: the model builds from a real photo of each thing the picture shows, never from its own guess.
