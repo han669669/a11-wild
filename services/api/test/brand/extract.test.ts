@@ -250,5 +250,27 @@ describe("brandExtract", () => {
     const delayedPicked = await brandExtract({ url: "https://brand.example/" }, delayedNet);
     expect(delayedPicked.logoCandidates).toEqual([{ url: "https://brand.example/big.png", kind: "header" }]);
     expect(pendingSignal?.aborted).toBe(true);
+
+    // Oversized chunked Shopify original (no Content-Length) appearing both as src and as the upgrade of srcset yields to the savable resized variant.
+    const overlapShopifyPage = `<!doctype html><html><head><title>Shop</title></head><body><header><a href="/"><img src="//shop.example/cdn/shop/files/logo.png?v=1" srcset="//shop.example/cdn/shop/files/logo.png?v=1&amp;width=300 300w" alt="Shop"></a></header></body></html>`;
+    const hugeBody = new Uint8Array(9 * 1024 * 1024);
+    const overlapShopifyNet: Net = {
+      resolve: async () => ["93.184.216.34"],
+      fetch: (async (u: string | URL | Request) => {
+        const key = String(u);
+        if (key === "https://shop.example/") return new Response(overlapShopifyPage, { status: 200, headers: { "content-type": "text/html" } });
+        if (key === "https://shop.example/cdn/shop/files/logo.png?v=1") {
+          return new Response(hugeBody, { status: 200, headers: { "content-type": "image/png" } });
+        }
+        if (key === "https://shop.example/cdn/shop/files/logo.png?v=1&width=300") {
+          return new Response("x", { status: 200, headers: { "content-type": "image/png" } });
+        }
+        return new Response("no", { status: 404 });
+      }) as typeof fetch,
+    };
+    const overlapPicked = await brandExtract({ url: "https://shop.example/" }, overlapShopifyNet);
+    expect(overlapPicked.logoCandidates).toEqual([
+      { url: "https://shop.example/cdn/shop/files/logo.png?v=1&width=300", kind: "header" },
+    ]);
   });
 });
