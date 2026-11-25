@@ -232,10 +232,11 @@ export function imgSrcCandidates(imgTag: string): string[] {
     const w = allowWidth ? urlWidth(href) : undefined;
     return w ? [{ href, kind: "w", value: w }] : [{ href, kind: "direct", value: 0 }];
   };
+  const hasWidthSrcset = srcsetEntries.some((e) => e.kind === "w");
   const ranked = rankCandidates([
     ...srcsetEntries,
-    ...toDirectEntry(preferredDirect, true),
-    ...toDirectEntry(otherDirect, !isLazy),
+    ...toDirectEntry(preferredDirect, hasWidthSrcset),
+    ...toDirectEntry(otherDirect, false),
   ]);
   const seen = new Set<string>();
   const out: string[] = [];

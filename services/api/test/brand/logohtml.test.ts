@@ -177,8 +177,10 @@ describe("cubic review fixes", () => {
     expect(headerLogos(commaUrl, page, "Brand")).toEqual([{ kind: "img", url: "https://cdn.example/w_600,q_auto/logo.png" }]);
     const lazy = `<header><a href="/"><img src="data:image/gif;base64,R0lGOD" data-srcset="/logo-200.png 200w, /logo-800.png 800w"></a></header>`;
     expect(headerLogos(lazy, page, "Brand")).toEqual([{ kind: "img", url: "https://brand.example/logo-800.png" }]);
-    const plainWithDataSrc = `<header><a href="/"><img src="/live.png" data-src="/other.png"></a></header>`;
+    const plainWithDataSrc = `<header><a href="/"><img src="/live.png" data-src="/other.png?width=600"></a></header>`;
     expect(headerLogos(plainWithDataSrc, page, "Brand")).toEqual([{ kind: "img", url: "https://brand.example/live.png" }]);
+    const densityOverThumbSrc = `<header><a href="/"><img src="/logo.png?width=105" srcset="/logo-3x.png 3x"></a></header>`;
+    expect(headerLogos(densityOverThumbSrc, page, "Brand")).toEqual([{ kind: "img", url: "https://brand.example/logo-3x.png" }]);
     const widerSrc = `<header><a href="/"><img src="//shop.example/cdn/shop/files/logo.png?width=600" srcset="//shop.example/cdn/shop/files/logo.png?width=180 180w, //shop.example/cdn/shop/files/logo.png?width=360 360w"></a></header>`;
     expect(headerLogos(widerSrc, "https://shop.example/", "Shop")).toEqual([
       { kind: "img", url: "https://shop.example/cdn/shop/files/logo.png?width=600" },
