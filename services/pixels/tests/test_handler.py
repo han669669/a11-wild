@@ -134,6 +134,44 @@ class Handler(unittest.TestCase):
         outside = self.job("pack_check", **args, around=[600, 600, 724, 1100])
         self.assertIn("box must lie inside the picture and hold the point", outside["error"])
 
+    def test_pack_check_respects_pack_box_on_opaque_square_packshot(self):
+        # 1. Tall pack inside a square photo with opaque coloured fill inside a light border (measures 1.000 without box).
+        square = Image.new("RGB", (400, 400), (255, 255, 255))
+        square.paste(Image.new("RGB", (360, 360), (180, 120, 210)), (20, 20))
+        self.store.add("products/p/square.png", square)
+        self.store.add("batches/b1/drafts/tall.png", render(150, 450))
+        without_box = self.job("pack_check", packKey="products/p/square.png", renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
+        self.assertTrue(without_box["ok"], without_box)
+        self.assertFalse(without_box["passed"])
+        with_box = self.job("pack_check", packKey="products/p/square.png", box=[150, 50, 250, 350], renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
+        self.assertTrue(with_box["ok"] and with_box["passed"], with_box)
+        self.assertIn("packshot H/W 3.000", with_box["line"])
+        # 2. Box whose top touches the cleared border while left/right/bottom sit in opaque studio fill still clips the opaque sides to box.
+        top_edge = self.job("pack_check", packKey="products/p/square.png", box=[150, 20, 250, 320], renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
+        self.assertTrue(top_edge["ok"] and top_edge["passed"], top_edge)
+        self.assertIn("packshot H/W 2.990", top_edge["line"])
+        # 3. Cutout pack extending into PAD is retained (even with a detached tall prop just past PAD on left and a detached prop inside PAD on right).
+        rgba = Image.new("RGBA", (400, 400), (0, 0, 0, 0))
+        rgba.paste(Image.new("RGBA", (100, 300), (40, 80, 200, 255)), (150, 50))
+        rgba.paste(Image.new("RGBA", (20, 300), (80, 200, 40, 255)), (129, 50))  # detached tall prop ending at x=148 (1px gap before pack at 150)
+        rgba.paste(Image.new("RGBA", (20, 20), (200, 80, 40, 255)), (251, 180))  # detached prop 1px right of pack (inside PAD)
+        self.store.add("products/p/with_prop.png", rgba)
+        # Box sits 3px inside left edge (x0=153, so PAD+1 hits detached prop at x=148) and at pack's right edge (x1=250): pack stays 100x300 (H/W 3.000).
+        prop_boxed = self.job("pack_check", packKey="products/p/with_prop.png", box=[153, 50, 250, 350], renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
+        self.assertTrue(prop_boxed["ok"] and prop_boxed["passed"], prop_boxed)
+        self.assertIn("packshot H/W 3.000", prop_boxed["line"])
+        # 4. Opaque studio fill reaching photo boundary on left (x=0) with box=[4, 50, 104, 350] clips left edge to box -> 100x300 (H/W 3.000).
+        edge_fill = Image.new("RGB", (400, 400), (255, 255, 255))
+        edge_fill.paste(Image.new("RGB", (400, 360), (180, 120, 210)), (0, 20))
+        self.store.add("products/p/edge_fill.png", edge_fill)
+        edge_boxed = self.job("pack_check", packKey="products/p/edge_fill.png", box=[4, 50, 104, 350], renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
+        self.assertTrue(edge_boxed["ok"] and edge_boxed["passed"], edge_boxed)
+        self.assertIn("packshot H/W 3.000", edge_boxed["line"])
+        # 5. Out-of-bounds box is refused.
+        bad_box = self.job("pack_check", packKey="products/p/square.png", box=[150, 50, 450, 350], renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
+        self.assertFalse(bad_box["ok"])
+        self.assertIn("box must lie inside the pack photo", bad_box["error"])
+
     def test_cap_check_fails_a_cap_that_sits_off_centre(self):
         self.store.add("batches/b1/finals/centred.png", bottle(0))
         self.store.add("batches/b1/finals/shifted.png", bottle(6))

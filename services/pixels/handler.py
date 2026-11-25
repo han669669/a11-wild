@@ -278,8 +278,48 @@ def measured(code, line):
     return {"line": line, "passed": code == 0}, None
 
 
+def _box_mask(mask_path, box_str, out_path):
+    """Crop a packshot mask to `box` for pack_check, padded with a 1px black rim.
+
+    On each side of `box`, keep pixels in the 4px skeleton/swap PAD margin only when that side has
+    cutout separation (not solid opaque fill) and belongs to a foreground region already inside `box`.
+    This retains genuine pack edges from skeleton/swap while excluding both detached props and uncut
+    opaque studio backdrops outside `box`.
+    """
+    x0, y0, x1, y1 = (int(v) for v in box_str.split(","))
+    pad = product_lock.PAD
+    with Image.open(mask_path) as m:
+        w, h = m.size
+        if not (0 <= x0 < x1 <= w and 0 <= y0 < y1 <= h):
+            raise Refused("box must lie inside the pack photo.")
+        grey = m.convert("L")
+        px0, py0, px1, py1 = max(0, x0 - pad), max(0, y0 - pad), min(w, x1 + pad), min(h, y1 + pad)
+        ex0, ey0, ex1, ey1 = max(0, x0 - pad - 1), max(0, y0 - pad - 1), min(w, x1 + pad + 1), min(h, y1 + pad + 1)
+        ext = np.asarray(grey.crop((ex0, ey0, ex1, ey1))) > 128
+        ix0, iy0, ix1, iy1 = x0 - ex0, y0 - ey0, x1 - ex0, y1 - ey0
+        # Keep only foreground regions that overlap the inner box, so detached props in or just outside PAD are excluded.
+        import cv2
+        _, labels = cv2.connectedComponents(ext.astype(np.uint8), connectivity=4)
+        inside_labels = set(np.unique(labels[iy0:iy1, ix0:ix1])) - {0}
+        if not inside_labels:
+            raise Refused("No product was found inside box.")
+        keep = np.isin(labels, list(inside_labels))
+        # Clip a padded side back to the exact box only when connected foreground continues past PAD (or to the photo edge).
+        top = iy0 if y0 > 0 and keep[0, ix0:ix1].mean() >= 0.9 else py0 - ey0
+        bot = iy1 if y1 < h and keep[-1, ix0:ix1].mean() >= 0.9 else py1 - ey0
+        left = ix0 if x0 > 0 and keep[iy0:iy1, 0].mean() >= 0.9 else px0 - ex0
+        right = ix1 if x1 < w and keep[iy0:iy1, -1].mean() >= 0.9 else px1 - ex0
+        out = keep[top:bot, left:right].astype(np.uint8) * 255
+        cropped = Image.new("L", (out.shape[1] + 2, out.shape[0] + 2), 0)
+        cropped.paste(Image.fromarray(out, "L"), (1, 1))
+        cropped.save(out_path)
+        return out_path
+
+
 def check_pack(job):
-    _, mask, _ = job.pack()
+    _, mask, box = job.pack()
+    if job.input.get("box") is not None:
+        mask = _box_mask(mask, box, os.path.join(job.folder, "pack_mask_box.png"))
     render = job.fetch("renderKey")
     four_by_five(render, "The render")
     at = numbers(job.input.get("at"), 2, "at")
