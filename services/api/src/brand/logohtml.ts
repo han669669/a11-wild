@@ -219,11 +219,12 @@ export function imgSrcCandidates(imgTag: string): string[] {
   const srcsetRaw = attr(imgTag, "srcset");
   const dataSrcsetRaw = attr(imgTag, "data-srcset");
   const srcsetEntries = [...(srcsetRaw ? parseSrcset(srcsetRaw) : []), ...(dataSrcsetRaw ? parseSrcset(dataSrcsetRaw) : [])];
+  const srcIsEmpty = !src || src.startsWith("data:");
   const srcIsHardPlaceholder = !!src && HARD_PLACEHOLDER.test(src);
   const srcIsLazyHint = !!src && LAZY_HINT_SRC.test(src);
   const isRasterAlt = (u: string | undefined) => !!u && !u.startsWith("data:") && !/\.svg(?:[?#]|$)/i.test(decode(u));
   const hasRasterAlt = isRasterAlt(dataSrc) || srcsetEntries.some((e) => isRasterAlt(e.href));
-  const isLazy = !!dataSrc && (/\blazyload\b/i.test(attr(imgTag, "class") ?? "") || srcIsLazyHint);
+  const isLazy = !!dataSrc && (srcIsEmpty || /\blazyload\b/i.test(attr(imgTag, "class") ?? "") || srcIsLazyHint);
   const usableSrc = srcIsHardPlaceholder && hasRasterAlt ? undefined : src;
   const preferredDirect = isLazy ? dataSrc : usableSrc;
   const otherDirect = isLazy ? usableSrc : dataSrc;
@@ -233,8 +234,11 @@ export function imgSrcCandidates(imgTag: string): string[] {
     return w ? [{ href, kind: "w", value: w }] : [{ href, kind: "direct", value: 0 }];
   };
   const hasWidthSrcset = srcsetEntries.some((e) => e.kind === "w");
+  // Keep at most the top 3 srcset variants alongside direct src/data-src so large srcsets never crowd out direct fallbacks.
+  const topSrcset = rankCandidates(srcsetEntries).slice(0, 3);
+  const topSrcsetEntries = srcsetEntries.filter((e) => topSrcset.includes(e.href));
   const ranked = rankCandidates([
-    ...srcsetEntries,
+    ...topSrcsetEntries,
     ...toDirectEntry(preferredDirect, hasWidthSrcset),
     ...toDirectEntry(otherDirect, false),
   ]);
