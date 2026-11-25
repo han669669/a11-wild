@@ -13,6 +13,7 @@ import { useLoad } from "@/lib/use-load";
 import { dayName, when } from "@/lib/when";
 
 const OWNER_STAGES = ["in_talks", "client", "lost", "parked"] as const;
+const OPT_OUT_CONFIRMATION = "This stops all messages to this brand's contacts and every number or address you messaged for it across all brands.";
 
 /** One brand: the one step that is next first, then its ad and its message. How to reach it and what happened are folded below. */
 export function Prospect() {
@@ -385,7 +386,7 @@ function Reply({ id, done }: { id: string; done: (page: ProspectPage) => void })
   const { write, busy, error } = useWrite(id, done);
   const [text, setText] = useState("");
   const log = async (reply: "more" | "no" | "other") => {
-    if (reply === "no" && !window.confirm("A no is an opt-out: this contact gets no message again, from any brand that shares it. Save it?")) return;
+    if (reply === "no" && !window.confirm(`${OPT_OUT_CONFIRMATION} Save it?`)) return;
     if (await write({ action: "reply", body: { reply, ...(text.trim() ? { text: text.trim() } : {}) } })) setText("");
   };
   return (
@@ -445,7 +446,7 @@ function OptOut({ onYes, busy }: { onYes: () => void; busy: boolean }) {
   }
   return (
     <span className="flex flex-wrap items-center gap-2 text-caption">
-      Final: no message to this contact again, from any brand that shares it.
+      Final: {OPT_OUT_CONFIRMATION}
       <Button type="button" variant="destructive" size="compact" className={TAP} loading={busy} onClick={onYes}>
         Yes, opt out
       </Button>

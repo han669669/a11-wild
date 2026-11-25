@@ -204,6 +204,7 @@ describe("Prospect page", () => {
     open();
     await userEvent.click(await screen.findByRole("button", { name: "Opt this contact out" }));
     expect(asked).toBe(0);
+    expect(screen.getByText(/Final: This stops all messages to this brand's contacts/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Yes, opt out" }));
     expect(await screen.findByText(/This contact opted out/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save the note" })).not.toBeInTheDocument();
@@ -234,6 +235,9 @@ describe("Prospect page", () => {
     await userEvent.type(await screen.findByLabelText(/Log a reply/), "Show me another.");
     await userEvent.click(screen.getByRole("button", { name: "They said no" }));
     expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm).toHaveBeenCalledWith(
+      "This stops all messages to this brand's contacts and every number or address you messaged for it across all brands. Save it?",
+    );
     expect(sent).toEqual([]);
     await userEvent.click(screen.getByRole("button", { name: "They said more" }));
     expect(await screen.findByRole("heading", { name: "A reply waits for your answer" })).toBeInTheDocument();
