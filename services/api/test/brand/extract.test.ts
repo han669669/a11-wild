@@ -101,12 +101,21 @@ describe("brandExtract", () => {
     const keptSavable = await brandExtract({ url: "https://shop.example/" }, oversizedFull);
     expect(keptSavable.logoCandidates).toEqual([{ url: "https://shop.example/cdn/shop/files/logo.png?v=1&width=300", kind: "header" }]);
 
-    const deadSrcsetPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="/logo.png" srcset="/logo-2x.png 2x" alt="Brand"></a></header></body></html>`;
+    const deadSrcsetPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="/logo.png" srcset="/logo-4x.png 4x, /logo-3x.png 3x, /logo-2x.png 2x" alt="Brand"></a></header></body></html>`;
     const deadSrcsetNet = fakeNet({
       "https://brand.example/": html(deadSrcsetPage),
       "https://brand.example/logo.png": { body: "x", headers: { "content-type": "image/png" } },
     });
     const recovered = await brandExtract({ url: "https://brand.example/" }, deadSrcsetNet);
     expect(recovered.logoCandidates).toEqual([{ url: "https://brand.example/logo.png", kind: "header" }]);
+
+    const lazyPngPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img class="lazyload" src="/blank.png" data-src="/wordmark.png" alt="Brand"></a></header></body></html>`;
+    const lazyPngNet = fakeNet({
+      "https://brand.example/": html(lazyPngPage),
+      "https://brand.example/blank.png": { body: "x", headers: { "content-type": "image/png" } },
+      "https://brand.example/wordmark.png": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const lazyPicked = await brandExtract({ url: "https://brand.example/" }, lazyPngNet);
+    expect(lazyPicked.logoCandidates).toEqual([{ url: "https://brand.example/wordmark.png", kind: "header" }]);
   });
 });

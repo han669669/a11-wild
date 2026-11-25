@@ -204,7 +204,8 @@ export async function brandExtract(input: { url: string }, net: Net) {
             return { candidate: { url: full, kind: c.kind }, state: "live" as const };
           }
         }
-        const urls = [c.url, ...(c.fallbacks ?? [])].slice(0, PROBE_ATTEMPTS_MAX);
+        const all = [c.url, ...(c.fallbacks ?? [])];
+        const urls = all.length <= PROBE_ATTEMPTS_MAX ? all : [...all.slice(0, PROBE_ATTEMPTS_MAX - 1), all.at(-1)!];
         let lastState: "live" | "svg" | "dead" | "unknown" = "dead";
         for (const u of urls) {
           const state = await probeLogo(net, u, probeSignal);

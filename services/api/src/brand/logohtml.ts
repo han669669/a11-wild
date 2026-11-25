@@ -205,13 +205,17 @@ export function largestSrcset(srcset: string | undefined): string | undefined {
   return rankedSrcset(srcset)[0];
 }
 
-/** Ordered image addresses from an <img> tag, best-first: srcset, data-srcset, src, data-src (ignoring data: placeholders). */
+const LAZY_SRC = /(^|[^a-z])(blank|placeholder|spacer|transparent|pixel|1x1|loading)([^a-z]|$)/i;
+
+/** Ordered image addresses from an <img> tag, best-first: srcset, data-srcset, then src / data-src (preferring data-src when the tag looks lazy-loaded). */
 export function imgSrcCandidates(imgTag: string): string[] {
+  const src = attr(imgTag, "src");
+  const dataSrc = attr(imgTag, "data-src");
+  const isLazy = !!dataSrc && (/\blazyload\b/i.test(attr(imgTag, "class") ?? "") || (!!src && LAZY_SRC.test(src)));
   const raw = [
     ...rankedSrcset(attr(imgTag, "srcset")),
     ...rankedSrcset(attr(imgTag, "data-srcset")),
-    attr(imgTag, "src"),
-    attr(imgTag, "data-src"),
+    ...(isLazy ? [dataSrc, src] : [src, dataSrc]),
   ];
   const seen = new Set<string>();
   const out: string[] = [];
