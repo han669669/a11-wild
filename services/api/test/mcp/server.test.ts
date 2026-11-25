@@ -105,6 +105,12 @@ describe("MCP server", () => {
     expect(text.indexOf("Step 0. Ask first")).toBeGreaterThan(-1);
     expect(text.indexOf("which brand")).toBeLessThan(text.indexOf("Step 1."));
     expect(text.indexOf("which product")).toBeLessThan(text.indexOf("Step 1."));
+    expect(text).toContain("A draft whose checks reject it (a D item, or two F items) may be made again once now with render_submit redo; check the new draft, then rank.");
+
+    const headline = await send(rpc("prompts/get", { name: "headline_ads" }));
+    expect(headline.body.result.messages[0].content.text).toContain(
+      "A draft whose checks reject it (a D item, or two F items) may be made again once now with render_submit redo; check the new draft, then rank.",
+    );
   });
 
   it("answers an unknown method, an unknown tool and an unknown prompt with JSON-RPC errors", async () => {
