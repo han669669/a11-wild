@@ -43,12 +43,32 @@ export class BatchStore {
     return items.map(stored).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
+  async markLogoFreeIfDone(batchId: string): Promise<boolean> {
+    const batch = await this.get(batchId);
+    if (batch.state !== "done") return false;
+    if (batch.logoFree) return true;
+    const marked: Batch = { ...batch, logoFree: true, updatedAt: this.now().toISOString() };
+    return this.table.put({ pk: PK, sk: marked.id, ...marked }, { ifEquals: { attribute: "state", value: "done" } });
+  }
+
   /** Moves a batch to a state the diagram allows from where it is. A save of the same step again keeps the state. */
   async move(batch: Batch, to: BatchState, tool: string, fields: Partial<Pick<Batch, "spec" | "truthVersion">> = {}): Promise<Batch> {
     if (batch.state !== to) requireMove(batch, to, tool);
     const moved: Batch = { ...batch, ...fields, state: to, updatedAt: this.now().toISOString() };
+    if (to !== "done") delete moved.logoFree;
     await this.table.put({ pk: PK, sk: moved.id, ...moved });
     return moved;
+  }
+
+  async reopenDraftingForLogo(batch: Batch): Promise<Batch> {
+    if (batch.kind !== "v1" || (batch.state !== "checked" && batch.state !== "waiting_pick")) {
+      throw new Refusal("Only a ready v1 board can go back to drafting for its logo.");
+    }
+    const reopened: Batch = { ...batch, state: "drafting", updatedAt: this.now().toISOString() };
+    if (!(await this.table.put({ pk: PK, sk: reopened.id, ...reopened }, { ifEquals: { attribute: "state", value: batch.state } }))) {
+      return this.get(batch.id);
+    }
+    return reopened;
   }
 
   async saveIdeas(batchId: string, ideas: Idea[], by: string): Promise<void> {

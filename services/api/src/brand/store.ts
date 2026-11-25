@@ -16,6 +16,8 @@ export interface Offer {
   kind: "brand" | "product" | "images";
   /** The page the offer was read from. */
   url: string;
+  /** The address that was fetched, before a page-provided base changes link resolution. */
+  pageUrl?: string;
   logos: string[];
   photos: string[];
   productPages: string[];

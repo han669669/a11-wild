@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { PALETTE_ROLES, type ProductPhoto } from "@a11-wild/shared";
+import type { BatchStore } from "../../batch/store.js";
 import { brandExtract, fetchText } from "../../brand/extract.js";
 import { copyFont } from "../../brand/fonts.js";
 import type { BrandStore } from "../../brand/store.js";
@@ -10,6 +11,7 @@ import { defineTool, Refusal, type ToolDefinition } from "../registry.js";
 import { productPictures } from "../../brand/product-pictures.js";
 
 export interface BrandToolDeps {
+  batches: BatchStore;
   brands: BrandStore;
   parallel: ParallelClient;
   pictures: Pictures;
@@ -19,6 +21,7 @@ export interface BrandToolDeps {
 const httpsUrl = z.string().max(2000).describe("An https address on a public host.");
 const id = z.string().min(1).max(64);
 const LOGO_NOT_CANDIDATE = "That logo is not among the candidates of this extract. Choose one of its logoCandidates, or leave logoUrl out.";
+const SAVED_LOGO_NOT_CANDIDATE = "That logo is not among the candidates of this extract. Choose one of its logoCandidates.";
 
 function siteHost(url: string): string {
   return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
@@ -33,7 +36,7 @@ function pictureLinks(text: string): string[] {
   return [...new Set(found)].filter(isPublicHttpsUrl).slice(0, 40);
 }
 
-export function brandTools({ brands, parallel, pictures, net }: BrandToolDeps): ToolDefinition[] {
+export function brandTools({ batches, brands, parallel, pictures, net }: BrandToolDeps): ToolDefinition[] {
   return [
     defineTool({
       name: "font_save",
@@ -76,6 +79,7 @@ export function brandTools({ brands, parallel, pictures, net }: BrandToolDeps): 
         const offer = await brands.offer({
           kind: "brand",
           url: found.url,
+          pageUrl: found.pageUrl,
           logos: found.logoCandidates.map((logo) => logo.url),
           photos: [],
           productPages: found.productPages.map((page) => page.url),
@@ -125,11 +129,19 @@ export function brandTools({ brands, parallel, pictures, net }: BrandToolDeps): 
       handler: async ({ brandId, extractId, logoUrl }, context) => {
         const offer = await brands.offered(extractId);
         if (offer.kind !== "brand") throw new Refusal(`Extract ${extractId} is not a brand extract.`);
+        if (!offer.pageUrl) throw new Refusal("Run brand_extract again on the brand's site.");
         const brand = await brands.brand(brandId);
-        if (siteHost(offer.url) !== siteHost(brand.url)) throw new Refusal("That extract is of another site, not this brand's.");
+        if (siteHost(offer.pageUrl) !== siteHost(brand.url)) throw new Refusal("That extract is of another site, not this brand's.");
         if (brand.logo) throw new Refusal("This brand has its logo. A saved logo is not replaced.");
-        if (!offer.logos.includes(logoUrl)) throw new Refusal(LOGO_NOT_CANDIDATE);
+        if (!offer.logos.includes(logoUrl)) throw new Refusal(SAVED_LOGO_NOT_CANDIDATE);
+        const candidateHost = new URL(logoUrl).hostname.toLowerCase();
+        if (siteHost(logoUrl) !== siteHost(brand.url) && candidateHost !== "cdn.shopify.com") {
+          throw new Refusal("That logo is not on this brand's site.");
+        }
 
+        for (const batch of await batches.list()) {
+          if (batch.brandId === brandId && batch.state === "done") await batches.markLogoFreeIfDone(batch.id);
+        }
         const copied = await copyPicture({ url: logoUrl, folder: `brands/${brandId}`, what: "The logo" }, net, pictures);
         const { createdAt: _createdAt, ...kit } = brand;
         await brands.saveBrand({ ...kit, logo: { key: copied.key, sourceUrl: copied.sourceUrl }, savedBy: context.user.email });

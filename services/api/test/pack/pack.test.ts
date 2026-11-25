@@ -4,6 +4,7 @@ import { loggedPath } from "../../src/app.js";
 import { RULES_VERSION } from "../../src/houserules.js";
 import { hashToken } from "../../src/pack/service.js";
 import { approvedClient, callTool, createStudio, json, sessionCookie, type Studio } from "../helpers/deps.js";
+import { fakeNet } from "../helpers/net.js";
 import { pickedBatch } from "../helpers/picked.js";
 
 const rules = { rulesVersion: RULES_VERSION };
@@ -15,6 +16,8 @@ const text = (headline = "The skin, done right") => ({
 });
 const WHY = ["idea-1", "idea-2", "idea-3"].map((ideaId) => ({ ideaId, why: "Buyers say the skin is what they come back for; the ad says so." }));
 const PLAN = ["Put all three ads in one ad set.", "Run them for 72 hours.", "Stop an ad that is under the account's usual CTR after 72 hours."];
+const LOGO_URL = "https://wongi.example/logo.png";
+const REAL_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=", "base64");
 
 let studio: Studio;
 let batchId: string;
@@ -31,6 +34,7 @@ const publish = (extra: object = {}, as: { sub?: string } = {}) => callTool(stud
 const open = (link: string) => studio.app.request(new URL(link).pathname.replace("/c/", "/api/pack/"));
 
 let batchOf: Awaited<ReturnType<typeof pickedBatch>> | undefined;
+let actualFinals: Studio["services"]["board"]["finals"];
 
 /** A picked batch. A second one in a test is the same brand's next batch. */
 async function setUp(kind: "v1" | "v2" = "v2", create: { test?: true } = {}) {
@@ -48,8 +52,9 @@ async function setUp(kind: "v1" | "v2" = "v2", create: { test?: true } = {}) {
 }
 
 beforeEach(async () => {
-  studio = await createStudio();
+  studio = await createStudio({ net: fakeNet({ [LOGO_URL]: { body: REAL_PNG, headers: { "content-type": "image/png" } } }) });
   await approvedClient(studio);
+  actualFinals = studio.services.board.finals.bind(studio.services.board);
   batchOf = undefined;
   await setUp();
   await approve();
@@ -118,6 +123,93 @@ describe("pack_publish", () => {
     const { ads } = (await publish()).value.version;
     expect(ads[0].adName).toBe("a11_W47_wongi_b02_wild_c1_v1");
     expect(ads[0].words).toBeUndefined();
+  });
+
+  it("keeps completed v1 finals and packs deliverable after a later logo save", async () => {
+    await setUp("v1");
+    await approve();
+    await state("done");
+    const ideas = ["idea-1", "idea-2", "idea-3"];
+    for (const ideaId of ideas) {
+      const finalId = `${ideaId}-final`;
+      const finishId = `${ideaId}-finish`;
+      const at = studio.clock.now.toISOString();
+      await studio.table.put({
+        pk: `BATCH#${batchId}`,
+        sk: `IMAGE#${finalId}`,
+        id: finalId,
+        batchId,
+        kind: "final",
+        key: `batches/${batchId}/${finalId}.png`,
+        ideaId,
+        fromId: `${ideaId}-d1`,
+        createdAt: at,
+      });
+      await studio.table.put({
+        pk: `BATCH#${batchId}`,
+        sk: `IMAGE#${finishId}`,
+        id: finishId,
+        batchId,
+        kind: "finish",
+        key: `batches/${batchId}/${finishId}.png`,
+        ideaId,
+        fromId: finalId,
+        createdAt: at,
+      });
+      await studio.table.put({
+        pk: `BATCH#${batchId}`,
+        sk: `RENDER#render-${ideaId}`,
+        id: `render-${ideaId}`,
+        batchId,
+        ideaId,
+        kind: "final",
+        status: "done",
+        prompt: "A truthful product ad.",
+        fromId: `${ideaId}-d1`,
+        usd: 0,
+        imageId: finalId,
+        createdAt: at,
+        updatedAt: at,
+        fal: {},
+        reservation: {},
+        stageCount: 1,
+      });
+      await studio.services.checks.save(batchId, finalId, []);
+    }
+
+    studio.services.board.finals = actualFinals;
+    const before = await actualFinals(await studio.services.batches.get(batchId));
+    expect(before).toHaveLength(3);
+    expect(before.every((entry) => entry.missing.length === 0 && entry.delivered?.kind === "finish")).toBe(true);
+
+    const brand = await studio.services.brands.brand(batchOf!.brand.id);
+    const offer = await studio.services.brands.offer({
+      kind: "brand",
+      url: brand.url,
+      pageUrl: brand.url,
+      logos: [LOGO_URL],
+      photos: [],
+      productPages: [],
+      colours: [],
+    });
+    const saved = await callTool(studio, "brand_logo_save", { brandId: brand.id, extractId: offer.id, logoUrl: LOGO_URL });
+    expect(saved.ok).toBe(true);
+    expect(await studio.services.batches.get(batchId)).toMatchObject({ state: "done", logoFree: true });
+    const after = await actualFinals(await studio.services.batches.get(batchId));
+    expect(after).toHaveLength(3);
+    expect(after.every((entry) => entry.missing.length === 0 && entry.delivered?.kind === "finish")).toBe(true);
+
+    expect((await publish()).ok).toBe(true);
+    expect((await callTool(studio, "pack_update", { ...rules, batchId })).value.version.version).toBe(2);
+
+    await studio.services.checks.measure(batchId, "idea-1-final", "cap_check", { code: "D11", note: "The pouch is too wide." });
+    const reopened = await studio.services.board.progress(await studio.services.batches.get(batchId));
+    expect(reopened.batch).toMatchObject({ state: "finals" });
+    expect(reopened.batch.logoFree).toBeUndefined();
+    await studio.services.checks.measure(batchId, "idea-1-final", "cap_check", null);
+    expect((await actualFinals(reopened.batch)).find((entry) => entry.ideaId === "idea-1")?.missing).toContain(
+      "logo_set for picture idea-1-final: the brand's real logo on the finished final",
+    );
   });
 });
 

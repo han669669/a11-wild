@@ -3,8 +3,11 @@ import { PACK_CHECK } from "../../src/board/service.js";
 import { RULES_VERSION } from "../../src/houserules.js";
 import { batchAtTruth, idea, judgeIdeas, rankDrafts } from "../helpers/batch.js";
 import { approvedClient, callTool, config, createStudio, json, sessionCookie, type Studio } from "../helpers/deps.js";
+import { fakeNet } from "../helpers/net.js";
 
 const SCENE = "The pouch stands on a wet black rock at dusk, low camera, a wave about to break behind it.";
+const LOGO_URL = "https://wongi.example/logo.png";
+const REAL_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=", "base64");
 const refused = (pattern: RegExp) => ({ ok: false, error: expect.stringMatching(pattern) });
 const rules = { rulesVersion: RULES_VERSION };
 
@@ -21,7 +24,7 @@ async function render(ideaId: string, kind: "draft" | "final", fromId?: string) 
 
 /** A batch with nine finished drafts, none checked yet. */
 async function batchWithDrafts() {
-  studio = await createStudio();
+  studio = await createStudio({ net: fakeNet({ [LOGO_URL]: { body: REAL_PNG, headers: { "content-type": "image/png" } } }) });
   await approvedClient(studio);
   batchId = (await batchAtTruth(studio)).batchId;
   await callTool(studio, "ideas_save", { ...rules, batchId, ideas: [idea(1), idea(2), idea(3)] });
@@ -102,6 +105,51 @@ describe("checks", () => {
     expect(await state()).toBe("drafting");
     const lastCheck = await check(drafts["idea-1"]![0]!);
     expect(lastCheck.value.stillMissing).toEqual(expect.arrayContaining([expect.stringMatching(/logo_set for picture/)]));
+  });
+
+  it("requires logo_set on a drafting batch after brand_logo_save", async () => {
+    const batch = await studio.services.batches.get(batchId);
+    const offer = await studio.services.brands.offer({
+      kind: "brand",
+      url: "https://wongi.example/",
+      pageUrl: "https://wongi.example/",
+      logos: [LOGO_URL],
+      photos: [],
+      productPages: [],
+      colours: [],
+    });
+
+    const saved = await callTool(studio, "brand_logo_save", { brandId: batch.brandId, extractId: offer.id, logoUrl: LOGO_URL });
+    expect(saved.ok).toBe(true);
+    const imageId = drafts["idea-1"]![0]!;
+    const checked = await check(imageId);
+    expect(checked.value.state).toBe("drafting");
+    expect(checked.value.stillMissing).toContain(`logo_set for picture ${imageId}: the brand's real logo on the draft`);
+  });
+
+  it("reopens a ready v1 board when a later logo needs checks", async () => {
+    await checkAll();
+    expect(await state()).toBe("checked");
+    await callTool(studio, "board_show", { batchId });
+    expect(await state()).toBe("waiting_pick");
+
+    const batch = await studio.services.batches.get(batchId);
+    const offer = await studio.services.brands.offer({
+      kind: "brand",
+      url: "https://wongi.example/",
+      pageUrl: "https://wongi.example/",
+      logos: [LOGO_URL],
+      photos: [],
+      productPages: [],
+      colours: [],
+    });
+    await callTool(studio, "brand_logo_save", { brandId: batch.brandId, extractId: offer.id, logoUrl: LOGO_URL });
+
+    const page = await json(await studio.app.request(`/api/batches/${batchId}/board`, { headers: { cookie: await sessionCookie(studio) } }));
+    expect(page.batch.state).toBe("drafting");
+    expect(page.picking).toBe("not_yet");
+    expect(await callTool(studio, "board_show", { batchId })).toEqual(refused(/drafts are not all checked.*logo_set/));
+    expect(await pick("idea-1", drafts["idea-1"]![0]!)).toEqual(refused(/owner picks when the board is ready.*drafting/));
   });
 
   it("refuses checks for a picture that is not a draft or a final, and from a caller that did not read the rules", async () => {

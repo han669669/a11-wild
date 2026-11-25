@@ -8,6 +8,7 @@ import { PNG } from "../helpers/pictures.js";
 const LOGO = "https://wongi.example/img/wongi-logo.png";
 const WWW_LOGO = "https://www.wongi.example/img/wongi-logo.png";
 const OTHER_LOGO = "https://other.example/img/wongi-logo.png";
+const SHOPIFY_LOGO = "https://cdn.shopify.com/s/files/1/1234/files/wongi-logo.png";
 const FONT_URL = "https://wongi.example/fonts/archivo.woff2";
 const PRODUCT_PAGE = "https://wongi.example/products/seaweed-crisps";
 const PACK = "https://cdn.wongi.example/pack.png";
@@ -33,6 +34,11 @@ function net(pages: Parameters<typeof fakeNet>[0] = {}) {
   return { ...base, fetch: pictures.fetch, requested: pictures.requested };
 }
 
+async function studioWithPages(pages: Parameters<typeof fakeNet>[0]) {
+  studio = await createStudio({ net: net(pages), parallel: extractReply({ [PRODUCT_PAGE]: PRODUCT_TEXT }) });
+  await approvedClient(studio);
+}
+
 beforeEach(async () => {
   studio = await createStudio({ net: net(), parallel: extractReply({ [PRODUCT_PAGE]: PRODUCT_TEXT }) });
   await approvedClient(studio);
@@ -46,8 +52,8 @@ async function savedBrand() {
   return saved.value.brand as { id: string };
 }
 
-async function savedBrandWithoutLogo() {
-  const extract = await callTool(studio, "brand_extract", { url: "https://wongi.example/" });
+async function savedBrandWithoutLogo(url = "https://wongi.example/") {
+  const extract = await callTool(studio, "brand_extract", { url });
   const saved = await callTool(studio, "brand_save", {
     extractId: extract.value.extractId,
     name: "WonGi",
@@ -62,6 +68,7 @@ describe("brand tools", () => {
     const extract = await callTool(studio, "brand_extract", { url: "https://wongi.example/" });
     expect(extract.value).toMatchObject({
       untrusted: true,
+      pageUrl: "https://wongi.example/",
       logoCandidates: [{ url: LOGO, kind: "header" }],
       productPages: [{ url: PRODUCT_PAGE }, { url: "https://wongi.example/collections/all" }],
     });
@@ -112,6 +119,58 @@ describe("brand tools", () => {
     expect(studio.pictures.files.get(after.logo!.key)?.body).toEqual(new Uint8Array(REAL_PNG));
   });
 
+  it("refuses a candidate on another host even when a page base points there", async () => {
+    await studioWithPages({
+      "https://brand.example/": { body: "<html><head><title>WonGi</title></head><body></body></html>", headers: { "content-type": "text/html" } },
+      "https://brand.example/logo-page": {
+        body: `<html><head><base href="https://other.example/"><title>WonGi</title></head><body><header><img src="/img/wongi-logo.png" alt="WonGi logo"></header></body></html>`,
+        headers: { "content-type": "text/html" },
+      },
+    });
+    const brand = await savedBrandWithoutLogo("https://brand.example/");
+    const extract = await callTool(studio, "brand_extract", { url: "https://brand.example/logo-page" });
+    expect(extract.value).toMatchObject({
+      url: "https://other.example/",
+      pageUrl: "https://brand.example/logo-page",
+      logoCandidates: [{ url: OTHER_LOGO, kind: "header" }],
+    });
+
+    const saved = await callTool(studio, "brand_logo_save", { brandId: brand.id, extractId: extract.value.extractId, logoUrl: OTHER_LOGO });
+    expect(saved).toEqual({ ok: false, error: "That logo is not on this brand's site." });
+    expect(studio.pictures.files.size).toBe(0);
+  });
+
+  it("accepts a logo candidate on the Shopify CDN", async () => {
+    await studioWithPages({
+      "https://wongi.example/shopify": {
+        body: `<html><head><title>WonGi</title></head><body><header><img src="${SHOPIFY_LOGO}" alt="WonGi logo"></header></body></html>`,
+        headers: { "content-type": "text/html" },
+      },
+      [SHOPIFY_LOGO]: { body: REAL_PNG, headers: { "content-type": "image/png" } },
+    });
+    const brand = await savedBrandWithoutLogo();
+    const extract = await callTool(studio, "brand_extract", { url: "https://wongi.example/shopify" });
+    expect(extract.value.logoCandidates).toEqual([{ url: SHOPIFY_LOGO, kind: "header" }]);
+
+    const saved = await callTool(studio, "brand_logo_save", { brandId: brand.id, extractId: extract.value.extractId, logoUrl: SHOPIFY_LOGO });
+    expect(saved.value.logo.sourceUrl).toBe(SHOPIFY_LOGO);
+  });
+
+  it("refuses an older brand offer without the fetched page address", async () => {
+    const brand = await savedBrandWithoutLogo();
+    const offer = await studio.services.brands.offer({
+      kind: "brand",
+      url: "https://wongi.example/",
+      logos: [LOGO],
+      photos: [],
+      productPages: [],
+      colours: [],
+    });
+
+    const saved = await callTool(studio, "brand_logo_save", { brandId: brand.id, extractId: offer.id, logoUrl: LOGO });
+    expect(saved).toEqual({ ok: false, error: "Run brand_extract again on the brand's site." });
+  });
+
   it("refuses a logo candidate from another site's brand extract", async () => {
     const brand = await savedBrandWithoutLogo();
     const extract = await callTool(studio, "brand_extract", { url: "https://other.example/" });
@@ -133,7 +192,7 @@ describe("brand tools", () => {
     });
     expect(saved).toEqual({
       ok: false,
-      error: "That logo is not among the candidates of this extract. Choose one of its logoCandidates, or leave logoUrl out.",
+      error: "That logo is not among the candidates of this extract. Choose one of its logoCandidates.",
     });
     expect(studio.pictures.files.size).toBe(0);
   });
@@ -162,7 +221,10 @@ describe("brand tools", () => {
       logoUrl: "https://evil.example/logo.png",
       palette,
     });
-    expect(saved).toEqual({ ok: false, error: expect.stringMatching(/not among the candidates/) });
+    expect(saved).toEqual({
+      ok: false,
+      error: "That logo is not among the candidates of this extract. Choose one of its logoCandidates, or leave logoUrl out.",
+    });
     expect(studio.pictures.files.size).toBe(0);
     expect((await callTool(studio, "brand_list")).value).toEqual({ brands: [] });
   });
