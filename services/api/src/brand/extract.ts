@@ -225,17 +225,17 @@ export async function brandExtract(input: { url: string }, net: Net) {
         const all = [c.url, ...(c.fallbacks ?? [])];
         const likelySavable = all.filter((u) => !UNSAVABLE_EXT.test(u));
         const urls = likelySavable.length ? [...likelySavable, ...all.filter((u) => UNSAVABLE_EXT.test(u))] : all;
-        const originalSet = new Set(urls);
         const plan: { url: string; upgrade: boolean }[] = [];
-        const seenUrl = new Set<string>();
+        const seenUpgrade = new Set<string>();
+        const seenOriginal = new Set<string>();
         for (const u of urls) {
           const full = fullSizeShopifyLogo(u);
-          if (full && !seenUrl.has(full)) {
-            seenUrl.add(full);
-            plan.push({ url: full, upgrade: !originalSet.has(full) });
+          if (full && !seenUpgrade.has(full)) {
+            seenUpgrade.add(full);
+            plan.push({ url: full, upgrade: true });
           }
-          if (!seenUrl.has(u)) {
-            seenUrl.add(u);
+          if (!seenOriginal.has(u)) {
+            seenOriginal.add(u);
             plan.push({ url: u, upgrade: false });
           }
         }

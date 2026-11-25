@@ -224,5 +224,31 @@ describe("brandExtract", () => {
     });
     const avifCrowdPicked = await brandExtract({ url: "https://brand.example/" }, avifCrowdNet);
     expect(avifCrowdPicked.logoCandidates).toEqual([{ url: "https://brand.example/logo.png", kind: "header" }]);
+
+    // Concurrent probes preserve rank order when a lower-ranked variant answers faster, and abort pending lower-ranked probes once a live hit wins.
+    const delayedPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="/small.png" srcset="/big.png 1200w, /mid.png 600w" alt="Brand"></a></header></body></html>`;
+    let pendingSignal: AbortSignal | undefined;
+    const delayedNet: Net = {
+      resolve: async () => ["93.184.216.34"],
+      fetch: (async (u: string | URL | Request, init?: RequestInit) => {
+        const key = String(u);
+        if (key === "https://brand.example/") return new Response(delayedPage, { status: 200, headers: { "content-type": "text/html" } });
+        if (key === "https://brand.example/mid.png") return new Response("x", { status: 200, headers: { "content-type": "image/png" } });
+        if (key === "https://brand.example/big.png") {
+          await new Promise((r) => setTimeout(r, 25));
+          return new Response("x", { status: 200, headers: { "content-type": "image/png" } });
+        }
+        if (key === "https://brand.example/small.png") {
+          pendingSignal = init?.signal ?? undefined;
+          return await new Promise<Response>((_, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+          });
+        }
+        return new Response("no", { status: 404 });
+      }) as typeof fetch,
+    };
+    const delayedPicked = await brandExtract({ url: "https://brand.example/" }, delayedNet);
+    expect(delayedPicked.logoCandidates).toEqual([{ url: "https://brand.example/big.png", kind: "header" }]);
+    expect(pendingSignal?.aborted).toBe(true);
   });
 });
