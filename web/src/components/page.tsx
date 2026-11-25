@@ -102,8 +102,8 @@ export function Step({ who, left, children }: { who: keyof typeof STEP_LABEL; le
  * A part of a page that is kept out of the way: its name and its size are shown, the rest opens at a click.
  * `note` is a few words at the end of the row. With `keep`, what was opened stays as it was when the fold is closed again.
  */
-export function Fold({ title, count, note, keep, children }: { title: string; count?: number; note?: ReactNode; keep?: boolean; children: ReactNode }) {
-  const [open, setOpen] = useState(false);
+export function Fold({ title, count, note, keep, open: initialOpen, children }: { title: string; count?: number; note?: ReactNode; keep?: boolean; open?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(initialOpen ?? false);
   const [opened, setOpened] = useState(false);
   const id = useId();
   return (

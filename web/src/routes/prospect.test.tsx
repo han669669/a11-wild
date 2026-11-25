@@ -26,11 +26,23 @@ describe("Prospect page", () => {
   it("shows the contact: a checked value as a link, any other as text", async () => {
     stubApi({ [GET]: () => ({ body: prospectPage({ contact: { whatsapp: [{ number: "6580000001", href: "https://wa.me/6580000001" }], instagram: { name: "javascript:alert(1)" }, decisionMaker: "A Person", dmTitle: "Founder" } }) }) });
     open();
-    expect(screen.queryByRole("link", { name: "+6580000001" })).not.toBeInTheDocument();
-    await unfold("How to reach it");
     expect(await screen.findByRole("link", { name: "+6580000001" })).toHaveAttribute("href", "https://wa.me/6580000001");
     expect(screen.getByText("javascript:alert(1)").closest("a")).toBeNull();
     expect(screen.getByText("A Person, Founder")).toBeInTheDocument();
+  });
+
+  it("starts contact and owner controls expanded, and lets each fold collapse", async () => {
+    stubApi({ [GET]: () => ({ body: prospectPage() }) });
+    open();
+    const contact = await screen.findByRole("button", { name: "How to reach it" });
+    const owner = screen.getByRole("button", { name: "Note, stage and opt-out" });
+    expect(contact).toHaveAttribute("aria-expanded", "true");
+    expect(owner).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Upload your own picture" })).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(contact);
+    expect(contact).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(owner);
+    expect(owner).toHaveAttribute("aria-expanded", "false");
   });
 
   it("shows the message to send now, and the timeline newest first", async () => {
@@ -52,7 +64,7 @@ describe("Prospect page", () => {
     expect(screen.getAllByRole("listitem").map((item) => item.textContent).filter((text) => /Note|Yes to|attached/.test(text ?? "")).map((text) => text!.split(/You|The agent/)[0])).toEqual(["Note: Met at a fair.", "Yes to ad 1.", "Ad 1 attached: The cup on its own colour."]);
   });
 
-  it("shows the check and flags, disables sending until the owner keeps or switches", async () => {
+  it("shows the check and flags, disables sending until the owner confirms it", async () => {
     let routeBody: unknown;
     const current = { channel: "email" as const, to: "owner@example.com", direct: true, label: "DM email (valid) owner@example.com", person: "Amelia Lee", title: "Founder" };
     const flags = [
@@ -148,7 +160,6 @@ describe("Prospect page", () => {
       "POST /api/outreach/prospects/00001/optout": () => ((asked += 1), { body: prospectPage({ prospect: prospectRow({ stage: "opted_out" }) }) }),
     });
     open();
-    await unfold("Note, stage and opt-out");
     await userEvent.click(await screen.findByRole("button", { name: "Opt this contact out" }));
     expect(asked).toBe(0);
     await userEvent.click(screen.getByRole("button", { name: "Yes, opt out" }));
@@ -160,7 +171,6 @@ describe("Prospect page", () => {
   it("offers take back on the day of the mark only", async () => {
     stubApi({ [GET]: () => ({ body: prospectPage({ prospect: prospectRow({ stage: "contacted" }), sends: [sendOf("2026-11-23")] }) }) });
     const { unmount } = open();
-    await unfold("Note, stage and opt-out");
     expect(await screen.findByRole("button", { name: 'Take back "First message sent"' })).toBeInTheDocument();
     unmount();
     stubApi({ [GET]: () => ({ body: prospectPage({ prospect: prospectRow({ stage: "contacted", next: { step: 1, due: "2026-11-24" } }), sends: [sendOf("2026-11-20")] }) }) });
@@ -168,7 +178,6 @@ describe("Prospect page", () => {
     // The reply is logged without opening anything: after a message it is the next thing that can happen.
     expect(await screen.findByRole("button", { name: "They said more" })).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Nothing is asked of youFollow-up 1 is due Tue, 24 Nov 2026. Log a reply below when one comes.");
-    await unfold("Note, stage and opt-out");
     expect(screen.queryByRole("button", { name: /Take back/ })).not.toBeInTheDocument();
   });
 
@@ -258,10 +267,8 @@ describe("the one next step on the prospect page", () => {
     open();
     await userEvent.click(await screen.findByRole("button", { name: "I answered" }));
     expect(await screen.findByText("The studio could not save that.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Note, stage and opt-out" })).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(screen.getByRole("button", { name: "Send to this brand too" }));
     await waitFor(() => expect(screen.getAllByText("The studio could not save that.")).toHaveLength(1));
-    await userEvent.click(screen.getByRole("button", { name: "How to reach it" }));
     await userEvent.click(screen.getByRole("button", { name: "Use Email" }));
     await waitFor(() => expect(within(screen.getByRole("button", { name: "How to reach it" }).closest("section")!).getByText("The studio could not save that.")).toBeInTheDocument());
   });

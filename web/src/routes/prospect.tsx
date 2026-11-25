@@ -173,7 +173,7 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
       ) : null}
 
       <div className="mt-10">
-        <Fold title="How to reach it">
+        <Fold title="How to reach it" open>
           <dl className="grid gap-x-6 gap-y-2 text-body sm:grid-cols-[10rem_1fr]">
             {contact.whatsapp.map((entry) => (
               <Line key={entry.number} name="WhatsApp" text={`+${entry.number}`} href={entry.href} />
@@ -200,7 +200,7 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
         </Fold>
 
         {out ? null : (
-          <Fold title="Note, stage and opt-out">
+          <Fold title="Note, stage and opt-out" open>
             <div className="grid gap-6 px-2 py-1">
             <Note id={prospect.id} done={done} />
             <div className="grid gap-2">
