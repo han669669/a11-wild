@@ -294,13 +294,15 @@ def _box_mask(mask_path, box_str, out_path):
             raise Refused("box must lie inside the pack photo.")
         grey = m.convert("L")
         px0, py0, px1, py1 = max(0, x0 - pad), max(0, y0 - pad), min(w, x1 + pad), min(h, y1 + pad)
-        arr = np.asarray(grey.crop((px0, py0, px1, py1))) > 128
+        full = np.asarray(grey) > 128
+        arr = full[py0:py1, px0:px1]
         ix0, iy0, ix1, iy1 = x0 - px0, y0 - py0, x1 - px0, y1 - py0
-        # Clip any padded side whose outer border is still opaque foreground across the box span (uncut studio fill) back to the exact box edge.
-        top = iy0 if py0 < y0 and arr[0, ix0:ix1].mean() >= 0.9 else 0
-        bot = iy1 if py1 > y1 and arr[-1, ix0:ix1].mean() >= 0.9 else arr.shape[0]
-        left = ix0 if px0 < x0 and arr[iy0:iy1, 0].mean() >= 0.9 else 0
-        right = ix1 if px1 > x1 and arr[iy0:iy1, -1].mean() >= 0.9 else arr.shape[1]
+        # Clip a padded side back to the exact box only when opaque foreground continues *past* the PAD margin
+        # (uncut studio fill), never when a real cutout pack edge simply ends inside PAD.
+        top = iy0 if py0 > 0 and full[py0 - 1, x0:x1].mean() >= 0.9 else 0
+        bot = iy1 if py1 < h and full[py1, x0:x1].mean() >= 0.9 else arr.shape[0]
+        left = ix0 if px0 > 0 and full[y0:y1, px0 - 1].mean() >= 0.9 else 0
+        right = ix1 if px1 < w and full[y0:y1, px1].mean() >= 0.9 else arr.shape[1]
         arr = arr[top:bot, left:right]
         ix0, iy0, ix1, iy1 = ix0 - left, iy0 - top, ix1 - left, iy1 - top
         # Keep only foreground regions that overlap the inner box, so detached props in the PAD margin are excluded.

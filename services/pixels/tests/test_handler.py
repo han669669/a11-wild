@@ -150,13 +150,13 @@ class Handler(unittest.TestCase):
         top_edge = self.job("pack_check", packKey="products/p/square.png", box=[150, 20, 250, 320], renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
         self.assertTrue(top_edge["ok"] and top_edge["passed"], top_edge)
         self.assertIn("packshot H/W 2.990", top_edge["line"])
-        # 3. Cutout pack extending 2px into PAD is retained while a detached prop inside PAD is excluded.
+        # 3. Cutout pack extending 4px into PAD is retained (even when its straight edge fills PAD's outer column) while a detached prop inside PAD is excluded.
         rgba = Image.new("RGBA", (400, 400), (0, 0, 0, 0))
         rgba.paste(Image.new("RGBA", (100, 300), (40, 80, 200, 255)), (150, 50))
         rgba.paste(Image.new("RGBA", (20, 20), (200, 80, 40, 255)), (251, 180))  # detached prop 1px right of pack (inside PAD)
         self.store.add("products/p/with_prop.png", rgba)
-        # Box sits 2px inside left edge (x0=152) and right at pack's right edge (x1=250): left 2px pack edge kept, detached prop excluded -> 100x300 (H/W 3.000).
-        prop_boxed = self.job("pack_check", packKey="products/p/with_prop.png", box=[152, 50, 250, 350], renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
+        # Box sits 4px inside left edge (x0=154) and right at pack's right edge (x1=250): left 4px pack edge kept, detached prop excluded -> 100x300 (H/W 3.000).
+        prop_boxed = self.job("pack_check", packKey="products/p/with_prop.png", box=[154, 50, 250, 350], renderKey="batches/b1/drafts/tall.png", at=[512, 900], bg="E83C28")
         self.assertTrue(prop_boxed["ok"] and prop_boxed["passed"], prop_boxed)
         self.assertIn("packshot H/W 3.000", prop_boxed["line"])
         # 4. Out-of-bounds box is refused.
