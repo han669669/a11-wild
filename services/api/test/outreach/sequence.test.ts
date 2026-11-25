@@ -443,6 +443,36 @@ describe("taking a mark back", () => {
 });
 
 describe("a reply and the owner's choices", () => {
+  it("registers the latest sent contact without blocking an earlier recipient", async () => {
+    await ready("00001");
+    const first = await sequence.send("00001", { step: 0, title: 0 });
+    expect(first.send).toMatchObject({ channel: "whatsapp", to: "6580000001" });
+    at("2026-11-26T10:00:00");
+    await loadRows(
+      store,
+      [
+        row(1, { bestRoute: "Email (valid) replacement@example.com", whatsapp: "", email: "" }),
+        row(2, { bestRoute: "Email (valid) replacement@example.com", whatsapp: "", email: "" }),
+        row(3, { whatsapp: "+65 8000 0001" }),
+      ],
+      now,
+    );
+    await ready("00002");
+    await ready("00003");
+
+    const followUp = await sequence.send("00001", { step: 1, title: 0, channel: "email", to: "replacement@example.com" });
+    expect(followUp.send).toMatchObject({ channel: "email", to: "replacement@example.com" });
+
+    await sequence.optOut("00001");
+
+    expect(await store.optOuts()).toContain("E#replacement@example.com");
+    expect(await store.optOuts()).not.toContain("W#6580000001");
+    await expect(sequence.send("00002", { step: 0, title: 0 })).rejects.toThrow(/opted out/);
+    await expect(sequence.send("00003", { step: 0, title: 0 })).resolves.toMatchObject({
+      send: { channel: "whatsapp", to: "6580000001" },
+    });
+  });
+
   it("registers a sent contact that the workbook later dropped when the brand opts out", async () => {
     await ready("00001");
     const first = await sequence.send("00001", { step: 0, title: 0 });

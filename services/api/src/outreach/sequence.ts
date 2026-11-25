@@ -168,9 +168,10 @@ export class OutreachSequence {
   async optOut(id: string): Promise<void> {
     const { file } = await this.file(id);
     const { profile } = file;
+    const latestSend = file.sends.at(-1);
     // The contact's own register is written first: if the second write fails, every brand with the contact is off the lists already, and a second try finishes it.
     // A test prospect's opt-out stays on the test prospect, so a test can neither block nor free a real contact.
-    if (!profile.test) await this.store.addOptOut(profile, file.sends);
+    if (!profile.test) await this.store.addOptOut(profile, latestSend ? [latestSend] : []);
     await this.store.addEvent(id, { type: "optout" }, "owner");
   }
 
