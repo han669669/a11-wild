@@ -36,14 +36,31 @@ describe("Prospects page", () => {
     await waitFor(() => expect(calls).toContain("GET /api/outreach/prospects?stage=lost&sector=Beauty"));
   });
 
+  it("filters tired ads and shows the list flags in plain words", async () => {
+    const marked = prospectRow({ staleDays: 42, flags: { duplicate: true, blocked: true, check: true } });
+    const fresh = prospectRow({ id: "00002", n: 2, brand: "Fresh Bakery", staleDays: 5 });
+    const calls = stubApi({
+      "GET /api/outreach/prospects": () => ({ body: page([marked, fresh]) }),
+      "GET /api/outreach/prospects?tired=true": () => ({ body: page([marked]) }),
+    });
+    renderSignedIn(<Prospects />);
+    await userEvent.click(await screen.findByLabelText("Tired ads (30+ days)"));
+    await waitFor(() => expect(calls).toContain("GET /api/outreach/prospects?tired=true"));
+    expect(screen.queryByRole("link", { name: "Fresh Bakery" })).not.toBeInTheDocument();
+    expect(screen.getByText("Possible duplicate")).toBeInTheDocument();
+    expect(screen.getByText("Do not send")).toBeInTheDocument();
+    expect(screen.getByText("Check how to reach it")).toBeInTheDocument();
+    expect(screen.getByText("Tired ads")).toBeInTheDocument();
+  });
+
   it("makes a test prospect with the contact he gives", async () => {
     let sent: unknown;
     stubApi({ "GET /api/outreach/prospects": () => ({ body: page() }), "POST /api/outreach/test-prospect": (body) => ((sent = body), { body: { id: "T1" } }) });
     renderSignedIn(<Prospects />);
     await userEvent.click(await screen.findByRole("button", { name: "Try the pages with a test prospect" }));
-    await userEvent.type(await screen.findByLabelText(/Or your own address/), "me@test.example");
+    await userEvent.type(await screen.findByLabelText(/Or your own address/), "me@example.com");
     await userEvent.click(screen.getByRole("button", { name: "Make a test prospect" }));
-    await waitFor(() => expect(sent).toEqual({ email: "me@test.example" }));
+    await waitFor(() => expect(sent).toEqual({ email: "me@example.com" }));
   });
 
   it("lists the brands that wait for him first, and draws a long list fifty at a time", async () => {

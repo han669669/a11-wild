@@ -2,7 +2,7 @@ import type { OutreachChannel, OutreachEvent, OutreachSend, OutreachStep, Outrea
 import { Refusal } from "../mcp/registry.js";
 import { dueDay, singaporeDay } from "./days.js";
 import { checkTemplate, fill } from "./messages.js";
-import { channelOf, newestAd, optedOut, stageOf, verdictOf } from "./stage.js";
+import { newestAd, optedOut, routeHeldUnresolved, sendTarget, stageOf, targetForChannel, verdictOf } from "./stage.js";
 import { contactKeys, type OutreachStore } from "./store.js";
 
 /** The owner's sequence: follow-up 1 three days after the first message, follow-up 2 four days after follow-up 1. */
@@ -31,7 +31,7 @@ export function sameContact(files: ProspectFile[]): Map<string, ProspectFile> {
   const first = new Map<string, ProspectFile>();
   const shared = new Map<string, ProspectFile>();
   for (const file of files) {
-    if (file.profile.test) continue;
+    if (file.profile.test || file.profile.mergedInto) continue;
     const keys = contactKeys(file.profile);
     const earlier = keys.map((key) => first.get(key)).find((found) => found !== undefined);
     if (earlier) shared.set(file.profile.id, earlier);
@@ -73,7 +73,10 @@ export class OutreachSequence {
   private async file(id: string): Promise<{ file: ProspectFile; files: ProspectFile[]; optOuts: Set<string> }> {
     const [files, optOuts] = await Promise.all([this.store.all(), this.store.optOuts()]);
     const file = files.find((entry) => entry.profile.id === id);
-    if (!file) throw new Refusal(`There is no prospect ${id}.`);
+    if (!file) {
+      await this.store.assertWritable(id);
+      throw new Refusal(`There is no prospect ${id}.`);
+    }
     return { file, files, optOuts };
   }
 
@@ -84,6 +87,7 @@ export class OutreachSequence {
     const before = file.sends.find((send) => send.step === step);
     if (before) return { send: before, already: true };
     if (optedOut(file, optOuts)) throw new Refusal("This contact opted out. No message to it is recorded, and none should be sent.");
+    if (step === 0 && routeHeldUnresolved(file)) throw new Refusal("A newer contact was found for this brand. Choose keep or switch first.");
     const day = singaporeDay(this.now());
     const stage = stageOf(file, optOuts);
     if (step === 0) {
@@ -98,15 +102,16 @@ export class OutreachSequence {
     }
     const templates = await this.templates();
     if (!templates) throw new Refusal("The message text is not loaded yet.");
-    const channel = channelOf(file);
-    if (!channel) throw new Refusal("This brand has no WhatsApp number and no verified address.");
+    const target = sendTarget(file);
+    if (!target) throw new Refusal("This brand has no checked number or address.");
+    const { channel } = target;
     const counted = step === 0 && !file.profile.test;
     // The place in the day's count is taken first, so two marks at once cannot pass the day's number.
     if (counted) {
       const daily = await this.daily();
       if (!(await this.store.takePlace(day, daily))) throw new Refusal(`Today's ${daily} first messages are sent. More can go tomorrow, or raise the daily number.`);
     }
-    const send: OutreachSend = { step, day, channel, ...fill(templates.steps[step], file.profile.brand, input.title), at: this.now().toISOString() };
+    const send: OutreachSend = { step, day, channel, to: target.to, ...fill(templates.steps[step], file.profile.brand, input.title), at: this.now().toISOString() };
     let put = false;
     try {
       put = await this.store.putSend(id, send);
@@ -185,9 +190,19 @@ export class OutreachSequence {
   }
 
   async setChannel(id: string, channel: OutreachChannel): Promise<OutreachEvent> {
-    const profile = await this.store.get(id);
-    if (channel === "whatsapp" ? profile.whatsapp.length === 0 : !profile.email) throw new Refusal(channel === "whatsapp" ? "This brand has no WhatsApp number." : "This brand has no verified address.");
+    await this.store.get(id);
+    const file = (await this.store.all()).find((entry) => entry.profile.id === id);
+    if (!file || !targetForChannel(file, channel)) {
+      throw new Refusal(channel === "whatsapp" ? "This brand has no WhatsApp number." : "This brand has no verified address.");
+    }
     return this.store.addEvent(id, { type: "channel", channel }, "owner");
+  }
+
+  async setRoute(id: string, choice: "kept" | "new"): Promise<OutreachEvent> {
+    const [profile, files] = await Promise.all([this.store.get(id), this.store.all()]);
+    const file = files.find((entry) => entry.profile.id === id);
+    if (!profile.routeHeld || !file || !routeHeldUnresolved(file)) throw new Refusal("There is no newer contact waiting for your choice.");
+    return this.store.addEvent(id, { type: "route", choice }, "owner");
   }
 
   /** The owner chooses to send to a brand that shares its contact with an earlier one. */

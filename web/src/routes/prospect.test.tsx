@@ -52,6 +52,40 @@ describe("Prospect page", () => {
     expect(screen.getAllByRole("listitem").map((item) => item.textContent).filter((text) => /Note|Yes to|attached/.test(text ?? "")).map((text) => text!.split(/You|The agent/)[0])).toEqual(["Note: Met at a fair.", "Yes to ad 1.", "Ad 1 attached: The cup on its own colour."]);
   });
 
+  it("shows the check and flags, disables sending until the owner keeps or switches", async () => {
+    let routeBody: unknown;
+    const held = { channel: "whatsapp" as const, to: "6580000001", direct: false, label: "WhatsApp +65 8000 0001" };
+    const found = { channel: "email" as const, to: "owner@example.com", direct: true, label: "DM email (valid) owner@example.com" };
+    const flags = [
+      { kind: "duplicate" as const, text: "DUP-CHECK: possibly listed twice" },
+      { kind: "blocked" as const, text: "AUDIT-FLAG: owner@example.com do not send" },
+    ];
+    const calls = stubApi({
+      [GET]: () => ({ body: prospectPage({
+        prospect: prospectRow({ flags: { duplicate: true, blocked: true, check: true } }),
+        contact: { whatsapp: [{ number: "6580000001" }], sendTo: held },
+        flags,
+        check: { kept: held, found },
+        message: { step: 0, messages: messages() },
+      }) }),
+      "POST /api/outreach/prospects/00001/route": (body) => ((routeBody = body), { body: prospectPage({
+        prospect: prospectRow({ flags: { duplicate: true, blocked: true, check: false } }),
+        contact: { whatsapp: [{ number: "6580000001" }], sendTo: found },
+        flags,
+        message: { step: 0, messages: messages() },
+      }) }),
+    });
+    open();
+    expect(await screen.findByText("Might be the same business as another brand. Look before you send.")).toBeInTheDocument();
+    expect(screen.getByText("AUDIT-FLAG: owner@example.com do not send")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mark as sent" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Keep" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Keep" }));
+    await waitFor(() => expect(routeBody).toEqual({ choice: "kept" }));
+    expect(calls).toContain("POST /api/outreach/prospects/00001/route");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Mark as sent" })).toBeEnabled());
+  });
+
   it("uploads the owner's own picture from his computer, and shows it as his ad with his yes", async () => {
     const own = adView({ from: "owner", batchId: "owner", verdict: "yes", why: "Your own picture, uploaded from your computer." });
     const calls = stubApi({
@@ -426,4 +460,3 @@ describe("the owner's pick on the prospect page", () => {
     expect(await screen.findByRole("heading", { name: /Pick the ad to send/ })).toBeInTheDocument();
   });
 });
-

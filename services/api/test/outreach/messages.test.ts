@@ -24,17 +24,17 @@ describe("a message", () => {
   });
 
   it("makes a mail link with subject and text, and none from an address that could add a field", () => {
-    const link = mailLink("hello@brand.example", "Kopi & Co #1", "Line one\nLine two")!;
-    expect(link).toBe("mailto:hello@brand.example?subject=Kopi%20%26%20Co%20%231&body=Line%20one%0ALine%20two");
-    expect(mailLink("hello@brand.example?bcc=x@y.example", "t", "x")).toBeUndefined();
-    expect(mailLink("a@b.example,c@d.example", "t", "x")).toBeUndefined();
+    const link = mailLink("brand@example.com", "Kopi & Co #1", "Line one\nLine two")!;
+    expect(link).toBe("mailto:brand@example.com?subject=Kopi%20%26%20Co%20%231&body=Line%20one%0ALine%20two");
+    expect(mailLink("brand@example.com?bcc=x@example.com", "t", "x")).toBeUndefined();
+    expect(mailLink("a@example.com,b@example.com", "t", "x")).toBeUndefined();
   });
 
   it("makes a mail link for every address the list accepts, with the part before the @ encoded", () => {
     for (const local of ["sales&support", "a?subject=x", "50%off", "tag#1", "first.last+ads"]) {
-      const accepted = address(`${local}@brand.example`)!;
+      const accepted = address(`${local}@example.com`)!;
       const link = mailLink(accepted, "Title", "Text")!;
-      expect(link, local).toBe(`mailto:${encodeURIComponent(local)}@brand.example?subject=Title&body=Text`);
+      expect(link, local).toBe(`mailto:${encodeURIComponent(local)}@example.com?subject=Title&body=Text`);
       expect([...new URL(link).searchParams.keys()], local).toEqual(["subject", "body"]);
     }
   });
@@ -43,7 +43,7 @@ describe("a message", () => {
     const [first, second] = messagesFor(template, profile(1), "whatsapp");
     expect(first.href).toMatch(/^https:\/\/wa\.me\/6580000001\?text=New%20ad/);
     expect(second.title).toBe("Brand 1, I made this for you");
-    expect(messagesFor(template, profile(1), "email")[0].href).toMatch(/^mailto:hello@brand1\.example\?subject=New%20ad/);
+    expect(messagesFor(template, profile(1), "email")[0].href).toMatch(/^mailto:brand1@example\.com\?subject=New%20ad/);
     expect(messagesFor(template, profile(1, { whatsapp: [] }), "whatsapp")[0].href).toBeUndefined();
   });
 

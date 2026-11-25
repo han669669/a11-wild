@@ -72,7 +72,10 @@ export class OutreachPicks {
   private async file(prospectId: string): Promise<{ file: ProspectFile; optOuts: ReadonlySet<string> }> {
     const [files, optOuts] = await Promise.all([this.deps.store.all(), this.deps.store.optOuts()]);
     const file = files.find((entry) => entry.profile.id === prospectId);
-    if (!file) throw new Refusal(`There is no prospect ${prospectId}.`);
+    if (!file) {
+      await this.deps.store.assertWritable(prospectId);
+      throw new Refusal(`There is no prospect ${prospectId}.`);
+    }
     return { file, optOuts };
   }
 

@@ -1,4 +1,4 @@
-import { OUTREACH_STAGES, type Batch, type OutreachAd, type OutreachStage, type OutreachTier, type ProspectBrief, type ProspectContacts, type ProspectFile } from "@a11-wild/shared";
+import { OUTREACH_STAGES, type Batch, type OutreachAd, type OutreachStage, type OutreachTier, type ProspectBrief, type ProspectContacts, type ProspectFile, type ProspectRoute } from "@a11-wild/shared";
 import type { BatchStore } from "../batch/store.js";
 import type { IdeaFinal } from "../board/service.js";
 import { Refusal } from "../mcp/registry.js";
@@ -6,7 +6,7 @@ import { noteText } from "./candidates.js";
 import type { SpendLedger } from "../spend/ledger.js";
 import { chosen, sameContact } from "./sequence.js";
 import { adWaits, candidatesWait, kindOf, optedOut, owedNow, stageOf, standingAd, TAKES_NO_AD, wantsAd } from "./stage.js";
-import type { OutreachStore } from "./store.js";
+import { contactKeys, type OutreachStore } from "./store.js";
 
 /** The owner's campaign: the first 50 product brands of his two top tiers, in list order. */
 export const CAMPAIGN = { brands: 50, tiers: ["20+", "5-19"] as readonly OutreachTier[] } as const;
@@ -52,7 +52,8 @@ function briefOf(file: ProspectFile): ProspectBrief {
   return { id, n, brand, sector, liveAds, tier, ...(newestAd ? { newestAd } : {}), ...(instagram ? { instagram } : {}) };
 }
 
-const inCampaign = (file: ProspectFile): boolean => !file.profile.test && CAMPAIGN.tiers.includes(file.profile.tier);
+export const inCampaign = (file: ProspectFile): boolean =>
+  !file.profile.test && (CAMPAIGN.tiers.includes(file.profile.tier) || file.ads.length > 0 || file.events.some((event) => event.type === "candidates"));
 
 /** The agent's side of the outreach: which brand needs an ad, where a finished ad goes, and the contacts of the list. */
 export class OutreachDesk {
@@ -114,7 +115,10 @@ export class OutreachDesk {
   private async file(id: string) {
     const read = await this.read();
     const file = read.files.find((entry) => entry.profile.id === id);
-    if (!file) throw new Refusal(`There is no prospect ${id}. outreach_next gives the brands that need an ad.`);
+    if (!file) {
+      await this.deps.store.assertWritable(id);
+      throw new Refusal(`There is no prospect ${id}. outreach_next gives the brands that need an ad.`);
+    }
     return { ...read, file };
   }
 
@@ -211,21 +215,49 @@ export class OutreachDesk {
   async contacts(input: { prospectId?: string | undefined; after: number; limit: number }): Promise<{ prospects: ProspectContacts[]; more: boolean }> {
     const { files: all, optOuts, file: one } = input.prospectId ? await this.file(input.prospectId) : { ...(await this.read()), file: undefined };
     // The register keeps WhatsApp numbers and addresses. A phone number is free text, so it is compared by its digits.
-    const closed = new Set([...optOuts].flatMap((key) => (key.startsWith("W#") ? [key.slice(2)] : [])));
+    const closed = new Set(optOuts);
     for (const file of all) {
       if (file.profile.test || !optedOut(file, optOuts)) continue;
-      for (const number of [file.profile.phone ?? "", ...file.profile.whatsapp]) if (digitsOf(number)) closed.add(digitsOf(number));
+      contactKeys(file.profile).forEach((key) => closed.add(key));
     }
     const listed = one ? [one] : all.filter((file) => !file.profile.test && file.profile.n > input.after).sort((a, b) => a.profile.n - b.profile.n);
     const prospects = listed.slice(0, input.limit).map((file): ProspectContacts => {
       const stage = stageOf(file, optOuts);
       const { instagram: _instagram, ...named } = briefOf(file);
       if (stage === "opted_out") return { ...named, stage };
-      const { bestRoute, secondRoute, email, decisionMaker, dmTitle, linkedin } = file.profile;
-      const open = (number: string): boolean => !closed.has(digitsOf(number));
-      const phone = file.profile.phone && open(file.profile.phone) ? file.profile.phone : undefined;
-      const whatsapp = file.profile.whatsapp.filter(open);
-      const known = Object.fromEntries(Object.entries({ bestRoute, secondRoute, email, phone, decisionMaker, dmTitle, linkedin }).filter(([, value]) => value));
+      const { profile } = file;
+      const openNumber = (number: string | undefined): boolean => Boolean(number && !closed.has(`W#${digitsOf(number)}`));
+      const openEmail = (address: string | undefined): boolean => Boolean(address && !closed.has(`E#${address.toLowerCase()}`));
+      const routeOpen = (route: ProspectRoute | undefined): boolean => {
+        if (!route) return false;
+        const key =
+          route.channel === "email"
+            ? `E#${route.to.toLowerCase()}`
+            : route.channel === "whatsapp" || route.channel === "call"
+              ? `W#${digitsOf(route.to)}`
+              : `${route.channel === "instagram" ? "I" : "F"}#${route.to.toLowerCase()}`;
+        return !closed.has(key);
+      };
+      const whatsapp = profile.whatsapp.filter(openNumber);
+      const known = Object.fromEntries(
+        Object.entries({
+          bestRoute: profile.bestRoute,
+          secondRoute: profile.secondRoute,
+          sells: profile.sells,
+          dmVerify: openEmail(profile.dmEmail) ? profile.dmVerify : undefined,
+          dmEmail: openEmail(profile.dmEmail) ? profile.dmEmail : undefined,
+          dmPhone: profile.dmPhone && openNumber(profile.dmPhone) ? profile.dmPhone : undefined,
+          flags: profile.flags,
+          route: routeOpen(profile.route) ? profile.route : undefined,
+          second: routeOpen(profile.second) ? profile.second : undefined,
+          routeHeld: routeOpen(profile.routeHeld) ? profile.routeHeld : undefined,
+          email: openEmail(profile.email) ? profile.email : undefined,
+          phone: profile.phone && openNumber(profile.phone) ? profile.phone : undefined,
+          decisionMaker: profile.decisionMaker,
+          dmTitle: profile.dmTitle,
+          linkedin: profile.linkedin,
+        }).filter(([, value]) => value !== undefined),
+      );
       return { ...briefOf(file), stage, ...known, ...(whatsapp.length > 0 ? { whatsapp } : {}) };
     });
     return { prospects, more: listed.length > input.limit };

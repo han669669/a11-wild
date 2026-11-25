@@ -1,4 +1,4 @@
-import type { OutreachAd, OutreachChannel, OutreachEvent, OutreachStage, Prospect, ProspectFile } from "@a11-wild/shared";
+import type { OutreachAd, OutreachChannel, OutreachEvent, OutreachStage, ProspectFile, ProspectRoute, ProspectSendTarget, ProspectSells } from "@a11-wild/shared";
 import { contactKeys } from "./store.js";
 
 /** Two tries at an ad the owner says yes to. After the second no the brand is parked. */
@@ -118,15 +118,61 @@ export function owedAnswer(file: ProspectFile): EventOf<"reply"> | undefined {
   return answered && answered.at >= reply.at ? undefined : reply;
 }
 
-const hasRoute = (profile: Prospect): boolean => profile.whatsapp.length > 0 || profile.email !== undefined;
+const sendable = (route: ProspectRoute | undefined): ProspectSendTarget | undefined =>
+  route && (route.channel === "whatsapp" || route.channel === "email") ? { channel: route.channel, to: route.to, direct: route.direct } : undefined;
 
-/** WhatsApp when the brand has a number, else its verified address. The owner can choose the other for one brand. */
-export function channelOf(file: ProspectFile): OutreachChannel | undefined {
+const legacyTargets = (file: ProspectFile): ProspectSendTarget[] => {
   const { profile } = file;
+  const whatsapp = profile.whatsapp[0];
+  return [
+    ...(whatsapp ? [{ channel: "whatsapp" as const, to: whatsapp, direct: false }] : []),
+    ...(profile.email ? [{ channel: "email" as const, to: profile.email, direct: false }] : []),
+  ];
+};
+
+/** True while a changed contact waits for the owner's choice. */
+export function routeHeldUnresolved(file: ProspectFile): boolean {
+  const held = file.profile.routeHeld;
+  const routeEvent = last(file.events, "route");
+  return Boolean(held && (!routeEvent || routeEvent.at < file.profile.loadedAt));
+}
+
+/** The checked email or number the owner will use, in the order the list and the owner's choices give it. */
+export function sendTarget(file: ProspectFile): ProspectSendTarget | undefined {
+  const { profile } = file;
+  const routeEvent = last(file.events, "route");
+  const heldEligible = profile.routeHeld && (routeHeldUnresolved(file) || (routeEvent?.choice === "kept" && routeEvent.at >= profile.loadedAt)) ? profile.routeHeld : undefined;
+  const heldTarget = sendable(heldEligible);
+  const targets = [sendable(profile.route), sendable(profile.second), heldTarget, ...legacyTargets(file)].filter((target): target is ProspectSendTarget => target !== undefined);
   const chosen = last(file.events, "channel")?.channel;
-  if (chosen === "whatsapp" && profile.whatsapp.length > 0) return chosen;
-  if (chosen === "email" && profile.email) return chosen;
-  return profile.whatsapp.length > 0 ? "whatsapp" : profile.email ? "email" : undefined;
+  if (chosen) {
+    const match = targets.find((target) => target.channel === chosen);
+    if (match) return match;
+  }
+  if (routeHeldUnresolved(file) && heldTarget) return heldTarget;
+  if (heldEligible && routeEvent?.choice === "kept" && routeEvent.at >= profile.loadedAt) return heldTarget;
+  return sendable(profile.route) ?? sendable(profile.second) ?? legacyTargets(file)[0];
+}
+
+export function targetForChannel(file: ProspectFile, channel: OutreachChannel): ProspectSendTarget | undefined {
+  const routeEvent = last(file.events, "route");
+  const held = file.profile.routeHeld && (routeHeldUnresolved(file) || (routeEvent?.choice === "kept" && routeEvent.at >= file.profile.loadedAt)) ? file.profile.routeHeld : undefined;
+  const candidates = [sendable(file.profile.route), sendable(file.profile.second), sendable(held), ...legacyTargets(file)];
+  return candidates.find((target) => target?.channel === channel);
+}
+
+export function defaultRoute(file: ProspectFile): ProspectRoute | undefined {
+  const { profile } = file;
+  const route = [profile.route, profile.second].find((candidate) => sendable(candidate) !== undefined);
+  if (route) return route;
+  const target = legacyTargets(file)[0];
+  return target ? { ...target, label: profile.bestRoute ?? (target.channel === "whatsapp" ? "WhatsApp" : "Email") } : undefined;
+}
+
+export const hasRoute = (file: ProspectFile): boolean => sendTarget(file) !== undefined;
+
+export function channelOf(file: ProspectFile): OutreachChannel | undefined {
+  return sendTarget(file)?.channel;
 }
 
 export function optedOut(file: ProspectFile, optOuts: ReadonlySet<string>): boolean {
@@ -148,7 +194,7 @@ export function stageOf(file: ProspectFile, optOuts: ReadonlySet<string>): Outre
   const ad = newestAd(file);
   // The studio makes no ad for a service. The owner's own picture is one, so the brand then goes on like any other.
   if (last(file.events, "kind")?.kind === "service" && ad?.from !== "owner") return "needs_service_ad";
-  if (!hasRoute(file.profile)) return "no_route";
+  if (!hasRoute(file)) return "no_route";
   const verdict = ad && verdictOf(file, ad);
   // His own picture is ready to send whatever the drafts wait for.
   if (ad?.from === "owner" && verdict?.type === "ad_yes") return "ready";
@@ -191,4 +237,11 @@ export function wantsAd(file: ProspectFile, optOuts: ReadonlySet<string>): { why
 }
 
 /** What the brand sells, when someone has said so. */
-export const kindOf = (file: ProspectFile): "product" | "service" | undefined => last(file.events, "kind")?.kind;
+export const sellsOf = (file: ProspectFile): ProspectSells | undefined => last(file.events, "kind")?.kind ?? file.profile.sells;
+
+export const kindOf = (file: ProspectFile): "product" | "service" | undefined => {
+  const saved = last(file.events, "kind")?.kind;
+  if (saved) return saved;
+  if (file.profile.sells === "service") return "service";
+  return file.profile.sells ? "product" : undefined;
+};

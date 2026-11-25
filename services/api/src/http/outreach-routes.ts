@@ -1,4 +1,4 @@
-import type { OutreachAd, ProspectContact, ProspectFile, ProspectPage, ProspectsPage, TemplatesPage } from "@a11-wild/shared";
+import type { OutreachAd, ProspectContact, ProspectFile, ProspectPage, ProspectRoute, ProspectsPage, TemplatesPage } from "@a11-wild/shared";
 import type { Hono, MiddlewareHandler } from "hono";
 import { z } from "zod";
 import type { Deps } from "../app.js";
@@ -9,8 +9,9 @@ import { makeTestProspect } from "../outreach/load.js";
 import { BRAND, mailLink, messagesFor, profileLink } from "../outreach/messages.js";
 import { filtered, filterOf, numbersOf } from "../outreach/numbers.js";
 import { DAILY, nextStep, sameContact } from "../outreach/sequence.js";
-import { approvedAd, channelOf, kindOf, owedAnswer, stageOf } from "../outreach/stage.js";
+import { approvedAd, defaultRoute, owedAnswer, optedOut, routeHeldUnresolved, sendTarget, sellsOf, stageOf } from "../outreach/stage.js";
 import { adView, rowOf, todayPage } from "../outreach/today.js";
+import { contactKeys } from "../outreach/store.js";
 import { requireOwner, type SessionEnv } from "./guards.js";
 
 const STEP = z.union([z.literal(0), z.literal(1), z.literal(2)]);
@@ -29,6 +30,7 @@ const BODY = {
   stage: z.strictObject({ stage: z.enum(["in_talks", "client", "lost", "parked", "auto"]), reason: z.string().trim().min(1).max(500).optional() }),
   note: z.strictObject({ text: TEXT }),
   channel: z.strictObject({ channel: z.enum(["whatsapp", "email"]) }),
+  route: z.strictObject({ choice: z.enum(["kept", "new"]) }),
   kind: z.strictObject({ kind: z.enum(["product", "service"]) }),
   choose: NONE,
   remove: NONE,
@@ -64,18 +66,49 @@ export function outreachRoutes(
     throw error;
   };
 
-  const contactOf = ({ profile }: ProspectFile): ProspectContact => {
+  const contactOf = (file: ProspectFile, optOuts: ReadonlySet<string>, closed: ReadonlySet<string>): ProspectContact => {
+    const { profile } = file;
     const link = (href: string | undefined) => (href ? { href } : {});
+    const numberKey = (value: string) => {
+      const digits = value.replace(/\D/g, "");
+      return `W#${digits.length === 8 ? `65${digits}` : digits}`;
+    };
+    const openNumber = (value: string | undefined) => Boolean(value && !closed.has(numberKey(value)));
+    const openEmail = (value: string | undefined) => Boolean(value && !closed.has(`E#${value.toLowerCase()}`));
+    const openRoute = (route: ProspectRoute | undefined) => {
+      if (!route) return false;
+      if (route.channel === "email") return openEmail(route.to);
+      if (route.channel === "whatsapp" || route.channel === "call") return openNumber(route.to);
+      return !closed.has(`${route.channel === "instagram" ? "I" : "F"}#${route.to.toLowerCase()}`);
+    };
+    if (optedOut(file, optOuts)) return { whatsapp: [] };
+    const target = sendTarget(file);
+    const sendTo = target
+      ? {
+          ...target,
+          ...(target.direct && profile.decisionMaker ? { person: profile.decisionMaker } : {}),
+          ...(target.direct && profile.dmTitle ? { title: profile.dmTitle } : {}),
+        }
+      : undefined;
+    const dmCheck = { valid: "checked", risky: "risky", invalid: "invalid", unknown: "not checked" } as const;
     return {
-      whatsapp: profile.whatsapp.map((number) => ({ number, ...link(/^\d{10,15}$/.test(number) ? `https://wa.me/${number}` : undefined) })),
-      ...(profile.email ? { email: { address: profile.email, ...link(mailLink(profile.email, "", "")?.split("?")[0]) } } : {}),
-      ...(profile.phone ? { phone: profile.phone } : {}),
+      whatsapp: profile.whatsapp.filter(openNumber).map((number) => ({ number, ...link(/^\d{10,15}$/.test(number) ? `https://wa.me/${number}` : undefined) })),
+      ...(openEmail(profile.email) && profile.email ? { email: { address: profile.email, ...link(mailLink(profile.email, "", "")?.split("?")[0]) } } : {}),
+      ...(openNumber(profile.phone) && profile.phone ? { phone: profile.phone } : {}),
       ...(profile.instagram ? { instagram: { name: profile.instagram, ...link(profileLink("instagram", profile.instagram)) } } : {}),
       ...(profile.decisionMaker ? { decisionMaker: profile.decisionMaker } : {}),
       ...(profile.dmTitle ? { dmTitle: profile.dmTitle } : {}),
       ...(profile.linkedin ? { linkedin: { text: profile.linkedin, ...link(profileLink("linkedin", profile.linkedin)) } } : {}),
       ...(profile.bestRoute ? { bestRoute: profile.bestRoute } : {}),
       ...(profile.secondRoute ? { secondRoute: profile.secondRoute } : {}),
+      ...(sendTo ? { sendTo } : {}),
+      others: {
+        ...(openRoute(profile.second) ? { second: profile.second } : {}),
+        ...(openEmail(profile.dmEmail) && profile.dmEmail ? { dmEmail: { address: profile.dmEmail, check: dmCheck[profile.dmVerify ?? "unknown"] } } : {}),
+        ...(openNumber(profile.dmPhone) && profile.dmPhone ? { dmPhone: profile.dmPhone } : {}),
+        ...(profile.instagram ? { instagram: { name: profile.instagram, ...link(profileLink("instagram", profile.instagram)) } } : {}),
+        ...(profile.linkedin ? { linkedin: { text: profile.linkedin, ...link(profileLink("linkedin", profile.linkedin)) } } : {}),
+      },
     };
   };
 
@@ -85,23 +118,28 @@ export function outreachRoutes(
     if (!file) return undefined;
     const day = singaporeDay(deps.now());
     const stage = stageOf(file, optOuts);
-    const sells = kindOf(file);
+    const sells = sellsOf(file);
     const reply = owedAnswer(file);
     // The message that can be sent now, on any day: the first one for a brand that is ready, or a follow-up that is due.
     const due = stage === "contacted" ? nextStep(file) : undefined;
     const step = stage === "ready" ? 0 : due && due.due <= day ? due.step : undefined;
     const ads = await Promise.all([...file.ads].sort((a, b) => b.n - a.n).map((ad: OutreachAd) => adView(file, ad, deps.pictures)));
     const candidates = await picks.view(file, optOuts);
+    const closed = new Set(optOuts);
+    for (const opted of files) if (!opted.profile.test && optedOut(opted, optOuts)) contactKeys(opted.profile).forEach((key) => closed.add(key));
+    const check = routeHeldUnresolved(file) && file.profile.routeHeld && defaultRoute(file) ? { kept: file.profile.routeHeld, found: defaultRoute(file)! } : undefined;
     return {
-      prospect: rowOf(file, optOuts, sameContact(files)),
+      prospect: rowOf(file, optOuts, sameContact(files), deps.now()),
       ...(file.profile.newestAd ? { newestAd: file.profile.newestAd } : {}),
       ...(sells ? { sells } : {}),
-      contact: contactOf(file),
+      contact: contactOf(file, optOuts, closed),
+      flags: file.profile.flags ?? [],
+      ...(check ? { check } : {}),
       ads,
       sends: [...file.sends].sort((a, b) => a.step - b.step),
       events: [...file.events].sort((a, b) => b.at.localeCompare(a.at)),
       day,
-      ...(step !== undefined && templates && approvedAd(file) ? { message: { step, messages: messagesFor(templates.steps[step], file.profile, channelOf(file)) } } : {}),
+      ...(step !== undefined && templates && approvedAd(file) ? { message: { step, messages: messagesFor(templates.steps[step], file.profile, sendTarget(file)) } } : {}),
       ...(reply && (stage === "replied" || stage === "in_talks") ? { owed: { ...(reply.text ? { text: reply.text } : {}), at: reply.at } } : {}),
       ...(candidates ? { candidates } : {}),
     };
@@ -111,10 +149,10 @@ export function outreachRoutes(
 
   routes.get("/api/outreach/prospects", ...ownerRead, async (c) => {
     const filter = filterOf(c.req.query());
-    if (!filter) return c.json({ error: "bad_request", message: "The tier or the stage of the filter is not one the list has." }, 400);
+    if (!filter) return c.json({ error: "bad_request", message: "The ads-running or stage filter is not one the list has." }, 400);
     const [files, optOuts] = await Promise.all([store.all(), store.optOuts()]);
     const shared = sameContact(files);
-    const rows = files.map((file) => rowOf(file, optOuts, shared));
+    const rows = files.map((file) => rowOf(file, optOuts, shared, deps.now()));
     return c.json({
       numbers: numbersOf(files, optOuts),
       sectors: [...new Set(files.map((file) => file.profile.sector))].sort(),
@@ -158,6 +196,7 @@ export function outreachRoutes(
   write("stage", (id, body) => sequence.setStage(id, body.stage, body.reason));
   write("note", (id, body) => sequence.note(id, body.text));
   write("channel", (id, body) => sequence.setChannel(id, body.channel));
+  write("route", (id, body) => sequence.setRoute(id, body.choice));
   write("kind", (id, body) => sequence.setKind(id, body.kind, "owner"));
   write("choose", (id) => sequence.choose(id));
   write("remove", async (id) => {

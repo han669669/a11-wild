@@ -1108,6 +1108,24 @@ export const OUTREACH_STAGES = ["new", "no_route", "needs_service_ad", "pick_wai
 export type OutreachStage = (typeof OUTREACH_STAGES)[number];
 
 export type OutreachChannel = "whatsapp" | "email";
+export interface ProspectRoute {
+  channel: "whatsapp" | "email" | "instagram" | "facebook" | "call";
+  to: string;
+  direct: boolean;
+  label: string;
+}
+export interface ProspectFlag {
+  kind: "duplicate" | "blocked" | "fixed";
+  text: string;
+}
+export type ProspectSells = "product" | "service" | "hybrid";
+export interface ProspectSendTarget {
+  channel: OutreachChannel;
+  to: string;
+  direct: boolean;
+  person?: string;
+  title?: string;
+}
 /** The three messages of the sequence: the first message, follow-up 1, follow-up 2. */
 export type OutreachStep = 0 | 1 | 2;
 
@@ -1120,10 +1138,20 @@ export interface Prospect {
   sector: string;
   liveAds: number;
   tier: OutreachTier;
+  sells?: ProspectSells;
   /** The day of its newest ad, as YYYY-MM-DD. */
   newestAd?: string;
   bestRoute?: string;
   secondRoute?: string;
+  dmEmail?: string;
+  dmVerify?: "valid" | "risky" | "invalid" | "unknown";
+  dmPhone?: string;
+  notes?: string;
+  flags?: ProspectFlag[];
+  route?: ProspectRoute;
+  second?: ProspectRoute;
+  routeHeld?: ProspectRoute;
+  mergedInto?: string;
   /** WhatsApp numbers: digits only, with the country code. */
   whatsapp: string[];
   /** A verified address, in lower case. */
@@ -1155,6 +1183,14 @@ export interface ProspectContacts extends ProspectBrief {
   stage: OutreachStage;
   bestRoute?: string;
   secondRoute?: string;
+  sells?: ProspectSells;
+  dmEmail?: string;
+  dmVerify?: "valid" | "risky" | "invalid" | "unknown";
+  dmPhone?: string;
+  flags?: ProspectFlag[];
+  route?: ProspectRoute;
+  second?: ProspectRoute;
+  routeHeld?: ProspectRoute;
   whatsapp?: string[];
   email?: string;
   phone?: string;
@@ -1197,6 +1233,8 @@ export interface OutreachSend {
   /** The Singapore day, as YYYY-MM-DD. */
   day: string;
   channel: OutreachChannel;
+  /** The exact address or number the owner used. Older sends have no target. */
+  to?: string;
   title: string;
   text: string;
   at: string;
@@ -1222,6 +1260,7 @@ export type OutreachEventBody =
   | { type: "unsent"; step: OutreachStep }
   | { type: "note"; text: string }
   | { type: "channel"; channel: OutreachChannel }
+  | { type: "route"; choice: "kept" | "new" }
   /** The owner chose to send to a prospect that shares its contact with an earlier one. */
   | { type: "chosen" };
 
@@ -1265,6 +1304,9 @@ export interface ProspectRow {
   tier: OutreachTier;
   stage: OutreachStage;
   channel?: OutreachChannel;
+  person?: string;
+  staleDays?: number;
+  flags: { duplicate: boolean; blocked: boolean; check: boolean };
   /** True when a new ad waits for the owner's yes or no. */
   adWaits: boolean;
   /** The next message of the sequence and the day it is due. */
@@ -1291,6 +1333,9 @@ export interface TodayLine {
   step?: OutreachStep;
   /** Both versions of the message, with the link of the brand's channel. */
   messages?: [OutreachMessage, OutreachMessage];
+  sendTo?: ProspectSendTarget;
+  routeCheck?: { kept: ProspectRoute; found: ProspectRoute };
+  flags?: ProspectFlag[];
   /** The reply that is owed an answer. */
   reply?: { text?: string; at: string };
   /** How many drafts wait for the owner's pick on the prospect's page. */
@@ -1352,14 +1397,24 @@ export interface ProspectContact {
   linkedin?: { text: string; href?: string };
   bestRoute?: string;
   secondRoute?: string;
+  sendTo?: ProspectSendTarget;
+  others?: {
+    second?: ProspectRoute;
+    dmEmail?: { address: string; check: "checked" | "risky" | "not checked" | "invalid" };
+    dmPhone?: string;
+    instagram?: { name: string; href?: string };
+    linkedin?: { text: string; href?: string };
+  };
 }
 
 /** One prospect with everything about it, for the owner. */
 export interface ProspectPage {
   prospect: ProspectRow;
   newestAd?: string;
-  sells?: "product" | "service";
+  sells?: ProspectSells;
   contact: ProspectContact;
+  flags: ProspectFlag[];
+  check?: { kept: ProspectRoute; found: ProspectRoute };
   /** Newest first. */
   ads: OutreachAdView[];
   sends: OutreachSend[];

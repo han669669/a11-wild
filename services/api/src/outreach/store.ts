@@ -25,8 +25,32 @@ const HOLD_MS = 60_000;
 /** The id of a list row: its number, padded so that the table's order is the list's order. */
 export const prospectId = (n: number): string => String(n).padStart(5, "0");
 
-/** The key of a contact in the opt-out register: the digits of a number, or an address in lower case. */
-export const contactKeys = (profile: Pick<Prospect, "whatsapp" | "email">): string[] => [...profile.whatsapp.map((number) => `W#${number}`), ...(profile.email ? [`E#${profile.email}`] : [])];
+/** The key of a contact in the opt-out register. Phone routes share a key with WhatsApp. */
+export const contactKeys = (profile: Prospect): string[] => {
+  const keys = new Set<string>();
+  const number = (value: string | undefined) => {
+    const digits = value?.replace(/\D/g, "") ?? "";
+    if (digits) keys.add(`W#${digits.length === 8 ? `65${digits}` : digits}`);
+  };
+  const email = (value: string | undefined) => {
+    if (value) keys.add(`E#${value.toLowerCase()}`);
+  };
+  const route = (value: Prospect["route"]) => {
+    if (!value?.to.trim()) return;
+    if (value.channel === "email") email(value.to);
+    else if (value.channel === "whatsapp" || value.channel === "call") number(value.to);
+    else keys.add(`${value.channel === "instagram" ? "I" : "F"}#${value.to.toLowerCase()}`);
+  };
+  profile.whatsapp.forEach(number);
+  number(profile.phone);
+  number(profile.dmPhone);
+  email(profile.email);
+  email(profile.dmEmail);
+  route(profile.route);
+  route(profile.second);
+  route(profile.routeHeld);
+  return [...keys];
+};
 
 /** One ad at most for each "more" reply, and two tries at a first ad: the store keeps no more than this for a prospect. */
 const ADS_MAX = 20;
@@ -37,8 +61,8 @@ export class OutreachStore {
     private readonly now: () => Date,
   ) {}
 
-  /** Every prospect with its history, in list order. Test prospects come last. */
-  async all(): Promise<ProspectFile[]> {
+  /** Every active prospect with its history, in list order. Test prospects come last. */
+  async all(options: { includeMerged?: boolean } = {}): Promise<ProspectFile[]> {
     const files = new Map<string, ProspectFile>();
     // The profile's key sorts before the keys of its ads, events and sends.
     for (const item of await this.table.query<Item>(PK)) {
@@ -54,7 +78,9 @@ export class OutreachStore {
       else if (part === "S") file.sends.push(record<OutreachSend>(item as unknown as Item & OutreachSend));
       else if (part === "E") file.events.push(record<OutreachEvent>(item as unknown as Item & OutreachEvent));
     }
-    return [...files.values()].sort((a, b) => Number(a.profile.test ?? false) - Number(b.profile.test ?? false) || a.profile.n - b.profile.n || a.profile.id.localeCompare(b.profile.id));
+    return [...files.values()]
+      .filter((file) => options.includeMerged || !file.profile.mergedInto)
+      .sort((a, b) => Number(a.profile.test ?? false) - Number(b.profile.test ?? false) || a.profile.n - b.profile.n || a.profile.id.localeCompare(b.profile.id));
   }
 
   async find(id: string): Promise<Prospect | undefined> {
@@ -65,7 +91,15 @@ export class OutreachStore {
   async get(id: string): Promise<Prospect> {
     const profile = await this.find(id);
     if (!profile) throw new Refusal(`There is no prospect ${id}.`);
+    if (profile.mergedInto) {
+      const survivor = await this.find(profile.mergedInto);
+      throw new Refusal(`This brand is merged into ${survivor?.brand ?? profile.mergedInto}.`);
+    }
     return profile;
+  }
+
+  async assertWritable(id: string): Promise<void> {
+    await this.get(id);
   }
 
   /** Only the load and the making of a test prospect call this. */

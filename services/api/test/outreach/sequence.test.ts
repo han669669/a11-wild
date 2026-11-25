@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadRows, makeTestProspect } from "../../src/outreach/load.js";
-import { nextStep, OutreachSequence } from "../../src/outreach/sequence.js";
+import { nextStep, OutreachSequence, sameContact } from "../../src/outreach/sequence.js";
 import { stageOf } from "../../src/outreach/stage.js";
 import { OutreachStore } from "../../src/outreach/store.js";
+import { inCampaign } from "../../src/outreach/desk.js";
 import { MemoryTable } from "../helpers/memory-table.js";
-import { row } from "./helpers.js";
+import { ad, event, file, profile, row } from "./helpers.js";
 
 const STEPS = [
   { titles: ["New ad for {Brand}", "{Brand}, I made this for you"], body: "Hi, I made this ad for {Brand}." },
@@ -48,6 +49,17 @@ describe("marking a message as sent", () => {
     expect(already).toBe(false);
     expect(send).toMatchObject({ step: 0, day: "2026-11-23", channel: "whatsapp", title: "Brand 1, I made this for you", text: "Hi, I made this ad for Brand 1." });
     expect(await stage("00001")).toBe("contacted");
+  });
+
+  it("refuses a first message while a newer contact waits for the owner's choice", async () => {
+    await ready("00001");
+    await loadRows(store, [row(1, { bestRoute: "Email (valid) new@example.com" })], now);
+    await expect(sequence.send("00001", { step: 0, title: 0 })).rejects.toThrow(
+      "A newer contact was found for this brand. Choose keep or switch first.",
+    );
+    await sequence.setRoute("00001", "new");
+    const sent = await sequence.send("00001", { step: 0, title: 0 });
+    expect(sent.send).toMatchObject({ channel: "email", to: "new@example.com" });
   });
 
   it("counts a send at 23:30 on Monday in Singapore on Monday", async () => {
@@ -180,6 +192,24 @@ describe("marking a message as sent", () => {
   });
 });
 
+describe("new contact and campaign membership rules", () => {
+  it("finds a shared decision-maker email or number", async () => {
+    await loadRows(store, [
+      row(1, { email: "brand1@example.com", dmEmail: "person@example.com", dmPhone: "+65 9123 4567" }),
+      row(2, { email: "brand2@example.com", dmEmail: "PERSON@example.com", dmPhone: "91234567" }),
+    ], now);
+    expect(sameContact(await store.all()).get("00002")?.profile.id).toBe("00001");
+  });
+
+  it("keeps started work in the campaign when the saved tier drops", () => {
+    expect(inCampaign(file({ profile: profile(1, { email: "person@example.com", tier: "<5" }) }))).toBe(false);
+    expect(inCampaign(file({ profile: profile(1, { email: "person@example.com", tier: "<5" }), ads: [ad(1)] }))).toBe(true);
+    expect(inCampaign(file({ profile: profile(1, { email: "person@example.com", tier: "<5" }), events: [event({ type: "candidates", batchId: "b", drafts: 2 }, "agent")] }))).toBe(true);
+    expect(inCampaign(file({ profile: profile(1, { email: "person@example.com", tier: "20+" }) }))).toBe(true);
+    expect(inCampaign(file({ profile: profile(1, { email: "person@example.com", tier: "20+", test: true }), ads: [ad(1)] }))).toBe(false);
+  });
+});
+
 describe("a write that fails half way", () => {
   const down = new Error("the table is down");
 
@@ -239,7 +269,7 @@ describe("a reply and the owner's choices", () => {
     await sequence.send("00001", { step: 0, title: 0 });
     await sequence.reply("00001", { reply: "no" });
     expect(await stage("00001")).toBe("opted_out");
-    expect(await store.optOuts()).toEqual(new Set(["W#6580000001", "E#hello@brand1.example"]));
+    expect(await store.optOuts()).toEqual(new Set(["W#6580000001", "E#brand1@example.com"]));
   });
 
   it("refuses a reply for a brand that got no message", async () => {

@@ -70,6 +70,35 @@ describe("Today page", () => {
     expect(screen.getByRole("link", { name: "Koi Tea" })).toBeInTheDocument();
   });
 
+  it("holds a first message for a check, shows its flags and lets the owner switch", async () => {
+    let resolved = false;
+    let routeBody: unknown;
+    const held = { channel: "whatsapp" as const, to: "6580000001", direct: false, label: "WhatsApp +65 8000 0001" };
+    const found = { channel: "email" as const, to: "owner@example.com", direct: true, label: "DM email (valid) owner@example.com" };
+    const line = firstLine({
+      prospect: prospectRow({ flags: { duplicate: true, blocked: true, check: true } }),
+      sendTo: held,
+      routeCheck: { kept: held, found },
+      flags: [
+        { kind: "duplicate", text: "DUP-CHECK: possibly listed twice" },
+        { kind: "blocked", text: "AUDIT-FLAG: owner@example.com do not send" },
+      ],
+    });
+    const calls = stubApi({
+      "GET /api/outreach/today": () => ({ body: resolved ? todayPage() : todayPage({ firsts: [line] }) }),
+      "POST /api/outreach/prospects/00001/route": (body) => ((routeBody = body), (resolved = true), { body: prospectPage() }),
+    });
+    renderSignedIn(<Outreach />);
+    expect(await screen.findByText("Might be the same business as another brand. Look before you send.")).toBeInTheDocument();
+    expect(screen.getByText("AUDIT-FLAG: owner@example.com do not send")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mark as sent" })).toBeDisabled();
+    expect(screen.queryByRole("link", { name: "Open WhatsApp" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Switch" }));
+    await waitFor(() => expect(routeBody).toEqual({ choice: "new" }));
+    expect(calls).toContain("POST /api/outreach/prospects/00001/route");
+    await waitFor(() => expect(screen.queryByRole("link", { name: "Koi Tea" })).not.toBeInTheDocument());
+  });
+
   it("takes a yes to an ad that waits, and a no only with his words", async () => {
     const sent: unknown[] = [];
     stubApi({

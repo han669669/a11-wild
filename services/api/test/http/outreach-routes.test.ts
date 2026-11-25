@@ -38,6 +38,7 @@ const WRITES: [string, unknown][] = [
   ["/api/outreach/prospects/00001/stage", { stage: "lost" }],
   ["/api/outreach/prospects/00001/note", { text: "A note." }],
   ["/api/outreach/prospects/00001/channel", { channel: "email" }],
+  ["/api/outreach/prospects/00001/route", { choice: "kept" }],
   ["/api/outreach/prospects/00001/kind", { kind: "service" }],
   ["/api/outreach/prospects/00001/choose", {}],
   ["/api/outreach/prospects/00001/remove", {}],
@@ -219,17 +220,40 @@ describe("the owner's day", () => {
     expect((await get("/api/outreach/prospects/00009")).status).toBe(404);
   });
 
+  it("holds a changed contact until the owner keeps or switches it", async () => {
+    await ready([row(1, { email: "brand1@example.com", bestRoute: "WhatsApp +65 8000 0001" })]);
+    await loadProspects(studio, [row(1, { email: "brand1@example.com", bestRoute: "Email (valid) new@example.com" })]);
+    const waiting = await json(await get("/api/outreach/prospects/00001"));
+    expect(waiting.check).toMatchObject({
+      kept: { channel: "whatsapp", to: "6580000001" },
+      found: { channel: "email", to: "new@example.com" },
+    });
+    expect(waiting.contact.sendTo.to).toBe("6580000001");
+    expect(waiting.message.messages[0].href).toMatch(/^https:\/\/wa\.me\/6580000001/);
+
+    const switched = await json(await on("00001", "route", { choice: "new" }));
+    expect(switched.check).toBeUndefined();
+    expect(switched.contact.sendTo).toMatchObject({ channel: "email", to: "new@example.com" });
+    expect(switched.message.messages[0].href).toMatch(/^mailto:new@example\.com\?/);
+    expect(switched.events[0]).toMatchObject({ type: "route", choice: "new", by: "owner" });
+  });
+
   it("gives the owner the contact, each link only from a checked value", async () => {
     await loadProspects(studio, [row(1, { phone: "+65 6123 4567", instagram: "@brand.one", decisionMaker: "A Person", dmTitle: "Founder", linkedin: "www.linkedin.com/in/a-person", bestRoute: "WhatsApp" }), row(2, { instagram: "javascript:alert(1)", linkedin: "https://evil.example/in/x" })]);
     expect((await json(await get("/api/outreach/prospects/00001"))).contact).toEqual({
       whatsapp: [{ number: "6580000001", href: "https://wa.me/6580000001" }],
-      email: { address: "hello@brand1.example", href: "mailto:hello@brand1.example" },
+      email: { address: "brand1@example.com", href: "mailto:brand1@example.com" },
       phone: "+65 6123 4567",
       instagram: { name: "@brand.one", href: "https://www.instagram.com/brand.one/" },
       decisionMaker: "A Person",
       dmTitle: "Founder",
       linkedin: { text: "www.linkedin.com/in/a-person", href: "https://www.linkedin.com/in/a-person" },
       bestRoute: "WhatsApp",
+      sendTo: { channel: "whatsapp", to: "6580000001", direct: false },
+      others: {
+        instagram: { name: "@brand.one", href: "https://www.instagram.com/brand.one/" },
+        linkedin: { text: "www.linkedin.com/in/a-person", href: "https://www.linkedin.com/in/a-person" },
+      },
     });
     expect((await json(await get("/api/outreach/prospects/00002"))).contact).toMatchObject({ instagram: { name: "javascript:alert(1)" }, linkedin: { text: "https://evil.example/in/x" } });
     expect((await json(await get("/api/outreach/prospects/00002"))).contact.instagram.href).toBeUndefined();
@@ -239,7 +263,7 @@ describe("the owner's day", () => {
 
 describe("the list and its numbers", () => {
   it("counts sent, replied, said more, opted out and clients, by tier and by channel, without the test prospect", async () => {
-    await ready([row(1), row(2, { tier: "5-19 live ads" }), row(3, { whatsapp: undefined }), row(4, { tier: "<5 live ads", sector: "Beauty" }), row(5)]);
+    await ready([row(1), row(2, { liveAds: 10, tier: "5-19 live ads" }), row(3, { whatsapp: undefined }), row(4, { liveAds: 2, tier: "<5 live ads", sector: "Beauty" }), row(5)]);
     const made = await json(await post("/api/outreach/test-prospect", { whatsapp: "+65 8999 0000" }));
     await on(made.id, "ad", { ad: 1, yes: true });
     for (const id of ["00001", "00002", "00003", "00004", made.id]) expect((await on(id, "sent", { step: 0, title: 0 })).status, id).toBe(200);
@@ -266,7 +290,7 @@ describe("the list and its numbers", () => {
   });
 
   it("searches by name and filters by tier, sector and stage", async () => {
-    await ready([row(1, { brand: "Koi Tea" }), row(2, { brand: "Tea Bar", tier: "5-19 live ads" }), row(3, { brand: "Glow Lab", sector: "Beauty" })]);
+    await ready([row(1, { brand: "Koi Tea" }), row(2, { brand: "Tea Bar", liveAds: 10, tier: "5-19 live ads" }), row(3, { brand: "Glow Lab", sector: "Beauty" })]);
     await on("00003", "stage", { stage: "lost" });
     const brands = async (query: string) => (await json(await get(`/api/outreach/prospects?${query}`))).rows.map((entry: { brand: string }) => entry.brand);
     expect(await brands("q=tea")).toEqual(["Koi Tea", "Tea Bar"]);
@@ -277,6 +301,27 @@ describe("the list and its numbers", () => {
     expect(await brands("q=nothing")).toEqual([]);
     expect((await get("/api/outreach/prospects?stage=sent")).status).toBe(400);
     expect((await get("/api/outreach/prospects?tier=big")).status).toBe(400);
+  });
+
+  it("filters tired ads and excludes merged brands from the list and its counts", async () => {
+    await loadProspects(studio, [row(1, { newestAd: "2026-10-01" }), row(2, { newestAd: "2026-11-01" })]);
+    await loadProspects(studio, [row(2, { mergedInto: 1, newestAd: "2026-11-01" })]);
+    const tired = await json(await get("/api/outreach/prospects?tired=true"));
+    expect(tired.rows.map((entry: { brand: string }) => entry.brand)).toEqual(["Brand 1"]);
+    const all = await json(await get("/api/outreach/prospects"));
+    expect(all.rows.map((entry: { brand: string }) => entry.brand)).toEqual(["Brand 1"]);
+    expect(all.numbers.prospects).toBe(1);
+    const contacts = await outreach().desk.contacts({ after: 0, limit: 1 });
+    expect(contacts.prospects.map((entry) => entry.brand)).toEqual(["Brand 1"]);
+    expect(contacts.more).toBe(false);
+    const next = await outreach().desk.next(10);
+    expect(next.brands.map((entry) => entry.brand)).toEqual(["Brand 1"]);
+    expect(JSON.stringify(await outreach().desk.state())).not.toContain("Brand 2");
+    expect((await get("/api/outreach/prospects/00002")).status).toBe(404);
+    expect((await json(await get("/api/outreach/today"))).firsts.map((line: { prospect: { brand: string } }) => line.prospect.brand)).not.toContain("Brand 2");
+    const refused = await post("/api/outreach/prospects/00002/note", { text: "A note." });
+    expect(refused.status).toBe(400);
+    expect((await json(refused)).message).toBe("This brand is merged into Brand 1.");
   });
 });
 
@@ -294,7 +339,7 @@ describe("the message text and the test prospect", () => {
   it("makes a test prospect with an ad that waits, and removes it with everything of it; no other prospect can be removed", async () => {
     await loadProspects(studio);
     const before = (await studio.table.query("OUTREACH")).length;
-    const made = await json(await post("/api/outreach/test-prospect", { email: "me@test.example" }));
+    const made = await json(await post("/api/outreach/test-prospect", { email: "me@example.com" }));
     const page = await json(await get(`/api/outreach/prospects/${made.id}`));
     expect(page).toMatchObject({ prospect: { brand: "TEST prospect", test: true, stage: "ad_waits", channel: "email" }, ads: [{ n: 1, viewUrl: expect.stringContaining("outreach/test-ad.png") }] });
     await on(made.id, "ad", { ad: 1, yes: true });

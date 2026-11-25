@@ -1,4 +1,4 @@
-import type { OutreachChannel, OutreachMessage, OutreachTemplate, Prospect } from "@a11-wild/shared";
+import type { OutreachChannel, OutreachMessage, OutreachTemplate, Prospect, ProspectSendTarget } from "@a11-wild/shared";
 import { Refusal } from "../mcp/registry.js";
 
 /** The only placeholder of a message. */
@@ -54,10 +54,16 @@ export function mailLink(address: string, title: string, text: string): string |
 }
 
 /** Both versions of a message for one prospect, each with its link for the channel. */
-export function messagesFor(template: OutreachTemplate, profile: Prospect, channel: OutreachChannel | undefined): [OutreachMessage, OutreachMessage] {
+export function messagesFor(
+  template: OutreachTemplate,
+  profile: Prospect,
+  target: ProspectSendTarget | OutreachChannel | undefined,
+): [OutreachMessage, OutreachMessage] {
   const one = (index: 0 | 1): OutreachMessage => {
     const { title, text } = fill(template, profile.brand, index);
-    const href = channel === "whatsapp" && profile.whatsapp[0] ? whatsappLink(profile.whatsapp[0], title, text) : channel === "email" && profile.email ? mailLink(profile.email, title, text) : undefined;
+    const channel = typeof target === "string" ? target : target?.channel;
+    const to = typeof target === "string" ? (channel === "whatsapp" ? profile.whatsapp[0] : profile.email) : target?.to;
+    const href = channel === "whatsapp" && to ? whatsappLink(to, title, text) : channel === "email" && to ? mailLink(to, title, text) : undefined;
     return { title, text, ...(href ? { href } : {}) };
   };
   return [one(0), one(1)];

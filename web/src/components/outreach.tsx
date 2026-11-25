@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 
 export const STAGES: Record<OutreachStage, { label: string; color: "green" | "amber" | "gray" | "red" }> = {
   new: { label: "New", color: "gray" },
-  no_route: { label: "No route", color: "gray" },
+  no_route: { label: "No checked way to reach it", color: "gray" },
   needs_service_ad: { label: "Needs a service ad", color: "gray" },
   pick_waits: { label: "Pick an ad", color: "amber" },
   pick_made: { label: "Waits for the agent", color: "gray" },
@@ -54,7 +54,7 @@ export function OutreachTabs() {
   );
 }
 
-/** The brand as a line: its name as a link to its page, its tier, its live ads and its stage. */
+/** The brand as a line: its name as a link to its page, its ads, and its stage. */
 export function BrandLine({ prospect }: { prospect: ProspectRow }) {
   const stage = STAGES[prospect.stage];
   return (
@@ -65,7 +65,7 @@ export function BrandLine({ prospect }: { prospect: ProspectRow }) {
       {prospect.test ? <Badge color="amber">Test</Badge> : null}
       <Badge color={stage.color}>{stage.label}</Badge>
       <span className="text-caption text-muted-foreground">
-        {prospect.tier} live ads tier · {prospect.liveAds} live · {prospect.sector}
+        {prospect.liveAds} ads running · {prospect.sector}
         {prospect.channel ? ` · ${CHANNELS[prospect.channel]}` : ""}
       </span>
     </div>
@@ -231,12 +231,14 @@ export function MessageCard({
   step,
   messages,
   done,
+  disabled = false,
 }: {
   prospect: ProspectRow;
   ad: OutreachAdView | undefined;
   step: OutreachStep;
   messages: [OutreachMessage, OutreachMessage];
   done: (page: ProspectPage) => void;
+  disabled?: boolean;
 }) {
   const { write, busy, error } = useWrite(prospect.id, done);
   const [title, setTitle] = useState<0 | 1>(0);
@@ -278,7 +280,7 @@ export function MessageCard({
           <Button type="button" variant="secondary" className={TAP} onClick={copy}>
             {copied ? "Copied" : "Copy the text"}
           </Button>
-          {message.href ? (
+          {message.href && !disabled ? (
             <Button asChild variant="secondary" className={TAP}>
               <a href={message.href} target="_blank" rel="noopener noreferrer">
                 {email ? "Open the mail program" : "Open WhatsApp"}
@@ -290,7 +292,7 @@ export function MessageCard({
               <a href={ad.downloadUrl}>Save the picture</a>
             </Button>
           ) : null}
-          <Button type="button" className={TAP} loading={busy === "sent"} onClick={() => write({ action: "sent", body: { step, title } })}>
+          <Button type="button" className={TAP} disabled={disabled} loading={busy === "sent"} onClick={() => write({ action: "sent", body: { step, title } })}>
             Mark as sent
           </Button>
         </div>

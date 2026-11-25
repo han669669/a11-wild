@@ -1,11 +1,11 @@
 import type { TodayLine } from "@a11-wild/shared";
 import { Link } from "react-router";
 import { Loading } from "@/components/loading";
-import { AdPicture, AdVerdict, BrandLine, Failure, MessageCard, OutreachTabs, TAP, useWrite } from "@/components/outreach";
+import { AdPicture, AdVerdict, BrandLine, CHANNELS, Failure, MessageCard, OutreachTabs, TAP, useWrite } from "@/components/outreach";
 import { Card, PageHeader, Section, Step } from "@/components/page";
 import { Banner, BannerTitle } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
-import { api } from "@/lib/api";
+import { api, type ProspectWrite } from "@/lib/api";
 import { useLoad } from "@/lib/use-load";
 import { dayName, when } from "@/lib/when";
 
@@ -15,10 +15,10 @@ export function Outreach() {
 
   if (today === undefined) {
     return (
-      <>
+      <div className="reading">
         <Header />
         <Loading error={error} />
-      </>
+      </div>
     );
   }
   const done = () => void reload();
@@ -65,7 +65,7 @@ export function Outreach() {
   const rest = sections.filter((section) => section.lines.length === 0).map((section) => section.none);
 
   return (
-    <>
+    <div className="reading">
       <Header />
       <Step who={waits > 0 ? "you" : "nobody"} left={`${today.firstsSent} of ${today.daily} first messages sent today`}>
         {waits > 0 ? `${waits === 1 ? "1 thing waits" : `${waits} things wait`} for you today, ${dayName(today.day)}.` : `Nothing waits for you today, ${dayName(today.day)}.`}
@@ -86,7 +86,7 @@ export function Outreach() {
         </Section>
       ))}
       {open.length > 0 && rest.length > 0 ? <p className="mt-10 text-body text-muted-foreground">Nothing else today: {listOf(rest)}.</p> : null}
-    </>
+    </div>
   );
 }
 
@@ -119,7 +119,44 @@ function Lines({ lines, children }: { lines: TodayLine[]; children: (line: Today
 
 function Message({ line, done }: { line: TodayLine; done: () => void }) {
   if (line.step === undefined || !line.messages) return <p className="text-caption text-muted-foreground">The message text is not loaded yet.</p>;
-  return <MessageCard prospect={line.prospect} ad={line.ad} step={line.step} messages={line.messages} done={done} />;
+  return <MessageLine line={line} done={done} />;
+}
+
+function MessageLine({ line, done }: { line: TodayLine; done: () => void }) {
+  const { write, busy, error } = useWrite(line.prospect.id, done);
+  const checkOpen = line.prospect.flags.check;
+  const routeBusy = (busy as string | undefined) === "route";
+  const routeWrite = (choice: "kept" | "new") => write({ action: "route", body: { choice } } as unknown as ProspectWrite);
+  const sendTo = line.sendTo;
+  const person = sendTo?.person ?? line.prospect.person;
+  const who = sendTo?.direct && person
+    ? `To ${person}${sendTo.title ? `, ${sendTo.title}` : ""} on ${CHANNELS[sendTo.channel]}`
+    : sendTo?.channel === "email"
+      ? "To the brand's general inbox"
+      : sendTo
+        ? `To the brand on ${CHANNELS[sendTo.channel]}`
+        : "To the brand's general inbox";
+  return (
+    <div className="grid gap-3">
+      <p className="text-body">{who}</p>
+      {line.prospect.staleDays !== undefined && line.prospect.staleDays >= 30 ? (
+        <p className="text-body">Their newest ad is {line.prospect.staleDays} days old.</p>
+      ) : null}
+      {line.flags?.some((flag) => flag.kind === "duplicate") ? <p className="text-body">Might be the same business as another brand. Look before you send.</p> : null}
+      {line.flags?.filter((flag) => flag.kind === "blocked").map((flag) => <p key={flag.text} className="text-body">{flag.text}</p>)}
+      {line.routeCheck ? (
+        <div className="grid gap-2">
+          <p className="text-body">A newer contact was found. Keep the current way to reach it or switch to the new one ({CHANNELS[line.routeCheck.found.channel as "whatsapp" | "email"] ?? "another way"}).</p>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="secondary" className={TAP} disabled={busy !== undefined} loading={routeBusy} onClick={() => routeWrite("kept")}>Keep</Button>
+            <Button type="button" variant="secondary" className={TAP} disabled={busy !== undefined} loading={routeBusy} onClick={() => routeWrite("new")}>Switch</Button>
+          </div>
+          <Failure error={error} />
+        </div>
+      ) : null}
+      <MessageCard prospect={line.prospect} ad={line.ad} step={line.step!} messages={line.messages!} done={done} disabled={checkOpen} />
+    </div>
+  );
 }
 
 /** A reply the owner has not answered yet. His answer is his own text; he marks it when it is sent. */

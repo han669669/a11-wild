@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adWaits, approvedAd, candidatesWait, channelOf, owedAnswer, owedByAgent, owedNow, refusedDrafts, stageOf, standingAd, wantsAd } from "../../src/outreach/stage.js";
+import { adWaits, approvedAd, candidatesWait, channelOf, hasRoute, owedAnswer, owedByAgent, owedNow, refusedDrafts, sendTarget, stageOf, standingAd, wantsAd } from "../../src/outreach/stage.js";
 import { ad, event, file, profile, send } from "./helpers.js";
 
 const none = new Set<string>();
@@ -66,7 +66,7 @@ describe("the stage of a prospect", () => {
 
   it("is opted out when another brand with the same number or the same address opted out", () => {
     expect(stageOf(file({ profile: profile(2, { whatsapp: ["6580000001"] }) }), new Set(["W#6580000001"]))).toBe("opted_out");
-    expect(stageOf(file({ profile: profile(2, { email: "hello@brand1.example" }) }), new Set(["E#hello@brand1.example"]))).toBe("opted_out");
+    expect(stageOf(file({ profile: profile(2, { email: "brand1@example.com" }) }), new Set(["E#brand1@example.com"]))).toBe("opted_out");
     expect(stageOf(file({ profile: profile(2) }), new Set(["W#6580000001"]))).toBe("new");
   });
 
@@ -114,6 +114,36 @@ describe("what a prospect needs next", () => {
     expect(channelOf(file({ profile: profile(1, { whatsapp: [] }) }))).toBe("email");
     expect(channelOf(file({ events: [event({ type: "channel", channel: "email" })] }))).toBe("email");
     expect(channelOf(file({ profile: profile(1, { whatsapp: [] }), events: [event({ type: "channel", channel: "whatsapp" })] }))).toBe("email");
+  });
+
+  it("uses the structured target and keeps old profiles working", () => {
+    const email = { channel: "email" as const, to: "person@example.com", direct: true, label: "DM email (valid) person@example.com" };
+    const old = { channel: "whatsapp" as const, to: "6580000001", direct: false, label: "WhatsApp +65 8000 0001" };
+    const saved = file({ profile: profile(1, { route: email, routeHeld: old }) });
+    expect(sendTarget(saved)).toMatchObject({ channel: "whatsapp", to: "6580000001", direct: false });
+    expect(channelOf(saved)).toBe("whatsapp");
+    expect(hasRoute(saved)).toBe(true);
+    expect(sendTarget(file({ profile: profile(1, { email: "person@example.com" }) }))).toMatchObject({ channel: "whatsapp", to: "6580000001", direct: false });
+    expect(sendTarget(file({ profile: profile(1, { route: email }) }))).toMatchObject({ channel: "email", to: "person@example.com", direct: true });
+    expect(hasRoute(file({ profile: profile(1, { whatsapp: [], email: undefined as never }) }))).toBe(false);
+  });
+
+  it("uses a checked second route when the first one cannot be sent", () => {
+    const secondary = { channel: "email" as const, to: "person@example.com", direct: true, label: "DM email (valid) person@example.com" };
+    const profileWithSocialPrimary = profile(1, {
+      email: undefined as never,
+      route: { channel: "instagram", to: "@madeup", direct: false, label: "Instagram DM @madeup" },
+      second: secondary,
+    });
+    expect(sendTarget(file({ profile: profileWithSocialPrimary }))).toMatchObject({ channel: "email", to: "person@example.com", direct: true });
+  });
+
+  it("does not use a held target after the owner switches to the new one", () => {
+    const email = { channel: "email" as const, to: "person@example.com", direct: true, label: "DM email (valid) person@example.com" };
+    const old = { channel: "whatsapp" as const, to: "6580000001", direct: false, label: "WhatsApp +65 8000 0001" };
+    const fileWithHold = file({ profile: profile(1, { whatsapp: [], route: email, routeHeld: old }) });
+    const switched = { ...fileWithHold, events: [event({ type: "route", choice: "new" })] };
+    expect(sendTarget(switched)).toMatchObject({ channel: "email", to: "person@example.com", direct: true });
   });
 });
 

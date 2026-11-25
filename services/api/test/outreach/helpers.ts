@@ -11,7 +11,7 @@ export const row = (n: number, extra: Partial<LoadRow> = {}): LoadRow => ({
   tier: "20+ live ads",
   newestAd: "2026-11-01",
   whatsapp: `+65 8000 ${String(n).padStart(4, "0")}`,
-  email: `hello@brand${n}.example`,
+  email: `brand${n}@example.com`,
   ...extra,
 });
 
@@ -23,7 +23,7 @@ export const profile = (n: number, extra: Partial<Prospect> = {}): Prospect => (
   liveAds: 24,
   tier: "20+",
   whatsapp: [`658000${String(n).padStart(4, "0")}`],
-  email: `hello@brand${n}.example`,
+  email: `brand${n}@example.com`,
   loadedAt: "2026-11-23T01:00:00.000Z",
   ...extra,
 });

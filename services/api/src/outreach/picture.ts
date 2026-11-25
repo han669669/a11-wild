@@ -30,7 +30,10 @@ export class OwnPicture {
     const { store } = this.deps;
     const [files, optOuts] = await Promise.all([store.all(), store.optOuts()]);
     const file = files.find((entry) => entry.profile.id === prospectId);
-    if (!file) throw new Refusal(`There is no prospect ${prospectId}.`);
+    if (!file) {
+      await store.assertWritable(prospectId);
+      throw new Refusal(`There is no prospect ${prospectId}.`);
+    }
     if (optedOut(file, optOuts)) throw new Refusal("This contact opted out. No picture is kept for it, and no message should be sent.");
     return file;
   }
