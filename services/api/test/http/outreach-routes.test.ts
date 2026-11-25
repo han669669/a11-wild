@@ -225,19 +225,19 @@ describe("the owner's day", () => {
     await loadProspects(studio, [row(1, { email: "new@example.com", bestRoute: "DM email (valid) new@example.com", decisionMaker: "Evelyn Tan", dmTitle: "Director" })]);
     const waiting = await json(await get("/api/outreach/prospects/00001"));
     expect(waiting.check).toMatchObject({
-      kept: { channel: "whatsapp", to: "6580000001", person: "Amelia Lee, Founder" },
-      found: { channel: "email", to: "new@example.com", person: "Evelyn Tan, Director" },
+      kept: { channel: "whatsapp", to: "6580000001", person: "Amelia Lee", title: "Founder" },
+      found: { channel: "email", to: "new@example.com", person: "Evelyn Tan", title: "Director" },
     });
-    expect(waiting.contact.sendTo).toMatchObject({ to: "6580000001", person: "Amelia Lee, Founder" });
+    expect(waiting.contact.sendTo).toMatchObject({ to: "6580000001", person: "Amelia Lee", title: "Founder" });
     expect(waiting.message.messages[0].href).toMatch(/^https:\/\/wa\.me\/6580000001/);
 
     const channelChanged = await json(await on("00001", "channel", { channel: "email" }));
-    expect(channelChanged.contact.sendTo).toMatchObject({ to: "6580000001", person: "Amelia Lee, Founder" });
+    expect(channelChanged.contact.sendTo).toMatchObject({ to: "6580000001", person: "Amelia Lee", title: "Founder" });
     expect(channelChanged.message.messages[0].href).toMatch(/^https:\/\/wa\.me\/6580000001/);
 
     const switched = await json(await on("00001", "route", { choice: "new" }));
     expect(switched.check).toBeUndefined();
-    expect(switched.contact.sendTo).toMatchObject({ channel: "email", to: "new@example.com", person: "Evelyn Tan, Director" });
+    expect(switched.contact.sendTo).toMatchObject({ channel: "email", to: "new@example.com", person: "Evelyn Tan", title: "Director" });
     expect(switched.message.messages[0].href).toMatch(/^mailto:new@example\.com\?/);
     expect(switched.events[0]).toMatchObject({ type: "route", choice: "new", by: "owner" });
     studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
@@ -291,6 +291,45 @@ describe("the owner's day", () => {
     expect(page.check).toBeUndefined();
     expect(JSON.stringify(page.contact)).not.toContain("6580000001");
     expect(JSON.stringify(page)).not.toContain("6580000001");
+  });
+
+  it("hides a test prospect's shared plain number on its channel target, message and send history", async () => {
+    const number = "+65 8000 0001";
+    await loadProspects(studio, [row(1, { whatsapp: number, phone: number })]);
+    const test = await json(await post("/api/outreach/test-prospect", { whatsapp: number }));
+    const profile = await outreach().store.get(test.id);
+    await outreach().store.saveProfile({
+      ...profile,
+      phone: number,
+      dmPhone: number,
+      bestRoute: "Source note +65 8000 0001",
+      secondRoute: "Contact note +65 8000 0001",
+    });
+    await outreach().sequence.saveTemplates(TEMPLATES as never);
+    const added = await outreach().store.addAd(test.id, AD);
+    await outreach().sequence.verdict(test.id, { ad: added.n, yes: true });
+    await outreach().sequence.setChannel(test.id, "whatsapp");
+    await outreach().sequence.send(test.id, { step: 0, title: 0 });
+    await outreach().sequence.optOut("00001");
+
+    const sentPage = await json(await get(`/api/outreach/prospects/${test.id}`));
+    expect(sentPage.contact.whatsapp).toEqual([]);
+    expect(sentPage.contact.phone).toBeUndefined();
+    expect(sentPage.contact.sendTo).toBeUndefined();
+    expect(sentPage.contact.bestRoute).toBeUndefined();
+    expect(sentPage.contact.secondRoute).toBeUndefined();
+    expect(sentPage.contact.others.dmPhone).toBeUndefined();
+    expect(sentPage.check).toBeUndefined();
+    expect(sentPage.sends[0].to).toBeUndefined();
+    expect(JSON.stringify(sentPage)).not.toContain("6580000001");
+    expect(JSON.stringify(sentPage)).not.toContain("8000 0001");
+
+    await outreach().sequence.takeBack(test.id, 0);
+    const readyPage = await json(await get(`/api/outreach/prospects/${test.id}`));
+    expect(readyPage.contact.sendTo).toBeUndefined();
+    expect(readyPage.message).toBeUndefined();
+    expect(JSON.stringify(readyPage)).not.toContain("6580000001");
+    expect(JSON.stringify(readyPage)).not.toContain("8000 0001");
   });
 
   it("gives the owner the contact, each link only from a checked value", async () => {

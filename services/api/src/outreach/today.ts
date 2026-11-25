@@ -139,7 +139,7 @@ export async function todayPage(deps: { store: OutreachStore; sequence: Outreach
       ? {
           ...target,
           ...(target.direct && !target.person && !targetIsHeld && file.profile.decisionMaker ? { person: file.profile.decisionMaker } : {}),
-          ...(target.direct && !target.person && !targetIsHeld && file.profile.dmTitle ? { title: file.profile.dmTitle } : {}),
+          ...(target.direct && !target.title && !targetIsHeld && file.profile.dmTitle ? { title: file.profile.dmTitle } : {}),
         }
       : undefined;
     return {

@@ -73,11 +73,11 @@ describe("Today page", () => {
   it("holds a first message for a check, shows its flags and lets the owner switch", async () => {
     let resolved = false;
     let routeBody: unknown;
-    const held = { channel: "whatsapp" as const, to: "6580000001", direct: true, label: "DM phone +65 8000 0001", person: "Evelyn Tan, Founder" };
-    const found = { channel: "email" as const, to: "owner@example.com", direct: true, label: "DM email (valid) owner@example.com", person: "Amelia Lee, Founder" };
+    const held = { channel: "whatsapp" as const, to: "6580000001", direct: true, label: "DM phone +65 8000 0001", person: "Evelyn Tan", title: "Founder" };
+    const found = { channel: "email" as const, to: "owner@example.com", direct: true, label: "DM email (valid) owner@example.com", person: "Amelia Lee", title: "Founder" };
     const line = firstLine({
       prospect: prospectRow({ flags: { duplicate: true, blocked: true, check: true } }),
-      sendTo: { ...held, person: "New Person, Founder" },
+      sendTo: { ...held, person: "New Person" },
       routeCheck: { kept: held, found },
       flags: [
         { kind: "duplicate", text: "DUP-CHECK: possibly listed twice" },
@@ -103,12 +103,12 @@ describe("Today page", () => {
   });
 
   it("formats direct recipients with and without a title", async () => {
-    const direct = { channel: "whatsapp" as const, to: "6580000001", direct: true, label: "DM phone +65 8000 0001", person: "Amelia Lee, Founder" };
+    const direct = { channel: "whatsapp" as const, to: "6580000001", direct: true, label: "DM phone +65 8000 0001", person: "Amelia Lee", title: "Founder" };
     stubApi({ "GET /api/outreach/today": () => ({ body: todayPage({ firsts: [firstLine({ sendTo: direct })] }) }) });
     const first = renderSignedIn(<Outreach />);
     expect(await screen.findByText("To Amelia Lee, Founder, on WhatsApp")).toBeInTheDocument();
     first.unmount();
-    stubApi({ "GET /api/outreach/today": () => ({ body: todayPage({ firsts: [{ ...firstLine(), sendTo: { ...direct, person: "Amelia Lee" } }] }) }) });
+    stubApi({ "GET /api/outreach/today": () => ({ body: todayPage({ firsts: [{ ...firstLine(), sendTo: { channel: direct.channel, to: direct.to, direct: true, person: "Amelia Lee" } }] }) }) });
     renderSignedIn(<Outreach />);
     expect(await screen.findByText("To Amelia Lee on WhatsApp")).toBeInTheDocument();
   });

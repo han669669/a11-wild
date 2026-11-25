@@ -1,4 +1,4 @@
-import type { OutreachAd, ProspectContact, ProspectFile, ProspectPage, ProspectRoute, ProspectsPage, TemplatesPage } from "@a11-wild/shared";
+import type { OutreachAd, OutreachStep, ProspectContact, ProspectFile, ProspectPage, ProspectRoute, ProspectsPage, TemplatesPage } from "@a11-wild/shared";
 import type { Hono, MiddlewareHandler } from "hono";
 import { z } from "zod";
 import type { Deps } from "../app.js";
@@ -88,7 +88,9 @@ export function outreachRoutes(
     const openEmail = (value: string | undefined) => Boolean(value && !closed.has(`E#${value.toLowerCase()}`));
     const openRouteLabel = (value: string | undefined) => {
       const route = routeOf(value);
-      return !route || routeOpen(route, closed);
+      const emails = value?.match(/[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}/gi) ?? [];
+      const numbers = value?.match(/\+?\d[\d().\s-]{5,}\d/g) ?? [];
+      return (!route || routeOpen(route, closed)) && emails.every(openEmail) && numbers.every(openNumber);
     };
     if (optedOut(file, optOuts)) return { whatsapp: [] };
     const target = sendTarget(file);
@@ -97,7 +99,7 @@ export function outreachRoutes(
       ? {
           ...target,
           ...(target.direct && !target.person && !targetIsHeld && profile.decisionMaker ? { person: profile.decisionMaker } : {}),
-          ...(target.direct && !target.person && !targetIsHeld && profile.dmTitle ? { title: profile.dmTitle } : {}),
+          ...(target.direct && !target.title && !targetIsHeld && profile.dmTitle ? { title: profile.dmTitle } : {}),
         }
       : undefined;
     const dmCheck = { valid: "checked", risky: "risky", invalid: "invalid", unknown: "not checked" } as const;
@@ -132,7 +134,7 @@ export function outreachRoutes(
     const reply = owedAnswer(file);
     // The message that can be sent now, on any day: the first one for a brand that is ready, or a follow-up that is due.
     const due = stage === "contacted" ? nextStep(file) : undefined;
-    const step = stage === "ready" ? 0 : due && due.due <= day ? due.step : undefined;
+    const step: OutreachStep | undefined = stage === "ready" ? 0 : due && due.due <= day ? due.step : undefined;
     const ads = await Promise.all([...file.ads].sort((a, b) => b.n - a.n).map((ad: OutreachAd) => adView(file, ad, deps.pictures)));
     const candidates = await picks.view(file, optOuts);
     const closed = new Set(optOuts);
@@ -147,13 +149,18 @@ export function outreachRoutes(
       routeOpen(found, closed)
         ? { kept: file.profile.routeHeld, found }
         : undefined;
+    const messageTarget = step !== undefined ? sendTarget(file) : undefined;
     const sends = [...file.sends]
       .sort((a, b) => a.step - b.step)
       .map((send) => {
-        if (stage !== "opted_out") return send;
+        if (stage !== "opted_out" && (!send.to || routeOpen({ channel: send.channel, to: send.to }, closed))) return send;
         const { to: _to, ...withoutTarget } = send;
         return withoutTarget;
       });
+    const message =
+      step !== undefined && templates && approvedAd(file) && messageTarget && routeOpen(messageTarget, closed)
+        ? { step, messages: messagesFor(templates.steps[step], file.profile, messageTarget) }
+        : undefined;
     return {
       prospect: rowOf(file, optOuts, sameContact(files), deps.now()),
       ...(file.profile.newestAd ? { newestAd: file.profile.newestAd } : {}),
@@ -165,7 +172,7 @@ export function outreachRoutes(
       sends,
       events: [...file.events].sort((a, b) => b.at.localeCompare(a.at)),
       day,
-      ...(step !== undefined && templates && approvedAd(file) ? { message: { step, messages: messagesFor(templates.steps[step], file.profile, sendTarget(file)) } } : {}),
+      ...(message ? { message } : {}),
       ...(reply && (stage === "replied" || stage === "in_talks") ? { owed: { ...(reply.text ? { text: reply.text } : {}), at: reply.at } } : {}),
       ...(candidates ? { candidates } : {}),
     };

@@ -92,6 +92,25 @@ describe("marking a message as sent", () => {
     expect(sent.send).toMatchObject({ channel: "whatsapp", to: "6580000001" });
   });
 
+  it("keeps a resolved choice across repeated imports when no best route parses", async () => {
+    await ready("00001");
+    const initial = row(1, { bestRoute: undefined, whatsapp: "+65 8000 0001" });
+    await loadRows(store, [initial], now);
+    const changed = row(1, { bestRoute: undefined, whatsapp: "+65 8000 0002" });
+    await loadRows(store, [changed], now);
+    expect((await store.get("00001")).routeHeld).toMatchObject({ channel: "whatsapp", to: "6580000001" });
+
+    await sequence.setRoute("00001", "kept");
+    await loadRows(store, [changed], now);
+    expect((await store.get("00001")).routeHeld).toBeUndefined();
+    expect((await store.get("00001")).route).toMatchObject({ channel: "whatsapp", to: "6580000001" });
+
+    await loadRows(store, [changed], now);
+    expect((await store.get("00001")).routeHeld).toBeUndefined();
+    const sent = await sequence.send("00001", { step: 0, title: 0 });
+    expect(sent.send).toMatchObject({ channel: "whatsapp", to: "6580000001" });
+  });
+
   it("counts a send at 23:30 on Monday in Singapore on Monday", async () => {
     await ready("00001");
     at("2026-11-23T23:30:00");

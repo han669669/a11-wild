@@ -49,7 +49,7 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
   const routeError = (failed as string | undefined) === "route" ? error : undefined;
   const routeName = (channel: string) => ({ whatsapp: "WhatsApp", email: "Email", instagram: "Instagram", facebook: "Facebook", call: "Phone" })[channel] ?? "another way";
   const checkTarget = (route: NonNullable<ProspectPage["check"]>["kept"]) => {
-    const recipient = route.direct && route.person ? route.person : "the brand";
+    const recipient = route.direct && route.person ? `${route.person}${route.title ? `, ${route.title}` : ""}` : "the brand";
     const value = route.channel === "whatsapp" && /^\d+$/.test(route.to) ? `+${route.to}` : route.to;
     return `${routeName(route.channel)} to ${recipient} (${value})`;
   };

@@ -54,8 +54,8 @@ describe("Prospect page", () => {
 
   it("shows the check and flags, disables sending until the owner keeps or switches", async () => {
     let routeBody: unknown;
-    const held = { channel: "whatsapp" as const, to: "6580000001", direct: true, label: "DM phone +65 8000 0001", person: "Evelyn Tan, Founder" };
-    const found = { channel: "email" as const, to: "owner@example.com", direct: true, label: "DM email (valid) owner@example.com", person: "Amelia Lee, Founder" };
+    const held = { channel: "whatsapp" as const, to: "6580000001", direct: true, label: "DM phone +65 8000 0001", person: "Evelyn Tan", title: "Founder" };
+    const found = { channel: "email" as const, to: "owner@example.com", direct: true, label: "DM email (valid) owner@example.com", person: "Amelia Lee", title: "Founder" };
     const flags = [
       { kind: "duplicate" as const, text: "DUP-CHECK: Brand 2 may be the same business" },
       { kind: "blocked" as const, text: "AUDIT-FLAG: owner@example.com do not send" },
@@ -63,7 +63,7 @@ describe("Prospect page", () => {
     const calls = stubApi({
       [GET]: () => ({ body: prospectPage({
         prospect: prospectRow({ flags: { duplicate: true, blocked: true, check: true } }),
-        contact: { whatsapp: [{ number: "6580000001" }], sendTo: { ...held, person: "New Person, Director" }, decisionMaker: "New Person", dmTitle: "Director" },
+        contact: { whatsapp: [{ number: "6580000001" }], sendTo: { ...held, person: "New Person", title: "Director" }, decisionMaker: "New Person", dmTitle: "Director" },
         flags,
         check: { kept: held, found },
         message: { step: 0, messages: messages() },

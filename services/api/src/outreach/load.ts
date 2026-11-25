@@ -114,10 +114,15 @@ function withRoutePerson(route: ProspectRoute | undefined, decisionMaker: string
   if (!route.direct) {
     const withoutPerson = { ...route };
     delete withoutPerson.person;
+    delete withoutPerson.title;
     return withoutPerson;
   }
-  if (route.person || !decisionMaker) return route;
-  return { ...route, person: `${decisionMaker}${dmTitle ? `, ${dmTitle}` : ""}` };
+  const withPerson = { ...route };
+  if (decisionMaker) withPerson.person = decisionMaker;
+  else delete withPerson.person;
+  if (dmTitle) withPerson.title = dmTitle;
+  else delete withPerson.title;
+  return withPerson;
 }
 
 function flagsFrom(notes: string | undefined): ProspectFlag[] {
@@ -138,7 +143,8 @@ function flagsFrom(notes: string | undefined): ProspectFlag[] {
 }
 
 const digits = (value: string): string => value.replace(/\D/g, "");
-const EMAIL_IN_TEXT = /[^\s<>()[\]"',;:|\x2f]+@[^\s<>()[\]"',;:|\x2f]+\.[a-z]{2,}/gi;
+const EMAIL_ADDRESS = /^[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}$/i;
+const EMAIL_IN_TEXT = /[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}/gi;
 const numberKey = (value: string): string => {
   const found = digits(value);
   return found.length === 8 ? `65${found}` : found;
@@ -149,7 +155,11 @@ function blockedValues(flags: ProspectFlag[]): { emails: Set<string>; numbers: S
   const numbers = new Set<string>();
   for (const flag of flags) {
     if (flag.kind !== "blocked") continue;
-    for (const found of flag.text.match(EMAIL_IN_TEXT) ?? []) emails.add(found.toLowerCase());
+    for (const found of flag.text.match(EMAIL_IN_TEXT) ?? []) {
+      emails.add(found.toLowerCase());
+      const afterSlash = found.slice(found.lastIndexOf("/") + 1);
+      if (afterSlash !== found && EMAIL_ADDRESS.test(afterSlash)) emails.add(afterSlash.toLowerCase());
+    }
     for (const found of flag.text.match(/\+?\d[\d().\s-]{5,}\d/g) ?? []) {
       const key = numberKey(found);
       if (key.length >= 8) numbers.add(key);
@@ -303,21 +313,24 @@ export async function loadRows(
         const resolved = Boolean(before.routeHeld && routeEvent && routeEvent.at >= before.loadedAt);
         const oldTarget = sendTarget(previous);
         const priorSourceRoute = routeOf(before.bestRoute);
-        const sameSourceRoute = priorSourceRoute?.channel === profile.route?.channel && priorSourceRoute?.to === profile.route?.to;
-        if (sameSourceRoute && before.route && profile.route) {
-          if (before.route.channel === profile.route.channel && before.route.to === profile.route.to) {
+        const sameSourceRoute =
+          (!priorSourceRoute && !profile.route) ||
+          (priorSourceRoute?.channel === profile.route?.channel && priorSourceRoute?.to === profile.route?.to);
+        if (sameSourceRoute && before.route) {
+          if (!profile.route || before.route.channel !== profile.route.channel || before.route.to !== profile.route.to) {
+            profile.route = before.route;
+          } else {
             const updatedRoute = { ...before.route, ...profile.route };
             if (!profile.route.person) delete updatedRoute.person;
+            if (!profile.route.title) delete updatedRoute.title;
             profile.route = updatedRoute;
-          } else {
-            profile.route = withRoutePerson(before.route, before.decisionMaker, before.dmTitle);
           }
         }
         if (resolved && before.routeHeld) {
-          if (routeEvent?.choice === "kept") profile.route = withRoutePerson(before.routeHeld, before.decisionMaker, before.dmTitle);
+          if (routeEvent?.choice === "kept") profile.route = before.routeHeld;
           delete profile.routeHeld;
         } else if (before.routeHeld) {
-          profile.routeHeld = withRoutePerson(before.routeHeld, before.decisionMaker, before.dmTitle);
+          profile.routeHeld = before.routeHeld;
         }
         if ((!before.routeHeld || resolved) && ["pick_waits", "pick_made", "ad_waits", "ready", "contacted", "replied", "in_talks", "client"].includes(stageOf(previous, optOuts))) {
           const newTarget = sendTarget({ ...file, profile });

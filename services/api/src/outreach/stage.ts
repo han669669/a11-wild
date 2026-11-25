@@ -120,7 +120,13 @@ export function owedAnswer(file: ProspectFile): EventOf<"reply"> | undefined {
 
 const sendable = (route: ProspectRoute | undefined): ProspectSendTarget | undefined =>
   route && (route.channel === "whatsapp" || route.channel === "email")
-    ? { channel: route.channel, to: route.to, direct: route.direct, ...(route.person ? { person: route.person } : {}) }
+    ? {
+        channel: route.channel,
+        to: route.to,
+        direct: route.direct,
+        ...(route.person ? { person: route.person } : {}),
+        ...(route.title ? { title: route.title } : {}),
+      }
     : undefined;
 
 const legacyTargets = (file: ProspectFile): ProspectSendTarget[] => {

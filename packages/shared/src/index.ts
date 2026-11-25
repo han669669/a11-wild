@@ -1114,6 +1114,7 @@ export interface ProspectRoute {
   direct: boolean;
   label: string;
   person?: string;
+  title?: string;
 }
 export interface ProspectFlag {
   kind: "duplicate" | "blocked" | "fixed";

@@ -120,6 +120,25 @@ describe("loading the additional list fields", () => {
     expect(profile.secondRoute).toBe("Email (valid)");
   });
 
+  it("blocks an email with a slash in its local part and the address after the slash", async () => {
+    await loadRows(store, [
+      listed(10, {
+        email: "a/b@example.com",
+        dmEmail: "b@example.com",
+        bestRoute: "Email (valid) a/b@example.com",
+        secondRoute: "Email (valid) b@example.com",
+        notes: "AUDIT-FLAG: a/b@example.com do not use",
+      }),
+    ], now);
+    const profile = await store.get("00010");
+    expect(profile.email).toBeUndefined();
+    expect(profile.dmEmail).toBeUndefined();
+    expect(profile.route).toBeUndefined();
+    expect(profile.second).toBeUndefined();
+    expect(profile.bestRoute).toBe("Email (valid)");
+    expect(profile.secondRoute).toBe("Email (valid)");
+  });
+
   it("applies the row limits and accepts 500 characters of raw notes", async () => {
     const notes = "n".repeat(500);
     const result = await loadRows(store, [
@@ -171,6 +190,31 @@ describe("a held contact", () => {
     expect((await store.get("00001")).routeHeld).toBeUndefined();
     expect(await loadRows(store, [incoming], now)).toMatchObject({ held: 0 });
     expect((await store.get("00001")).route).toMatchObject({ channel: "whatsapp", to: "6580000001" });
+  });
+
+  it("does not add the new person's name to an already-held direct route", async () => {
+    await loadRows(store, [listed(1, { bestRoute: "DM phone +65 8000 0001" })], now);
+    const attached = await store.addAd("00001", { batchId: "b", imageId: "i", kind: "v1", key: "outreach/ad.png", why: "The cup." });
+    await store.addEvent("00001", { type: "ad_yes", ad: attached.n }, "owner");
+    const incoming = listed(1, {
+      bestRoute: "DM email (valid) evelyn@example.com",
+      decisionMaker: "Evelyn Tan",
+      dmTitle: "Director",
+    });
+    await loadRows(store, [incoming], now);
+    expect((await store.get("00001")).routeHeld).toMatchObject({ channel: "whatsapp", to: "6580000001", direct: true });
+    expect((await store.get("00001")).routeHeld).not.toHaveProperty("person");
+    expect((await store.get("00001")).routeHeld).not.toHaveProperty("title");
+
+    await loadRows(store, [incoming], now);
+    expect((await store.get("00001")).routeHeld).not.toHaveProperty("person");
+    expect((await store.get("00001")).routeHeld).not.toHaveProperty("title");
+    await store.addEvent("00001", { type: "route", choice: "kept" }, "owner");
+    await loadRows(store, [incoming], now);
+    expect((await store.get("00001")).routeHeld).toBeUndefined();
+    expect((await store.get("00001")).route).toMatchObject({ channel: "whatsapp", to: "6580000001", direct: true });
+    expect((await store.get("00001")).route).not.toHaveProperty("person");
+    expect((await store.get("00001")).route).not.toHaveProperty("title");
   });
 
   it("drops a hold when the new default is the held target or no send target remains", async () => {

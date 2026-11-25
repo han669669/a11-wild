@@ -131,12 +131,11 @@ function MessageLine({ line, done }: { line: TodayLine; done: () => void }) {
   const person = sendTo?.person ?? (!sendTo?.direct ? line.prospect.person : undefined);
   const checkTarget = (route: NonNullable<TodayLine["routeCheck"]>["kept"]) => {
     const channel = route.channel === "whatsapp" ? "WhatsApp" : route.channel === "email" ? "Email" : "another way";
-    const recipient = route.direct && route.person ? route.person : "the brand";
+    const recipient = route.direct && route.person ? `${route.person}${route.title ? `, ${route.title}` : ""}` : "the brand";
     return `${channel} to ${recipient}`;
   };
-  const hasTitle = Boolean(sendTo?.title || sendTo?.person?.includes(", "));
   const who = sendTo?.direct && person
-    ? `To ${person}${sendTo.title ? `, ${sendTo.title}` : ""}${hasTitle ? "," : ""} on ${CHANNELS[sendTo.channel]}`
+    ? `To ${person}${sendTo.title ? `, ${sendTo.title},` : ""} on ${CHANNELS[sendTo.channel]}`
     : sendTo?.channel === "email"
       ? "To the brand's general inbox"
       : sendTo
