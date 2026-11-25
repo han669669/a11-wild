@@ -58,7 +58,7 @@ export function batchTools({ batches, brands, facts, truth, reads, critic, done,
           : batch.test && batch.state === "finished"
             ? "nothing: this is a test batch, and a test batch is never marked done"
             : stepAfter(batch);
-    return { batch, ...(logoFree ? { logoFree: true as const } : {}), nextStep: next, brand, product, factCount: (await facts.list(product.id)).length, truthSheet: sheet ?? null,
+    return { batch, ...(batch.kind === "v1" && logoFree ? { logoFree: true as const } : {}), nextStep: next, brand, product, factCount: (await facts.list(product.id)).length, truthSheet: sheet ?? null,
       ...(newer
         ? { truthNote: `This batch keeps version ${sheet?.version} of the truth sheet, which it saved. The product's sheet is now at version ${newer} (truth_get reads it).` }
         : {}),

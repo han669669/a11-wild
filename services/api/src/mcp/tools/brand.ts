@@ -143,7 +143,7 @@ export function brandTools({ batches, brands, parallel, pictures, net }: BrandTo
         const { createdAt: _createdAt, ...kit } = brand;
         await brands.saveBrand({ ...kit, logo: { key: copied.key, sourceUrl: copied.sourceUrl }, savedBy: context.user.email });
         for (const batch of await batches.list()) {
-          if (batch.brandId === brandId) await batches.markLogoFree(batch.id);
+          if (batch.kind === "v1" && batch.brandId === brandId) await batches.markLogoFree(batch.id);
         }
         return { brandId, logo: { sourceUrl: copied.sourceUrl } };
       },

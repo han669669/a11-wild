@@ -183,6 +183,37 @@ describe("brand tools", () => {
     expect(await studio.services.batches.logoFree(batch.id)).toBe(true);
   });
 
+  it("does not mark a waiting-pick v2 batch logoFree or expose the field in batch_get", async () => {
+    const brand = await savedBrandWithoutLogo();
+    const product = await studio.services.brands.saveProduct({
+      brandId: brand.id,
+      name: "Seaweed crisps",
+      url: PRODUCT_PAGE,
+      photos: [{ key: "products/seaweed-crisps/food.png", sourceUrl: "https://cdn.wongi.example/food.png", kind: "food" }],
+      savedBy: "owner@example.com",
+    });
+    let batch = await studio.services.batches.create({
+      kind: "v2",
+      brandId: brand.id,
+      productId: product.id,
+      format: "static_4x5",
+      createdBy: "owner@example.com",
+    });
+    for (const state of ["truth", "ideas", "judged", "worded", "priced", "drafting", "checked", "waiting_pick"] as const) {
+      batch = await studio.services.batches.move(batch, state, "test");
+    }
+    expect(batch.state).toBe("waiting_pick");
+
+    const extract = await callTool(studio, "brand_extract", { url: "https://wongi.example/" });
+    const saved = await callTool(studio, "brand_logo_save", { brandId: brand.id, extractId: extract.value.extractId, logoUrl: LOGO });
+    expect(saved.ok).toBe(true);
+    expect(await studio.services.batches.logoFree(batch.id)).toBe(false);
+
+    const view = await callTool(studio, "batch_get", { batchId: batch.id });
+    expect(view.ok).toBe(true);
+    expect(view.value).not.toHaveProperty("logoFree");
+  });
+
   it("refuses an older brand offer without the fetched page address", async () => {
     const brand = await savedBrandWithoutLogo();
     const offer = await studio.services.brands.offer({

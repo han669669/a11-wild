@@ -105,7 +105,12 @@ describe("MCP server", () => {
     expect(text.indexOf("Step 0. Ask first")).toBeGreaterThan(-1);
     expect(text.indexOf("which brand")).toBeLessThan(text.indexOf("Step 1."));
     expect(text.indexOf("which product")).toBeLessThan(text.indexOf("Step 1."));
-    expect(text).toContain("A batch marked logoFree finishes without the logo.");
+    expect(text).toContain(
+      "Look at each stamped final and save its D and F checks with checks_save using the stamped picture's id.",
+    );
+    expect(text).toContain(
+      "A batch that batch_get marks logoFree: true skips logo_set and this stamped check; its final's own checks stand.",
+    );
   });
 
   it("answers an unknown method, an unknown tool and an unknown prompt with JSON-RPC errors", async () => {
