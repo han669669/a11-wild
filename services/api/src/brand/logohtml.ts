@@ -234,11 +234,8 @@ export function imgSrcCandidates(imgTag: string): string[] {
     return w ? [{ href, kind: "w", value: w }] : [{ href, kind: "direct", value: 0 }];
   };
   const hasWidthSrcset = srcsetEntries.some((e) => e.kind === "w");
-  // Keep at most the top 3 srcset variants alongside direct src/data-src so large srcsets never crowd out direct fallbacks.
-  const topSrcset = rankCandidates(srcsetEntries).slice(0, 3);
-  const topSrcsetEntries = srcsetEntries.filter((e) => topSrcset.includes(e.href));
   const ranked = rankCandidates([
-    ...topSrcsetEntries,
+    ...srcsetEntries,
     ...toDirectEntry(preferredDirect, hasWidthSrcset),
     ...toDirectEntry(otherDirect, false),
   ]);

@@ -64,8 +64,6 @@ const PRODUCT_PAGES_MAX = 30;
 
 /** Raster MIME types (including legacy PNG/JPEG aliases and APNG) that copyPicture accepts. */
 const SAVABLE_RASTER_MIME = new Set(["image/png", "image/x-png", "image/apng", "image/jpeg", "image/jpg", "image/pjpeg", "image/webp"]);
-/** Max probe attempts per logo candidate across srcset/src/data-src fallbacks. */
-const PROBE_ATTEMPTS_MAX = 6;
 /** Extensions that copyPicture cannot store; deprioritised behind likely-savable URLs when probing fallbacks. */
 const UNSAVABLE_EXT = /\.(?:svg|avif|gif)(?:[?#]|$)/i;
 
@@ -226,8 +224,7 @@ export async function brandExtract(input: { url: string }, net: Net) {
       list.map(async (c) => {
         const all = [c.url, ...(c.fallbacks ?? [])];
         const likelySavable = all.filter((u) => !UNSAVABLE_EXT.test(u));
-        const ordered = likelySavable.length ? [...likelySavable, ...all.filter((u) => UNSAVABLE_EXT.test(u))] : all;
-        const urls = ordered.slice(0, PROBE_ATTEMPTS_MAX);
+        const urls = likelySavable.length ? [...likelySavable, ...all.filter((u) => UNSAVABLE_EXT.test(u))] : all;
         const triedFull = new Set<string>();
         // Share one 4s budget across all opportunistic Shopify upgrade probes for this candidate so fallbacks keep >= 6s.
         const upgradeSignal = AbortSignal.any([probeSignal, AbortSignal.timeout(4_000)]);
