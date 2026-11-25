@@ -179,7 +179,7 @@ describe("checks", () => {
     expect(delivered?.delivered).toMatchObject({ kind: "finish", fromId: final.value.image.id });
   });
 
-  it("keeps the picked stamp through a repair and repeats its placement on the final", async () => {
+  it("keeps the picked stamp's placement over a newer repair stamp", async () => {
     const batch = await studio.services.batches.get(batchId);
     const brand = await studio.services.brands.brand(batch.brandId);
     await studio.services.brands.saveBrand({
@@ -188,10 +188,12 @@ describe("checks", () => {
     });
 
     const pickedDraft = drafts["idea-1"]![0]!;
+    const pickedPlacement = { logoWidth: 0.22, logoTop: 0.05, logoColour: "FFFFFF" };
+    const repairPlacement = { logoWidth: 0.45, logoTop: 0.18, logoColour: "000000" };
     let pickedStampId: string | undefined;
     for (const imageId of Object.values(drafts).flat()) {
       const placement = imageId === pickedDraft
-        ? { logoWidth: 0.22, logoTop: 0.05, logoColour: "FFFFFF" }
+        ? pickedPlacement
         : { logoWidth: 0.3, logoTop: 0.08, logoColour: "000000" };
       const stampedDraft = await callTool(studio, "logo_set", {
         ...rules,
@@ -231,6 +233,21 @@ describe("checks", () => {
     expect((await check(repaired.value.image.id)).ok).toBe(true);
     expect(pickedStamp(legacyPick, await studio.services.images.list(batchId))?.id).toBe(pickedStampId);
 
+    const repairStampJob = await callTool(studio, "logo_set", {
+      ...rules,
+      batchId,
+      imageId: repaired.value.image.id,
+      ...repairPlacement,
+    });
+    expect(repairStampJob.ok).toBe(true);
+    const repairStamp = await callTool(studio, "pixel_status", { batchId, jobId: repairStampJob.value.id });
+    expect(repairStamp.ok).toBe(true);
+    expect(repairStamp.value.image).toMatchObject({ kind: "typeset", fromId: repaired.value.image.id, rootId: pickedDraft });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({
+      logoKey: `brands/${brand.id}/logo.png`,
+      ...repairPlacement,
+    });
+
     const final = await render("idea-1", "final", pickedDraft);
     expect(final.ok).toBe(true);
     expect((await check(final.value.image.id)).ok).toBe(true);
@@ -255,13 +272,14 @@ describe("checks", () => {
     expect(stampedFinalJob.ok).toBe(true);
     const stampedFinal = await callTool(studio, "pixel_status", { batchId, jobId: stampedFinalJob.value.id });
     expect(stampedFinal.ok).toBe(true);
-    expect(studio.pixels.events.at(-1)!.input).toMatchObject({
+    const finalLogoInput = studio.pixels.events.at(-1)!.input;
+    expect(finalLogoInput).toMatchObject({
       logoKey: `brands/${brand.id}/logo.png`,
-      logoWidth: 0.22,
-      logoTop: 0.05,
-      logoColour: "FFFFFF",
+      ...pickedPlacement,
       renderKey: finished.value.image.key,
     });
+    expect(finalLogoInput.logoWidth).not.toBe(repairPlacement.logoWidth);
+    expect(finalLogoInput.logoTop).not.toBe(repairPlacement.logoTop);
     const stampId = stampedFinal.value.image.id;
     const beforeStampCheck = (await studio.services.board.finals(await studio.services.batches.get(batchId))).find((entry) => entry.ideaId === "idea-1");
     expect(beforeStampCheck?.missing).toContain(
