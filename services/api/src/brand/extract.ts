@@ -225,35 +225,42 @@ export async function brandExtract(input: { url: string }, net: Net) {
         const all = [c.url, ...(c.fallbacks ?? [])];
         const likelySavable = all.filter((u) => !UNSAVABLE_EXT.test(u));
         const urls = likelySavable.length ? [...likelySavable, ...all.filter((u) => UNSAVABLE_EXT.test(u))] : all;
+        const originalSet = new Set(urls);
         const plan: { url: string; upgrade: boolean }[] = [];
         const seenUrl = new Set<string>();
         for (const u of urls) {
           const full = fullSizeShopifyLogo(u);
           if (full && !seenUrl.has(full)) {
             seenUrl.add(full);
-            plan.push({ url: full, upgrade: true });
+            plan.push({ url: full, upgrade: !originalSet.has(full) });
           }
           if (!seenUrl.has(u)) {
             seenUrl.add(u);
             plan.push({ url: u, upgrade: false });
           }
         }
-        // Probe all variants concurrently with bounded timeouts so one hanging srcset URL cannot starve a working src fallback.
-        const upgradeSignal = AbortSignal.any([probeSignal, AbortSignal.timeout(4_000)]);
-        const fallbackSignal = AbortSignal.any([probeSignal, AbortSignal.timeout(5_000)]);
-        const results = await Promise.all(
-          plan.map(async (p) => ({
-            ...p,
-            state: await probeLogo(net, p.url, p.upgrade ? upgradeSignal : fallbackSignal, p.upgrade),
-          })),
+        // Start probes concurrently so a hanging srcset cannot starve src, and stop as soon as the highest-priority live logo settles.
+        const done = new AbortController();
+        const upgradeSignal = AbortSignal.any([probeSignal, done.signal, AbortSignal.timeout(4_000)]);
+        const fallbackSignal = AbortSignal.any([probeSignal, done.signal, AbortSignal.timeout(5_000)]);
+        const tasks = plan.map((p) =>
+          probeLogo(net, p.url, p.upgrade ? upgradeSignal : fallbackSignal, p.upgrade).then((state) => ({ ...p, state })),
         );
-        const live = results.find((r) => r.state === "live");
-        if (live) return { candidate: { url: live.url, kind: c.kind }, state: "live" as const };
-        const originals = results.filter((r) => !r.upgrade);
-        const unknown = originals.find((r) => r.state === "unknown");
-        if (unknown) return { candidate: { url: unknown.url, kind: c.kind }, state: "unknown" as const };
-        const state = originals.some((r) => r.state === "svg") ? ("svg" as const) : ("dead" as const);
-        return { candidate: { url: c.url, kind: c.kind }, state };
+        let firstUnknown: string | undefined;
+        let sawSvg = false;
+        for (const task of tasks) {
+          const r = await task;
+          if (r.state === "live") {
+            done.abort();
+            return { candidate: { url: r.url, kind: c.kind }, state: "live" as const };
+          }
+          if (!r.upgrade) {
+            if (r.state === "unknown") firstUnknown ??= r.url;
+            else if (r.state === "svg") sawSvg = true;
+          }
+        }
+        if (firstUnknown) return { candidate: { url: firstUnknown, kind: c.kind }, state: "unknown" as const };
+        return { candidate: { url: c.url, kind: c.kind }, state: sawSvg ? ("svg" as const) : ("dead" as const) };
       }),
     );
     deadLogos += resolved.filter((r) => r.state === "dead").length;
