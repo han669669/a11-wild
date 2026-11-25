@@ -225,27 +225,35 @@ export async function brandExtract(input: { url: string }, net: Net) {
         const all = [c.url, ...(c.fallbacks ?? [])];
         const likelySavable = all.filter((u) => !UNSAVABLE_EXT.test(u));
         const urls = likelySavable.length ? [...likelySavable, ...all.filter((u) => UNSAVABLE_EXT.test(u))] : all;
-        const triedFull = new Set<string>();
-        // Share one 4s budget across all opportunistic Shopify upgrade probes for this candidate so fallbacks keep >= 6s.
-        const upgradeSignal = AbortSignal.any([probeSignal, AbortSignal.timeout(4_000)]);
-        let firstUnknown: string | undefined;
-        let lastState: "live" | "svg" | "dead" | "unknown" = "dead";
+        const plan: { url: string; upgrade: boolean }[] = [];
+        const seenUrl = new Set<string>();
         for (const u of urls) {
-          if (probeSignal.aborted) break;
           const full = fullSizeShopifyLogo(u);
-          if (full && !triedFull.has(full) && !upgradeSignal.aborted) {
-            triedFull.add(full);
-            if ((await probeLogo(net, full, upgradeSignal, true)) === "live") {
-              return { candidate: { url: full, kind: c.kind }, state: "live" as const };
-            }
+          if (full && !seenUrl.has(full)) {
+            seenUrl.add(full);
+            plan.push({ url: full, upgrade: true });
           }
-          const state = await probeLogo(net, u, probeSignal);
-          if (state === "live") return { candidate: { url: u, kind: c.kind }, state };
-          if (state === "unknown") firstUnknown ??= u;
-          else lastState = state;
+          if (!seenUrl.has(u)) {
+            seenUrl.add(u);
+            plan.push({ url: u, upgrade: false });
+          }
         }
-        if (firstUnknown) return { candidate: { url: firstUnknown, kind: c.kind }, state: "unknown" as const };
-        return { candidate: { url: c.url, kind: c.kind }, state: lastState };
+        // Probe all variants concurrently with bounded timeouts so one hanging srcset URL cannot starve a working src fallback.
+        const upgradeSignal = AbortSignal.any([probeSignal, AbortSignal.timeout(4_000)]);
+        const fallbackSignal = AbortSignal.any([probeSignal, AbortSignal.timeout(5_000)]);
+        const results = await Promise.all(
+          plan.map(async (p) => ({
+            ...p,
+            state: await probeLogo(net, p.url, p.upgrade ? upgradeSignal : fallbackSignal, p.upgrade),
+          })),
+        );
+        const live = results.find((r) => r.state === "live");
+        if (live) return { candidate: { url: live.url, kind: c.kind }, state: "live" as const };
+        const originals = results.filter((r) => !r.upgrade);
+        const unknown = originals.find((r) => r.state === "unknown");
+        if (unknown) return { candidate: { url: unknown.url, kind: c.kind }, state: "unknown" as const };
+        const state = originals.some((r) => r.state === "svg") ? ("svg" as const) : ("dead" as const);
+        return { candidate: { url: c.url, kind: c.kind }, state };
       }),
     );
     deadLogos += resolved.filter((r) => r.state === "dead").length;
