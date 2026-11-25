@@ -146,15 +146,11 @@ describe("marking a message as sent", () => {
     expect((await store.all()).find((entry) => entry.profile.id === "00001")?.sends).toHaveLength(1);
   });
 
-  it("refuses supplied contacts that are blocked or malformed", async () => {
-    await loadRows(store, [row(1, { notes: "AUDIT-FLAG: blocked@example.com do not use" })], now);
+  it("refuses a channel-only mismatch with the current contact", async () => {
     await ready("00001");
 
-    await expect(sequence.send("00001", { step: 0, title: 0, channel: "email", to: "blocked@example.com" })).rejects.toThrow(
-      "That contact can't be used any more, so this can't be recorded.",
-    );
-    await expect(sequence.send("00001", { step: 0, title: 0, channel: "whatsapp", to: "658000 0001" })).rejects.toThrow(
-      "That contact can't be used any more, so this can't be recorded.",
+    await expect(sequence.send("00001", { step: 0, title: 0, channel: "email" })).rejects.toThrow(
+      "The contact for this brand changed. Reload the page and check it before marking.",
     );
     expect((await store.all()).find((entry) => entry.profile.id === "00001")?.sends).toEqual([]);
   });
