@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { rankable } from "../../src/critic/packet.js";
+import { CriticStore } from "../../src/critic/store.js";
 import { RenderStore } from "../../src/render/store.js";
+import { DRAFTS_PER_IDEA } from "../../src/render/service.js";
 import { RULES_VERSION } from "../../src/houserules.js";
 import { MADE_BEFORE } from "../../src/made/count.js";
-import { batchAtTruth, idea, judgeIdeas } from "../helpers/batch.js";
+import { batchAtTruth, idea, judgeIdeas, rankDrafts, readTaste, savedProduct, sheet } from "../helpers/batch.js";
 import { approvedClient, callTool, createStudio, type Studio } from "../helpers/deps.js";
-import type { FalCall } from "../helpers/fal.js";
+import type { FalAnswer } from "../helpers/fal.js";
 
 const SCENE = "The pouch stands on a wet black rock at dusk, low camera, a wave about to break behind it.";
 const refused = (pattern: RegExp) => ({ ok: false, error: expect.stringMatching(pattern) });
@@ -13,11 +16,21 @@ let studio: Studio;
 let batchId: string;
 
 /** A batch with its three ideas saved. With `pack`, the product has a pack photo, so drafts need skeletons. */
-async function batchAtIdeas(options: { fal?: (call: FalCall) => ReturnType<NonNullable<Parameters<typeof createStudio>[0]>["fal"] & object> | undefined; pack?: boolean } = {}) {
+async function batchAtIdeas(options: { fal?: FalAnswer; pack?: boolean; purpose?: "outreach" } = {}) {
   studio = await createStudio(options.fal ? { fal: options.fal } : {});
   await approvedClient(studio);
-  const made = await batchAtTruth(studio);
-  batchId = made.batchId;
+  let made: Awaited<ReturnType<typeof batchAtTruth>>;
+  if (options.purpose) {
+    const { brand, product } = await savedProduct(studio);
+    const batch = await studio.services.batches.create({ kind: "v1", brandId: brand.id, productId: product.id, format: "static_4x5", createdBy: "owner@example.com", purpose: options.purpose });
+    batchId = batch.id;
+    await callTool(studio, "truth_save", { batchId, ...sheet });
+    await readTaste(studio, batchId);
+    made = { batchId, brand, product };
+  } else {
+    made = await batchAtTruth(studio);
+    batchId = made.batchId;
+  }
   if (options.pack) {
     await studio.services.brands.saveProduct({ ...made.product, photos: [...made.product.photos, { key: "products/p/pack.png", sourceUrl: "https://cdn.wongi.example/pack.png", kind: "pack" }] });
   }
@@ -28,6 +41,30 @@ async function batchAtIdeas(options: { fal?: (call: FalCall) => ReturnType<NonNu
 const draft = (extra: object = {}) => callTool(studio, "render_submit", { rulesVersion: RULES_VERSION, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, ...extra });
 const skeleton = async (n: number) => (await studio.services.images.add({ batchId, kind: "skeleton", key: `batches/${batchId}/skeletons/s${n}.png` })).id;
 const state = async () => (await callTool(studio, "batch_get", { batchId })).value.batch.state;
+const doneDraft = async (extra: object = {}) => {
+  const sent = await draft(extra);
+  if (!sent.ok) throw new Error(sent.error);
+  const done = await callTool(studio, "render_status", { batchId, renderId: sent.value.id });
+  if (!done.ok) throw new Error(done.error);
+  return { renderId: sent.value.id as string, imageId: done.value.image.id as string };
+};
+async function readyBoard(leaveLastMissing = false, rank = true) {
+  const drafts: { ideaId: string; renderId: string; imageId: string }[] = [];
+  for (const ideaId of ["idea-1", "idea-2", "idea-3"]) {
+    for (let n = 0; n < DRAFTS_PER_IDEA; n++) drafts.push({ ideaId, ...(await doneDraft({ ideaId })) });
+  }
+  for (const [index, draft] of drafts.entries()) {
+    if (leaveLastMissing && index === drafts.length - 1) continue;
+    await callTool(studio, "checks_save", {
+      rulesVersion: RULES_VERSION,
+      batchId,
+      imageId: draft.imageId,
+      items: index === 0 || index === DRAFTS_PER_IDEA ? [{ code: "D11", note: "The pouch is too tall." }] : [],
+    });
+  }
+  if (rank) await rankDrafts(studio, batchId);
+  return drafts;
+}
 
 beforeEach(() => batchAtIdeas());
 
@@ -94,6 +131,242 @@ describe("render_submit", () => {
     // Another idea may use a skeleton that a first idea used, or draw directly from real photos without a skeleton.
     expect((await draft({ ideaId: "idea-2", fromId: one })).ok).toBe(true);
     expect((await draft({ ideaId: "idea-2" })).ok).toBe(true);
+  });
+
+  it("lets a rejected v1 draft be made again once and replaces it on the board and critic packet", async () => {
+    const first = await doneDraft();
+    const second = await doneDraft();
+    const third = await doneDraft();
+    await callTool(studio, "checks_save", {
+      rulesVersion: RULES_VERSION,
+      batchId,
+      imageId: first.imageId,
+      items: [{ code: "D11", note: "The pouch is too tall." }],
+    });
+
+    const sent = await draft({ redo: first.renderId });
+    if (!sent.ok) throw new Error(sent.error);
+    const done = await callTool(studio, "render_status", { batchId, renderId: sent.value.id });
+    expect(done.value.status).toBe("done");
+    expect((await studio.services.renders.get(batchId, sent.value.id)).redoOf).toBe(first.renderId);
+
+    const board = await studio.services.board.board(batchId);
+    const boardDrafts = board.ideas.find((entry) => entry.idea.id === "idea-1")!.drafts.map((entry) => entry.image.id);
+    expect(boardDrafts).toHaveLength(DRAFTS_PER_IDEA);
+    expect(boardDrafts).toEqual(expect.arrayContaining([second.imageId, third.imageId, done.value.image.id]));
+    expect(boardDrafts).not.toContain(first.imageId);
+
+    const criticDrafts = rankable(board, DRAFTS_PER_IDEA).find((entry) => entry.idea.id === "idea-1")!.drafts.map((entry) => entry.imageId);
+    expect(criticDrafts).toEqual(expect.arrayContaining([second.imageId, third.imageId, done.value.image.id]));
+    expect(criticDrafts).not.toContain(first.imageId);
+  });
+
+  it("refuses to make a v1 draft again when its checks do not reject it", async () => {
+    const first = await doneDraft();
+    expect(await draft({ redo: first.renderId })).toEqual(refused(/made again once, and only when its checks reject it/));
+    expect(studio.fal.submits()).toHaveLength(1);
+  });
+
+  it("refuses to make a queued v1 draft again", async () => {
+    const first = await draft();
+    if (!first.ok) throw new Error(first.error);
+    expect(await draft({ redo: first.value.id })).toEqual(refused(/Only a finished draft can be made again/));
+    expect(studio.fal.submits()).toHaveLength(1);
+  });
+
+  it("refuses a redo after that idea is ranked, but allows one for an unranked idea while checks remain", async () => {
+    const drafts: { ideaId: string; renderId: string; imageId: string }[] = [];
+    for (const ideaId of ["idea-1", "idea-2", "idea-3"]) {
+      for (let n = 0; n < DRAFTS_PER_IDEA; n++) drafts.push({ ideaId, ...(await doneDraft({ ideaId })) });
+    }
+    for (const [index, made] of drafts.entries()) {
+      if (index === drafts.length - 1) continue;
+      await callTool(studio, "checks_save", {
+        rulesVersion: RULES_VERSION,
+        batchId,
+        imageId: made.imageId,
+        items: index === 0 || index === DRAFTS_PER_IDEA ? [{ code: "D11", note: "The pouch is too tall." }] : [],
+      });
+    }
+    const ranked = drafts.filter((made) => made.ideaId === "idea-1");
+    await new CriticStore(studio.table, () => studio.clock.now).saveRank(batchId, {
+      ideaId: "idea-1",
+      order: ranked.map(({ imageId }) => ({ imageId, shownId: imageId, reason: "The scene reads at once." })),
+    });
+
+    expect(await state()).toBe("drafting");
+    expect(await draft({ redo: ranked[0]!.renderId })).toEqual(
+      refused(/A draft is made again before the critic ranks the drafts\. Once the board is checked, the owner picks among the drafts as they are\./),
+    );
+    const unranked = drafts.find((made) => made.ideaId === "idea-2")!;
+    expect((await draft({ ideaId: "idea-2", redo: unranked.renderId })).ok).toBe(true);
+  });
+
+  it("refuses to redo a redo or to redo the original a second time", async () => {
+    const first = await doneDraft();
+    await callTool(studio, "checks_save", {
+      rulesVersion: RULES_VERSION,
+      batchId,
+      imageId: first.imageId,
+      items: [{ code: "D11", note: "The pouch is too tall." }],
+    });
+    const sent = await draft({ redo: first.renderId });
+    if (!sent.ok) throw new Error(sent.error);
+    await callTool(studio, "render_status", { batchId, renderId: sent.value.id });
+
+    expect(await draft({ redo: sent.value.id })).toEqual(refused(/A draft can be made again only once/));
+    expect(await draft({ redo: first.renderId })).toEqual(refused(/not a live draft of this idea/));
+    expect(studio.fal.submits()).toHaveLength(2);
+  });
+
+  it("refuses a redo once a checked board is ready", async () => {
+    const initial = await readyBoard();
+    expect(await state()).toBe("checked");
+    expect(await draft({ redo: initial[0]!.renderId })).toEqual(refused(/A draft is made again before the critic ranks the drafts\. Once the board is checked, the owner picks among the drafts as they are\./));
+    expect(await state()).toBe("checked");
+  });
+
+  it("refuses a redo once the board is waiting for a pick", async () => {
+    const initial = await readyBoard();
+    await callTool(studio, "board_show", { batchId });
+    expect(await state()).toBe("waiting_pick");
+    expect(await draft({ redo: initial[0]!.renderId })).toEqual(refused(/A draft is made again before the critic ranks the drafts\. Once the board is checked, the owner picks among the drafts as they are\./));
+    expect(await state()).toBe("waiting_pick");
+  });
+
+  it("holds drafting for a queued redo and requires checks and a fresh rank when it finishes", async () => {
+    const initial = await readyBoard(true, false);
+    const redo = await draft({ redo: initial[0]!.renderId });
+    if (!redo.ok) throw new Error(redo.error);
+    await callTool(studio, "checks_save", { rulesVersion: RULES_VERSION, batchId, imageId: initial.at(-1)!.imageId, items: [] });
+    const ranked = await rankDrafts(studio, batchId);
+    expect(ranked.ok).toBe(true);
+
+    const held = await studio.services.board.progress(await studio.services.batches.get(batchId));
+    expect(held.batch.state).toBe("drafting");
+    expect(held.missing).toEqual(["a queued draft redo to finish"]);
+
+    expect(await state()).toBe("drafting");
+    const done = await callTool(studio, "render_status", { batchId, renderId: redo.value.id });
+    expect(done.value.status).toBe("done");
+    await callTool(studio, "checks_save", { rulesVersion: RULES_VERSION, batchId, imageId: done.value.image.id, items: [] });
+    expect(await state()).toBe("drafting");
+    const reranked = await rankDrafts(studio, batchId);
+    expect(reranked.ok).toBe(true);
+    expect(await state()).toBe("checked");
+  });
+
+  it("releases the board hold when a queued redo fails", async () => {
+    const initial = await readyBoard(true, false);
+    const redo = await draft({ redo: initial[0]!.renderId });
+    if (!redo.ok) throw new Error(redo.error);
+    const queued = await studio.services.renders.get(batchId, redo.value.id);
+    await studio.services.renders.end(queued, { status: "failed", error: "The render failed." });
+    await rankDrafts(studio, batchId);
+    await callTool(studio, "checks_save", { rulesVersion: RULES_VERSION, batchId, imageId: initial.at(-1)!.imageId, items: [] });
+    expect(await state()).toBe("checked");
+  });
+
+  it("does not hold v3 progress for a queued redo from a superseded direction", async () => {
+    const old = await draft();
+    if (!old.ok) throw new Error(old.error);
+    const { batchId: conceptBatchId } = await batchAtTruth(studio, { kind: "v3" });
+    const conceptBatch = await studio.services.batches.get(conceptBatchId);
+    await studio.table.put({ pk: "BATCH", sk: conceptBatchId, ...conceptBatch, state: "drafting" });
+    await studio.services.batches.saveIdeas(
+      conceptBatchId,
+      [1, 2, 3].map((number) => ({ ...idea(number), id: `idea-${number}` })),
+      "owner@example.com",
+    );
+    const direction = { ideaId: "idea-1", why: "An old plan.", risk: "low" as const, look: "Old look.", lockup: "flush_left" as const, drafts: [] };
+    await studio.services.directions.save(conceptBatchId, [direction], "owner@example.com");
+    const current = await studio.services.directions.save(conceptBatchId, [{ ...direction, look: "New look." }], "owner@example.com");
+    const previous = await studio.services.renders.get(batchId, old.value.id);
+    const { id, ...render } = previous;
+    await studio.services.renders.create({ ...render, batchId: conceptBatchId, ideaId: "idea-1", redoOf: id, directionVersion: 1, draft: 1 });
+
+    const progress = await studio.services.board.progress(await studio.services.batches.get(conceptBatchId));
+    expect(current.concepts[0]?.since).toBe(2);
+    expect(progress.missing).not.toContain("a queued draft redo to finish");
+    expect(progress.batch.state).toBe("drafting");
+  });
+
+  it("uses logo-stamped checks to allow a redo for either one D or two F items", async () => {
+    for (const items of [
+      [{ code: "F1", note: "The logo crowds the product." }, { code: "F2", note: "The logo crowds the product." }],
+      [{ code: "D11", note: "The logo crowds the product." }],
+    ]) {
+      const first = await doneDraft();
+      await callTool(studio, "checks_save", { rulesVersion: RULES_VERSION, batchId, imageId: first.imageId, items: [] });
+      const batch = await studio.services.batches.get(batchId);
+      const brand = await studio.services.brands.brand(batch.brandId);
+      await studio.services.brands.saveBrand({ ...brand, logo: { key: "brands/b/logo.png", sourceUrl: "https://cdn.wongi.example/logo.png" } });
+      const set = await callTool(studio, "logo_set", { rulesVersion: RULES_VERSION, batchId, imageId: first.imageId });
+      const logo = await callTool(studio, "pixel_status", { batchId, jobId: set.value.id });
+      await callTool(studio, "checks_save", { rulesVersion: RULES_VERSION, batchId, imageId: logo.value.image.id, items });
+      expect((await draft({ redo: first.renderId })).ok).toBe(true);
+      await batchAtIdeas();
+    }
+  });
+
+  it("refuses v1 and v2 redos in outreach batches", async () => {
+    await batchAtIdeas({ purpose: "outreach" });
+    const first = await doneDraft();
+    await callTool(studio, "checks_save", { rulesVersion: RULES_VERSION, batchId, imageId: first.imageId, items: [{ code: "D11", note: "The pouch is too tall." }] });
+    expect(await draft({ redo: first.renderId })).toEqual(refused(/In an outreach batch, a draft with a warning stays pickable, so it is not made again/));
+  });
+
+  it("allows a v2 redo rejected on its approved typeset picture and reuses its skeleton", async () => {
+    const made = await batchAtTruth(studio, { kind: "v2" });
+    batchId = made.batchId;
+    await studio.services.brands.saveProduct({
+      ...made.product,
+      photos: [...made.product.photos, { key: "products/p/pack.png", sourceUrl: "https://cdn.wongi.example/pack.png", kind: "pack" }],
+    });
+    const stages = ["tof", "mof", "bof"] as const;
+    const ideas = [1, 2, 3].map((n) => ({ id: `idea-${n}`, ...idea(n, { stage: stages[n - 1] }) }));
+    await studio.services.batches.saveIdeas(batchId, ideas, "owner");
+    const atIdeas = await studio.services.batches.move(await studio.services.batches.get(batchId), "ideas", "ideas_save");
+    await studio.services.batches.move(atIdeas, "judged", "critic_select");
+    await callTool(studio, "copy_approve", {
+      rulesVersion: RULES_VERSION,
+      batchId,
+      ideas: ideas.map(({ id }) => ({ ideaId: id, headline: "ONCE YOU START.", subline: "You cannot stop.", ownerSaid: "Yes, those words." })),
+    });
+    const skeletonId = await skeleton(1);
+    const first = await doneDraft({ fromId: skeletonId });
+    const typeset = await studio.services.images.add({ batchId, kind: "typeset", key: `batches/${batchId}/words.png`, fromId: first.imageId });
+    await callTool(studio, "checks_save", { rulesVersion: RULES_VERSION, batchId, imageId: typeset.id, items: [{ code: "D11", note: "The headline crowds the pouch." }] });
+    const redo = await draft({ redo: first.renderId, fromId: skeletonId });
+    expect(redo.ok).toBe(true);
+    expect(redo.value.fromId).toBe(skeletonId);
+  });
+
+  it("refuses a redo id from another idea", async () => {
+    const first = await doneDraft();
+    expect(await draft({ ideaId: "idea-2", redo: first.renderId })).toEqual(refused(/not a live draft of this idea/));
+    expect(studio.fal.submits()).toHaveLength(1);
+  });
+
+  it("refuses redo for v3 drafts and for roughs or finals", async () => {
+    const { batchId: conceptBatchId } = await batchAtTruth(studio, { kind: "v3" });
+    expect(
+      await callTool(studio, "render_submit", {
+        rulesVersion: RULES_VERSION,
+        batchId: conceptBatchId,
+        ideaId: "idea-1",
+        kind: "draft",
+        prompt: SCENE,
+        redo: "old-draft",
+      }),
+    ).toEqual(refused(/concept ad \(v3\) uses draft, not redo/));
+    expect(await callTool(studio, "render_submit", { rulesVersion: RULES_VERSION, batchId, ideaId: "idea-1", kind: "rough", prompt: SCENE, redo: "old-draft" })).toEqual(
+      refused(/redo only for a v1 or v2 draft/),
+    );
+    expect(await callTool(studio, "render_submit", { rulesVersion: RULES_VERSION, batchId, ideaId: "idea-1", kind: "final", prompt: SCENE, redo: "old-draft" })).toEqual(
+      refused(/redo only for a v1 or v2 draft/),
+    );
+    expect(studio.fal.submits()).toHaveLength(0);
   });
 
   it("takes only the product's photos and the brand's logo as other references", async () => {

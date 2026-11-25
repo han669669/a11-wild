@@ -111,6 +111,12 @@ describe("MCP server", () => {
     expect(text).toContain(
       "A batch that batch_get marks logoFree: true skips logo_set and this stamped check; its final's own checks stand.",
     );
+    expect(text).toContain("A draft whose checks reject it (a D item, or two F items) may be made again once now with render_submit redo; check the new draft, then rank.");
+
+    const headline = await send(rpc("prompts/get", { name: "headline_ads" }));
+    expect(headline.body.result.messages[0].content.text).toContain(
+      "A draft whose checks reject it (a D item, or two F items) may be made again once now with render_submit redo; check the new draft, then rank.",
+    );
   });
 
   it("answers an unknown method, an unknown tool and an unknown prompt with JSON-RPC errors", async () => {

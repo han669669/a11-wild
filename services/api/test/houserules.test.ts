@@ -10,6 +10,14 @@ describe("house rules", () => {
     );
   });
 
+  it("publishes the v1 and v2 redo rule with the current house rules version", () => {
+    expect(RULES_VERSION).toBe("2026-11-26.2");
+    for (const kind of ["v1", "v2"] as const) {
+      const rule = rulesFor("main", kind).find((entry) => entry.id === "v1-v2-redo");
+      expect(rule?.text).toMatch(/made again once with redo.*fresh critic rank.*outreach batch.*stays pickable/);
+    }
+  });
+
   it("gives every rule a unique id and at least one role", () => {
     const ids = HOUSE_RULES.map((rule) => rule.id);
     expect(new Set(ids).size).toBe(ids.length);

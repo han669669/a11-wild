@@ -130,7 +130,7 @@ export function studioTools(parts: StudioParts) {
   const conceptBoard = new ConceptBoardService({ batches, brands, briefs, critic, images, pictures, conceptPicks });
   const done = new DoneGate({ batches, brands, facts, truth, board, copy });
   const made = new MadeCount(table, references);
-  const render = new RenderService({ directions, batches, brands, images, renders, ledger, gate, fal, pictures, finals: board, made });
+  const render = new RenderService({ directions, batches, brands, images, renders, picks, critic: criticStore, ledger, gate, fal, pictures, finals: board, made });
   const jobs = new JobStore(table, now);
   const pixels = new PixelService({ batches, brands, images, checks, board, renders, jobs, pictures, copy, directions, runner: parts.pixelRunner, now });
   const packs = new PackStore(table);
