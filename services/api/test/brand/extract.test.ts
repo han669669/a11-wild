@@ -117,5 +117,46 @@ describe("brandExtract", () => {
     });
     const lazyPicked = await brandExtract({ url: "https://brand.example/" }, lazyPngNet);
     expect(lazyPicked.logoCandidates).toEqual([{ url: "https://brand.example/wordmark.png", kind: "header" }]);
+
+    const lazyDeadRealNet = fakeNet({
+      "https://brand.example/": html(lazyPngPage),
+      "https://brand.example/blank.png": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const lazyDropped = await brandExtract({ url: "https://brand.example/" }, lazyDeadRealNet);
+    expect(lazyDropped.logoCandidates).toEqual([]);
+
+    const avifFallbackPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="/logo.png" srcset="/logo.avif 2x" alt="Brand"></a></header></body></html>`;
+    const avifFallbackNet = fakeNet({
+      "https://brand.example/": html(avifFallbackPage),
+      "https://brand.example/logo.avif": { body: "x", headers: { "content-type": "image/avif" } },
+      "https://brand.example/logo.png": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const avifRecovered = await brandExtract({ url: "https://brand.example/" }, avifFallbackNet);
+    expect(avifRecovered.logoCandidates).toEqual([{ url: "https://brand.example/logo.png", kind: "header" }]);
+
+    const httpPrimaryPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="https://brand.example/logo.png" srcset="http://brand.example/logo-2x.png 2x" alt="Brand"></a></header></body></html>`;
+    const httpPrimaryNet = fakeNet({
+      "https://brand.example/": html(httpPrimaryPage),
+      "https://brand.example/logo.png": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const httpsRecovered = await brandExtract({ url: "https://brand.example/" }, httpPrimaryNet);
+    expect(httpsRecovered.logoCandidates).toEqual([{ url: "https://brand.example/logo.png", kind: "header" }]);
+
+    const hashedGuessPage = `<!doctype html><html><head><title>Brand</title></head><body><main><img src="/assets/brand-logo.png" srcset="/cdn/a1b2c3.png 2x"></main></body></html>`;
+    const hashedGuessNet = fakeNet({
+      "https://brand.example/": html(hashedGuessPage),
+      "https://brand.example/cdn/a1b2c3.png": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const hashedFound = await brandExtract({ url: "https://brand.example/" }, hashedGuessNet);
+    expect(hashedFound.logoCandidates).toEqual([{ url: "https://brand.example/cdn/a1b2c3.png", kind: "guess" }]);
+
+    const shopifyFallbackPage = `<!doctype html><html><head><title>Shop</title></head><body><header><a href="/"><img src="//shop.example/cdn/shop/files/logo.png?v=1&amp;width=105" srcset="https://dead.example/logo-2x.png 2x" alt="Shop"></a></header></body></html>`;
+    const shopifyFallbackNet = fakeNet({
+      "https://shop.example/": html(shopifyFallbackPage),
+      "https://shop.example/cdn/shop/files/logo.png?v=1": { body: "x", headers: { "content-type": "image/png" } },
+      "https://shop.example/cdn/shop/files/logo.png?v=1&width=105": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const shopifyFallbackUpgraded = await brandExtract({ url: "https://shop.example/" }, shopifyFallbackNet);
+    expect(shopifyFallbackUpgraded.logoCandidates).toEqual([{ url: "https://shop.example/cdn/shop/files/logo.png?v=1", kind: "header" }]);
   });
 });
