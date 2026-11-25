@@ -28,7 +28,7 @@ afterEach(() => {
 describe("outreach_load", () => {
   it("loads rows and the message text, and returns counts only", async () => {
     const loaded = await callTool(studio, "outreach_load", { rows: [row(1, PRIVATE), row(2)], templates: TEMPLATES });
-    expect(loaded.value).toEqual({ added: 2, updated: 0, merged: 0, held: 0, blocked: 0, refused: [], prospects: 2, templates: "saved" });
+    expect(loaded.value).toEqual({ added: 2, updated: 0, merged: 0, blocked: 0, refused: [], prospects: 2, templates: "saved" });
     expect((await outreach().store.get("00001")).whatsapp).toEqual(["6581234567"]);
   });
 

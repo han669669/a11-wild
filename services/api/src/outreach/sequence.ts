@@ -2,7 +2,7 @@ import type { OutreachChannel, OutreachEvent, OutreachSend, OutreachStep, Outrea
 import { Refusal } from "../mcp/registry.js";
 import { dueDay, singaporeDay } from "./days.js";
 import { checkTemplate, fill } from "./messages.js";
-import { newestAd, optedOut, routeHeldUnresolved, sendTarget, stageOf, targetForChannel, verdictOf } from "./stage.js";
+import { newestAd, optedOut, routeCheckUnresolved, sendTarget, stageOf, targetForChannel, verdictOf } from "./stage.js";
 import { contactKeys, type OutreachStore } from "./store.js";
 
 /** The owner's sequence: follow-up 1 three days after the first message, follow-up 2 four days after follow-up 1. */
@@ -87,7 +87,7 @@ export class OutreachSequence {
     const before = file.sends.find((send) => send.step === step);
     if (before) return { send: before, already: true };
     if (optedOut(file, optOuts)) throw new Refusal("This contact opted out. No message to it is recorded, and none should be sent.");
-    if (step === 0 && routeHeldUnresolved(file)) throw new Refusal("A newer contact was found for this brand. Choose keep or switch first.");
+    if (routeCheckUnresolved(file)) throw new Refusal("The best contact for this brand changed. Check it, then send.");
     const day = singaporeDay(this.now());
     const stage = stageOf(file, optOuts);
     if (step === 0) {
@@ -198,11 +198,10 @@ export class OutreachSequence {
     return this.store.addEvent(id, { type: "channel", channel }, "owner");
   }
 
-  async setRoute(id: string, choice: "kept" | "new"): Promise<OutreachEvent> {
+  async confirmRoute(id: string): Promise<OutreachEvent> {
     const { file } = await this.file(id);
-    if (!file.profile.routeHeld || !routeHeldUnresolved(file)) throw new Refusal("There is no newer contact waiting for your choice.");
-    const target = choice === "kept" ? sendTarget(file) : undefined;
-    return this.store.addEvent(id, { type: "route", choice, ...(target ? { target } : {}) }, "owner");
+    if (!routeCheckUnresolved(file)) throw new Refusal("There is no changed contact waiting for confirmation.");
+    return this.store.addEvent(id, { type: "route", choice: "confirmed" }, "owner");
   }
 
   /** The owner chooses to send to a brand that shares its contact with an earlier one. */

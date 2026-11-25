@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { OUTREACH_TIERS, type OutreachTier, type Prospect, type ProspectFile, type ProspectFlag, type ProspectHeldRoute, type ProspectRoute, type ProspectSendTarget, type ProspectSells } from "@a11-wild/shared";
+import { OUTREACH_TIERS, type OutreachTier, type Prospect, type ProspectFlag, type ProspectRoute, type ProspectSells } from "@a11-wild/shared";
 import { Refusal } from "../mcp/registry.js";
 import { blockedValues, EMAIL_IN_TEXT, isBlockedTarget, numberKey } from "./blocked.js";
 import { EMAIL } from "./messages.js";
 import { routeOf } from "./routes.js";
-import { freshTarget, routeHeldUnresolved, sendTarget, stageOf } from "./stage.js";
+import { routeCheckUnresolved, sendTarget, stageOf } from "./stage.js";
 import { type OutreachStore, prospectId } from "./store.js";
 
 /** One row of the owner's list, as plain text and numbers. The spreadsheet is read outside the server. */
@@ -143,21 +143,6 @@ function flagsFrom(notes: string | undefined): ProspectFlag[] {
   return flags;
 }
 
-function heldRoute(file: ProspectFile, target: ProspectSendTarget, since: string): ProspectHeldRoute {
-  const known = [
-    file.profile.route,
-    file.profile.second,
-    file.profile.routeHeld,
-    routeOf(file.profile.bestRoute),
-    routeOf(file.profile.secondRoute),
-  ].find((route) => route?.channel === target.channel && route.to === target.to);
-  return {
-    ...target,
-    label: known?.label ?? (target.direct ? (target.channel === "whatsapp" ? "DM phone" : "DM email") : target.channel === "whatsapp" ? "WhatsApp" : "Email"),
-    since,
-  };
-}
-
 const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 function removeBlocked(profile: Prospect): Prospect {
@@ -185,7 +170,6 @@ function removeBlocked(profile: Prospect): Prospect {
   if (isNumberBlocked(saved.dmPhone)) delete saved.dmPhone;
   if (isRouteBlocked(saved.route)) delete saved.route;
   if (isRouteBlocked(saved.second)) delete saved.second;
-  if (isRouteBlocked(saved.routeHeld)) delete saved.routeHeld;
   const bestRoute = stripRoute(saved.bestRoute);
   const secondRoute = stripRoute(saved.secondRoute);
   if (bestRoute) saved.bestRoute = bestRoute;
@@ -255,7 +239,7 @@ export async function loadRows(
   rows: LoadRow[],
   now: () => Date,
   openBatches: ReadonlyMap<string, string> = new Map(),
-): Promise<{ added: number; updated: number; merged: number; held: number; blocked: number; refused: LoadRefusal[] }> {
+): Promise<{ added: number; updated: number; merged: number; blocked: number; refused: LoadRefusal[] }> {
   const files = new Map((await store.all({ includeMerged: true })).map((file) => [file.profile.id, file]));
   const optOuts = await store.optOuts();
   const loadedAt = now().toISOString();
@@ -281,7 +265,6 @@ export async function loadRows(
   let added = 0;
   let updated = 0;
   let merged = 0;
-  let held = 0;
   let blocked = 0;
   for (const item of order) {
     const { row } = item;
@@ -303,16 +286,12 @@ export async function loadRows(
       if (file && before) {
         const previous = { ...file, profile: before };
         const oldTarget = sendTarget(previous, optOuts);
-        const newFile = { ...file, profile };
-        const oldFreshTarget = freshTarget(previous, optOuts);
-        const newFreshTarget = freshTarget(newFile, optOuts);
         const active = ["pick_waits", "pick_made", "ad_waits", "ready", "contacted", "replied", "in_talks", "client"].includes(stageOf(previous, optOuts));
-        const withdrawn = before.routeHeld && sameChannelAndTo(newFreshTarget, before.routeHeld);
-        const unchanged = sameChannelAndTo(newFreshTarget, oldFreshTarget);
-        if (active && !withdrawn && unchanged && before.routeHeld && routeHeldUnresolved(previous)) {
-          profile.routeHeld = before.routeHeld;
-        } else if (active && !withdrawn && !unchanged && newFreshTarget && oldTarget && !sameChannelAndTo(newFreshTarget, oldTarget)) {
-          profile.routeHeld = heldRoute(previous, oldTarget, loadedAt);
+        const nextTarget = sendTarget({ ...file, profile }, optOuts);
+        if (oldTarget && nextTarget && !sameChannelAndTo(oldTarget, nextTarget) && (active || routeCheckUnresolved(previous))) {
+          profile.routeCheck = { since: loadedAt, channel: oldTarget.channel, direct: oldTarget.direct };
+        } else if (before.routeCheck) {
+          profile.routeCheck = before.routeCheck;
         }
         if (before.newestAd && (!profile.newestAd || before.newestAd > profile.newestAd)) profile.newestAd = before.newestAd;
       }
@@ -324,14 +303,13 @@ export async function loadRows(
       if (before) updated += 1;
       else added += 1;
       if (profile.mergedInto) merged += 1;
-      if (profile.routeHeld) held += 1;
       if (profile.flags?.some((flag) => flag.kind === "blocked")) blocked += 1;
     } catch (error) {
       if (!(error instanceof RowError)) throw error;
       refused.push({ index: item.index, refusal: { row: row.n, field: error.field, why: error.why } });
     }
   }
-  return { added, updated, merged, held, blocked, refused: refused.sort((a, b) => a.index - b.index).map((entry) => entry.refusal) };
+  return { added, updated, merged, blocked, refused: refused.sort((a, b) => a.index - b.index).map((entry) => entry.refusal) };
 }
 
 /** A prospect made to try the pages. Its name says what it is. */

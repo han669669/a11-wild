@@ -1116,9 +1116,6 @@ export interface ProspectRoute {
   person?: string;
   title?: string;
 }
-export interface ProspectHeldRoute extends ProspectRoute {
-  since: string;
-}
 export interface ProspectFlag {
   kind: "duplicate" | "blocked" | "fixed";
   text: string;
@@ -1155,7 +1152,7 @@ export interface Prospect {
   flags?: ProspectFlag[];
   route?: ProspectRoute;
   second?: ProspectRoute;
-  routeHeld?: ProspectHeldRoute;
+  routeCheck?: { since: string; channel: OutreachChannel; direct: boolean };
   mergedInto?: string;
   /** WhatsApp numbers: digits only, with the country code. */
   whatsapp: string[];
@@ -1195,7 +1192,6 @@ export interface ProspectContacts extends ProspectBrief {
   flags?: ProspectFlag[];
   route?: ProspectRoute;
   second?: ProspectRoute;
-  routeHeld?: ProspectHeldRoute;
   whatsapp?: string[];
   email?: string;
   phone?: string;
@@ -1265,7 +1261,7 @@ export type OutreachEventBody =
   | { type: "unsent"; step: OutreachStep }
   | { type: "note"; text: string }
   | { type: "channel"; channel: OutreachChannel }
-  | { type: "route"; choice: "kept" | "new"; target?: ProspectSendTarget }
+  | { type: "route"; choice: "confirmed" }
   /** The owner chose to send to a prospect that shares its contact with an earlier one. */
   | { type: "chosen" };
 
@@ -1339,7 +1335,7 @@ export interface TodayLine {
   /** Both versions of the message, with the link of the brand's channel. */
   messages?: [OutreachMessage, OutreachMessage];
   sendTo?: ProspectSendTarget;
-  routeCheck?: { kept: ProspectRoute; found: ProspectRoute };
+  routeCheck?: boolean;
   flags?: ProspectFlag[];
   /** The reply that is owed an answer. */
   reply?: { text?: string; at: string };
@@ -1419,7 +1415,7 @@ export interface ProspectPage {
   sells?: ProspectSells;
   contact: ProspectContact;
   flags: ProspectFlag[];
-  check?: { kept: ProspectRoute; found: ProspectRoute };
+  check?: boolean;
   /** Newest first. */
   ads: OutreachAdView[];
   sends: OutreachSend[];

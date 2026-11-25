@@ -48,7 +48,6 @@ export const contactKeys = (profile: Prospect): string[] => {
   email(profile.dmEmail);
   route(profile.route);
   route(profile.second);
-  route(profile.routeHeld);
   return [...keys];
 };
 

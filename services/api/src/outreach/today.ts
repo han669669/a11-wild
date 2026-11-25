@@ -2,7 +2,7 @@ import type { OutreachAd, OutreachAdView, OutreachStep, OutreachTemplates, Prosp
 import { isSendingDay, nextSendingDay, singaporeDay } from "./days.js";
 import { messagesFor } from "./messages.js";
 import { chosen, nextStep, sameContact, type OutreachSequence } from "./sequence.js";
-import { adWaits, approvedAd, candidatesWait, channelOf, defaultRoute, newestAd, owedAnswer, routeHeldUnresolved, sendTarget, stageOf, verdictOf } from "./stage.js";
+import { adWaits, approvedAd, candidatesWait, channelOf, newestAd, owedAnswer, routeCheckUnresolved, sendTarget, stageOf, verdictOf } from "./stage.js";
 import type { OutreachStore } from "./store.js";
 import type { Pictures } from "../pictures/store.js";
 
@@ -34,7 +34,7 @@ export function rowOf(file: ProspectFile, optOuts: ReadonlySet<string>, shared: 
     flags: {
       duplicate: profile.flags?.some((flag) => flag.kind === "duplicate") ?? false,
       blocked: profile.flags?.some((flag) => flag.kind === "blocked") ?? false,
-      check: routeHeldUnresolved(file),
+      check: routeCheckUnresolved(file),
     },
     adWaits: adWaits(file) && stage !== "opted_out",
     ...(next ? { next } : {}),
@@ -125,15 +125,8 @@ export async function todayPage(deps: { store: OutreachStore; sequence: Outreach
   const { day, daily, firstsSent, templates, optOuts, shared, owed, followUps, firsts, adsWaiting, picks } = await todayLists(deps);
 
   const line = async (file: ProspectFile, step: OutreachStep | undefined, ad: OutreachAd | undefined, extra: Partial<TodayLine> = {}): Promise<TodayLine> => {
-    const found = defaultRoute(file);
-    const routeCheck =
-      routeHeldUnresolved(file) && file.profile.routeHeld && found
-        ? {
-            kept: file.profile.routeHeld,
-            found,
-          }
-        : undefined;
-    const target = step !== undefined && templates ? sendTarget(file) : undefined;
+    const routeCheck = routeCheckUnresolved(file);
+    const target = (step !== undefined && templates !== undefined) || routeCheck ? sendTarget(file) : undefined;
     const sendTo = target;
     return {
       prospect: rowOf(file, optOuts, shared, now),
@@ -141,7 +134,7 @@ export async function todayPage(deps: { store: OutreachStore; sequence: Outreach
       ...(step !== undefined ? { step } : {}),
       ...(step !== undefined && templates ? { messages: messagesFor(templates.steps[step], file.profile, target) } : {}),
       ...(sendTo ? { sendTo } : {}),
-      ...(routeCheck ? { routeCheck } : {}),
+      ...(routeCheck ? { routeCheck: true } : {}),
       ...(file.profile.flags?.length ? { flags: file.profile.flags } : {}),
       ...extra,
     };

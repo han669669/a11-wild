@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadRows, makeTestProspect } from "../../src/outreach/load.js";
 import { nextStep, OutreachSequence, sameContact } from "../../src/outreach/sequence.js";
-import { sendTarget, stageOf } from "../../src/outreach/stage.js";
+import { routeCheckUnresolved, sendTarget, stageOf } from "../../src/outreach/stage.js";
 import { OutreachStore } from "../../src/outreach/store.js";
 import { inCampaign } from "../../src/outreach/desk.js";
 import { MemoryTable } from "../helpers/memory-table.js";
@@ -51,114 +51,93 @@ describe("marking a message as sent", () => {
     expect(await stage("00001")).toBe("contacted");
   });
 
-  it("refuses a first message while a newer contact waits for the owner's choice", async () => {
+  it("checks a changed contact before sending, then allows it after confirmation", async () => {
     await ready("00001");
     await loadRows(store, [row(1, { bestRoute: "Email (valid) new@example.com" })], now);
     await expect(sequence.send("00001", { step: 0, title: 0 })).rejects.toThrow(
-      "A newer contact was found for this brand. Choose keep or switch first.",
+      "The best contact for this brand changed. Check it, then send.",
     );
-    await sequence.setRoute("00001", "new");
+    expect((await store.get("00001")).routeCheck).toMatchObject({ channel: "whatsapp", direct: false });
+    await sequence.confirmRoute("00001");
     const sent = await sequence.send("00001", { step: 0, title: 0 });
     expect(sent.send).toMatchObject({ channel: "email", to: "new@example.com" });
   });
 
-  it("sends to the unchanged default after a reload removes an obsolete hold", async () => {
+  it("does not reopen a confirmed check on an identical re-import", async () => {
     await ready("00001");
-    await loadRows(store, [row(1, { bestRoute: "Email (valid) new@example.com" })], now);
-    await loadRows(store, [row(1, { bestRoute: "WhatsApp +65 8000 0001" })], now);
-    const sent = await sequence.send("00001", { step: 0, title: 0 });
-    expect(sent.send).toMatchObject({ channel: "whatsapp", to: "6580000001" });
+    const changed = row(1, { bestRoute: "Email (valid) new@example.com" });
+    await loadRows(store, [changed], now);
+    await sequence.confirmRoute("00001");
+    await loadRows(store, [changed], now);
+    const file = (await store.all()).find((entry) => entry.profile.id === "00001")!;
+    expect(file.profile.routeCheck).toMatchObject({ channel: "whatsapp", direct: false });
+    expect(routeCheckUnresolved(file)).toBe(false);
   });
 
-  it("refreshes route names and titles without holding an unchanged contact", async () => {
+  it("refreshes route names and titles without creating a check for an unchanged contact", async () => {
     await loadRows(store, [row(1, { bestRoute: "DM phone +65 8000 0001", decisionMaker: "Amelia Lee", dmTitle: "Founder" })], now);
     await ready("00001");
     await loadRows(store, [row(1, { bestRoute: "DM phone +65 8000 0001", decisionMaker: "Amelia Li", dmTitle: "Managing Director" })], now);
 
     const saved = (await store.all()).find((file) => file.profile.id === "00001")!;
     expect(saved.profile.route).toMatchObject({ channel: "whatsapp", to: "6580000001", person: "Amelia Li", title: "Managing Director" });
-    expect(saved.profile.routeHeld).toBeUndefined();
+    expect(saved.profile.routeCheck).toBeUndefined();
     expect(sendTarget(saved)).toMatchObject({ channel: "whatsapp", to: "6580000001", person: "Amelia Li", title: "Managing Director" });
   });
 
-  it("holds an email change selected by the owner's email preference", async () => {
+  it("checks an email change selected by the owner's email preference", async () => {
     await ready("00001");
     await sequence.setChannel("00001", "email");
     const incoming = row(1, { bestRoute: "WhatsApp +65 8000 0001", email: "replacement@example.com" });
     await loadRows(store, [incoming], now);
 
-    expect((await store.get("00001")).routeHeld).toMatchObject({ channel: "email", to: "brand1@example.com" });
-    expect((await store.get("00001")).routeHeld?.since).toBe((await store.get("00001")).loadedAt);
+    expect((await store.get("00001")).routeCheck).toMatchObject({ channel: "email", direct: false });
+    expect((await store.get("00001")).routeCheck?.since).toBe((await store.get("00001")).loadedAt);
   });
 
-  it("keeps a newer Keep choice over an older channel preference after a reload", async () => {
+  it("records confirmation without storing a contact", async () => {
     await ready("00001");
-    at("2026-11-23T10:05:00");
     const changed = row(1, { bestRoute: "Email (valid) new@example.com", email: "new@example.com" });
     await loadRows(store, [changed], now);
-    at("2026-11-23T10:06:00");
-    await sequence.setChannel("00001", "email");
-    at("2026-11-23T10:07:00");
-    await sequence.setRoute("00001", "kept");
-    at("2026-11-23T10:08:00");
-    await loadRows(store, [changed], now);
+    const event = await sequence.confirmRoute("00001");
+    expect(event).toMatchObject({ type: "route", choice: "confirmed" });
+    expect(event).not.toHaveProperty("target");
+    expect(event).not.toHaveProperty("to");
+    expect(event).not.toHaveProperty("person");
+  });
 
-    const reloaded = (await store.all()).find((file) => file.profile.id === "00001")!;
-    const routeEvent = reloaded.events.find((event) => event.type === "route")!;
-    expect(routeEvent).toMatchObject({
-      choice: "kept",
-      target: { channel: "whatsapp", to: "6580000001" },
+  it("keeps an unresolved check when an identical import finds the brand parked", async () => {
+    await loadRows(store, [row(1, { bestRoute: "WhatsApp +65 8000 0001" })], now);
+    await ready("00001");
+    const changed = row(1, { bestRoute: "Email (valid) new@example.com" });
+    await loadRows(store, [changed], now);
+    await sequence.setStage("00001", "parked");
+    await loadRows(store, [changed], now);
+    const file = (await store.all()).find((entry) => entry.profile.id === "00001")!;
+    expect(file.profile.routeCheck).toMatchObject({ channel: "whatsapp", direct: false });
+    expect(routeCheckUnresolved(file)).toBe(true);
+  });
+
+  it("checks the next current contact when the preferred contact is quarantined", async () => {
+    const initial = row(1, {
+      bestRoute: "DM email (valid) first@example.com",
+      secondRoute: "DM email (valid) second@example.com",
+      decisionMaker: "Amelia Lee",
+      dmTitle: "Founder",
     });
-    expect(reloaded.profile.routeHeld).toBeUndefined();
-    expect(reloaded.profile.route).toMatchObject({ channel: "email", to: "new@example.com" });
-    expect(sendTarget(reloaded)).toMatchObject({ channel: "whatsapp", to: "6580000001" });
-
-    const sent = await sequence.send("00001", { step: 0, title: 0 });
-    expect(sent.send).toMatchObject({ channel: "whatsapp", to: "6580000001" });
-  });
-
-  it("keeps a resolved choice across repeated imports when no best route parses", async () => {
-    await ready("00001");
-    const initial = row(1, { bestRoute: undefined, whatsapp: "+65 8000 0001" });
-    await loadRows(store, [initial], now);
-    const changed = row(1, { bestRoute: undefined, whatsapp: "+65 8000 0002" });
-    await loadRows(store, [changed], now);
-    expect((await store.get("00001")).routeHeld).toMatchObject({ channel: "whatsapp", to: "6580000001" });
-
-    await sequence.setRoute("00001", "kept");
-    await loadRows(store, [changed], now);
-    expect((await store.get("00001")).routeHeld).toBeUndefined();
-    expect((await store.get("00001")).route).toBeUndefined();
-
-    await loadRows(store, [changed], now);
-    expect((await store.get("00001")).routeHeld).toBeUndefined();
-    const sent = await sequence.send("00001", { step: 0, title: 0 });
-    expect(sent.send).toMatchObject({ channel: "whatsapp", to: "6580000001" });
-  });
-
-  it("compares fallback targets across Keep, changes and removal", async () => {
-    const initial = row(1, { bestRoute: undefined, secondRoute: undefined, whatsapp: undefined, email: "first@example.com" });
     await loadRows(store, [initial], now);
     await ready("00001");
-    const changed = row(1, { bestRoute: undefined, secondRoute: undefined, whatsapp: undefined, email: "new@example.com" });
+    const changed = row(1, {
+      bestRoute: "DM email (valid) first@example.com",
+      secondRoute: "DM email (valid) second@example.com",
+      decisionMaker: "Amelia Lee",
+      dmTitle: "Founder",
+      notes: "AUDIT-FLAG: first@example.com do not use",
+    });
     await loadRows(store, [changed], now);
-    expect((await store.get("00001")).routeHeld).toMatchObject({ channel: "email", to: "first@example.com" });
-
-    await sequence.setRoute("00001", "kept");
-    await loadRows(store, [changed], now);
-    expect((await store.get("00001")).routeHeld).toBeUndefined();
-    expect((await store.get("00001")).route).toBeUndefined();
-    await loadRows(store, [changed], now);
-    expect((await store.get("00001")).routeHeld).toBeUndefined();
-    expect((await sequence.send("00001", { step: 0, title: 0 })).send).toMatchObject({ channel: "email", to: "first@example.com" });
-
-    const later = row(1, { bestRoute: undefined, secondRoute: undefined, whatsapp: undefined, email: "later@example.com" });
-    await loadRows(store, [later], now);
-    expect((await store.get("00001")).routeHeld).toMatchObject({ channel: "email", to: "first@example.com" });
-    const removed = row(1, { bestRoute: undefined, secondRoute: undefined, whatsapp: undefined, email: undefined });
-    await loadRows(store, [removed], now);
-    expect((await store.get("00001")).routeHeld).toBeUndefined();
-    expect(sendTarget((await store.all()).find((file) => file.profile.id === "00001")!)).toMatchObject({ channel: "email", to: "first@example.com" });
+    const file = (await store.all()).find((entry) => entry.profile.id === "00001")!;
+    expect(file.profile.routeCheck).toMatchObject({ channel: "email", direct: true });
+    expect(sendTarget(file)).toMatchObject({ channel: "email", to: "second@example.com", person: "Amelia Lee", title: "Founder" });
   });
 
   it("counts a send at 23:30 on Monday in Singapore on Monday", async () => {

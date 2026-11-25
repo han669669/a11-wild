@@ -64,16 +64,14 @@ describe("the Today page", () => {
     });
   });
 
-  it("includes the direct person and title for the new contact in a held route check", async () => {
+  it("shows the current direct person and title in a contact check without an old target", async () => {
     await loadRows(store, [row(1, { bestRoute: "DM phone +65 8000 0001", decisionMaker: "Amelia Lee", dmTitle: "Founder" })], now);
     await ready("00001");
     await loadRows(store, [row(1, { bestRoute: "DM email (valid) evelyn@example.com", decisionMaker: "Evelyn Tan", dmTitle: "Director" })], now);
     const line = (await today()).firsts[0]!;
-    expect(line.routeCheck).toMatchObject({
-      kept: { channel: "whatsapp", to: "6580000001", direct: true, person: "Amelia Lee", title: "Founder" },
-      found: { channel: "email", to: "evelyn@example.com", direct: true, person: "Evelyn Tan", title: "Director" },
-    });
-    expect(line.sendTo).toMatchObject({ person: "Amelia Lee", title: "Founder" });
+    expect(line.routeCheck).toBe(true);
+    expect(line.sendTo).toMatchObject({ channel: "email", to: "evelyn@example.com", direct: true, person: "Evelyn Tan", title: "Director" });
+    expect(JSON.stringify(line)).not.toContain("6580000001");
   });
 
   it("puts the oldest ads first without changing the daily number", async () => {

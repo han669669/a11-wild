@@ -44,14 +44,16 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
       <Candidates id={prospect.id} brand={prospect.brand} candidates={page.candidates} done={done} />
     </Section>
   ) : null;
-  const routeWrite = (choice: "kept" | "new") => write({ action: "route", body: { choice } } as unknown as ProspectWrite);
+  const routeWrite = () => write({ action: "route", body: {} } as unknown as ProspectWrite);
   const routeBusy = (busy as string | undefined) === "route";
   const routeError = (failed as string | undefined) === "route" ? error : undefined;
   const routeName = (channel: string) => ({ whatsapp: "WhatsApp", email: "Email", instagram: "Instagram", facebook: "Facebook", call: "Phone" })[channel] ?? "another way";
-  const checkTarget = (route: NonNullable<ProspectPage["check"]>["kept"]) => {
-    const recipient = route.direct && route.person ? `${route.person}${route.title ? `, ${route.title}` : ""}` : "the brand";
-    const value = route.channel === "whatsapp" && /^\d+$/.test(route.to) ? `+${route.to}` : route.to;
-    return `${routeName(route.channel)} to ${recipient} (${value})`;
+  const checkTarget = () => {
+    const target = contact.sendTo;
+    if (!target) return "the brand";
+    const recipient = target.direct && target.person ? `${target.person}${target.title ? `, ${target.title}` : ""}` : "the brand";
+    const value = target.channel === "whatsapp" && /^\d+$/.test(target.to) ? `+${target.to}` : target.to;
+    return `${routeName(target.channel)} to ${recipient} (${value})`;
   };
 
   return (
@@ -103,14 +105,11 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
       ) : null}
 
       {page.check ? (
-        <Section title="A newer way to reach this brand was found">
+        <Section title="The best contact changed">
           <Card className="grid gap-3">
-            <p className="text-body">
-              A newer contact was found. Now: {checkTarget(page.check.kept)}. New: {checkTarget(page.check.found)}.
-            </p>
+            <p className="text-body">The best contact changed. Now: {checkTarget()}.</p>
             <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="secondary" className={TAP} disabled={busy !== undefined} loading={routeBusy} onClick={() => routeWrite("kept")}>Keep</Button>
-              <Button type="button" variant="secondary" className={TAP} disabled={busy !== undefined} loading={routeBusy} onClick={() => routeWrite("new")}>Switch</Button>
+              <Button type="button" variant="secondary" className={TAP} disabled={busy !== undefined} loading={routeBusy} onClick={routeWrite}>Use it</Button>
             </div>
             <Failure error={routeError} />
           </Card>
@@ -458,7 +457,7 @@ const SAID: { [K in OutreachEvent["type"]]: (event: Extract<OutreachEvent, { typ
   unsent: (event) => `"${STEPS[event.step]} sent" was taken back.`,
   note: (event) => `Note: ${event.text}`,
   channel: (event) => `Channel set to ${CHANNELS[event.channel]}.`,
-  route: (event) => (event.choice === "kept" ? "Kept the current contact." : "Switched to the new contact."),
+  route: () => "Confirmed the current contact.",
   chosen: () => "You chose to send to this brand too.",
 };
 

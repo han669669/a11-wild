@@ -16,7 +16,7 @@ beforeEach(() => {
 describe("the load of the list", () => {
   it("gives a loaded row back with every field", async () => {
     const full = row(7, { bestRoute: "WhatsApp", secondRoute: "Email", phone: "+65 6000 0007", instagram: "brand7", decisionMaker: "A Person", dmTitle: "Founder", linkedin: "https://www.linkedin.com/in/a-person" });
-    expect(await loadRows(store, [full], now)).toEqual({ added: 1, updated: 0, merged: 0, held: 0, blocked: 0, refused: [] });
+    expect(await loadRows(store, [full], now)).toEqual({ added: 1, updated: 0, merged: 0, blocked: 0, refused: [] });
     expect(await store.get("00007")).toEqual({
       id: "00007",
       n: 7,
@@ -43,7 +43,7 @@ describe("the load of the list", () => {
     await store.addEvent("00001", { type: "note", text: "Likes yellow." }, "owner");
     await store.addEvent("00001", { type: "kind", kind: "product" }, "agent");
     await store.addAd("00001", { batchId: "b", imageId: "i", kind: "v1", key: "k", why: "w" });
-    expect(await loadRows(store, [row(1, { liveAds: "31", tier: "5-19 live ads", email: undefined })], now)).toEqual({ added: 0, updated: 1, merged: 0, held: 0, blocked: 0, refused: [] });
+    expect(await loadRows(store, [row(1, { liveAds: "31", tier: "5-19 live ads", email: undefined })], now)).toEqual({ added: 0, updated: 1, merged: 0, blocked: 0, refused: [] });
     const [file] = await store.all();
     expect(file!.profile).toMatchObject({ liveAds: 31, tier: "20+" });
     expect(file!.profile.email).toBeUndefined();
@@ -74,7 +74,7 @@ describe("the load of the list", () => {
 
   it("refuses a row with a number that is not a number or an address that is not one, by its row and field, and saves the others", async () => {
     const result = await loadRows(store, [row(1), row(2, { whatsapp: "call the shop" }), row(3, { email: "not an address" }), row(4, { tier: "huge" }), row(5, { liveAds: "many" }), row(6, { newestAd: "last week" }), row(7)], now);
-    expect(result).toMatchObject({ added: 3, updated: 0, merged: 0, held: 0, blocked: 0 });
+    expect(result).toMatchObject({ added: 3, updated: 0, merged: 0, blocked: 0 });
     expect(result.refused.map(({ row: n, field }) => [n, field])).toEqual([
       [2, "whatsapp"],
       [3, "email"],
@@ -89,7 +89,7 @@ describe("the load of the list", () => {
   it("refuses a row whose number is saved under another brand", async () => {
     await loadRows(store, [row(1)], now);
     const result = await loadRows(store, [row(1, { brand: "Another Brand" })], now);
-    expect(result).toEqual({ added: 0, updated: 0, merged: 0, held: 0, blocked: 0, refused: [{ row: 1, field: "brand", why: expect.stringMatching(/number 1 is saved as "Brand 1"/) }] });
+    expect(result).toEqual({ added: 0, updated: 0, merged: 0, blocked: 0, refused: [{ row: 1, field: "brand", why: expect.stringMatching(/number 1 is saved as "Brand 1"/) }] });
     // The same name in other letters is the same brand.
     expect(await loadRows(store, [row(1, { brand: "brand 1" })], now)).toMatchObject({ updated: 1, refused: [] });
   });

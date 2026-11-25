@@ -143,33 +143,18 @@ export function legacyTargets(profile: Prospect): ProspectSendTarget[] {
   ];
 }
 
-/** True while a changed contact waits for the owner's choice. */
-export function routeHeldUnresolved(file: ProspectFile): boolean {
-  const held = file.profile.routeHeld;
-  const routeEvent = last(file.events, "route");
-  return Boolean(held && (!routeEvent || routeEvent.at < held.since));
+/** True until the owner confirms a changed contact. */
+export function routeCheckUnresolved(file: ProspectFile): boolean {
+  const check = file.profile.routeCheck;
+  return Boolean(check && !file.events.some((event) => event.type === "route" && event.choice === "confirmed" && event.at >= check.since));
 }
 
-/** The checked email or number the owner will use, in the order the list and the owner's choices give it. */
+/** The current checked email or number, using only contacts in the latest workbook row. */
 export function sendTarget(file: ProspectFile, optOuts?: ReadonlySet<string>): ProspectSendTarget | undefined {
   if (optOuts && optedOut(file, optOuts)) return undefined;
-  const routeEvent = last(file.events, "route");
   const channelEvent = last(file.events, "channel");
   const blocked = blockedValues(file.profile.flags ?? []);
-  const heldTarget = sendable(file.profile.routeHeld);
-  if (routeHeldUnresolved(file)) return usableTarget(heldTarget, blocked);
-  if (routeEvent && (!channelEvent || routeEvent.at >= channelEvent.at)) {
-    if (routeEvent.choice === "kept") {
-      const target = routeEvent.target ?? heldTarget;
-      return target ? currentTarget(file, target, blocked) ?? usableTarget(target, blocked) : defaultTarget(file, blocked);
-    }
-    return defaultTarget(file, blocked);
-  }
   return channelEvent ? targetForChannel(file, channelEvent.channel, blocked) ?? defaultTarget(file, blocked) : defaultTarget(file, blocked);
-}
-
-function usableTarget(target: ProspectSendTarget | undefined, blocked: BlockedValues): ProspectSendTarget | undefined {
-  return target && !isBlockedTarget(blocked, target) ? target : undefined;
 }
 
 function defaultTarget(file: ProspectFile, blocked: BlockedValues): ProspectSendTarget | undefined {
@@ -177,34 +162,9 @@ function defaultTarget(file: ProspectFile, blocked: BlockedValues): ProspectSend
     .find((target) => target && !isBlockedTarget(blocked, target));
 }
 
-function currentTarget(file: ProspectFile, target: ProspectSendTarget, blocked: BlockedValues): ProspectSendTarget | undefined {
-  return [sendable(file.profile.route), sendable(file.profile.second), ...legacyTargets(file.profile)]
-    .find((candidate) => candidate !== undefined && candidate.channel === target.channel && candidate.to === target.to && !isBlockedTarget(blocked, candidate));
-}
-
-/** The current workbook target, respecting channel preferences but not route decisions or a hold. */
-export function freshTarget(file: ProspectFile, optOuts?: ReadonlySet<string>): ProspectSendTarget | undefined {
-  const profile = { ...file.profile };
-  delete profile.routeHeld;
-  return sendTarget({
-    ...file,
-    profile,
-    events: file.events.filter((event) => event.type !== "route"),
-  }, optOuts);
-}
-
 export function targetForChannel(file: ProspectFile, channel: OutreachChannel, blocked = blockedValues(file.profile.flags ?? [])): ProspectSendTarget | undefined {
   const candidates = [sendable(file.profile.route), sendable(file.profile.second), ...legacyTargets(file.profile)];
   return candidates.find((target) => target !== undefined && target.channel === channel && !isBlockedTarget(blocked, target));
-}
-
-export function defaultRoute(file: ProspectFile): ProspectRoute | undefined {
-  const { profile } = file;
-  const blocked = blockedValues(profile.flags ?? []);
-  const route = [profile.route, profile.second].find((candidate) => candidate !== undefined && sendable(candidate) !== undefined && !isBlockedTarget(blocked, candidate));
-  if (route) return route;
-  const target = legacyTargets(profile).find((candidate) => !isBlockedTarget(blocked, candidate));
-  return target ? { ...target, label: profile.bestRoute ?? (target.channel === "whatsapp" ? "WhatsApp" : "Email") } : undefined;
 }
 
 export const hasRoute = (file: ProspectFile): boolean => sendTarget(file) !== undefined;

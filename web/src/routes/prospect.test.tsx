@@ -54,8 +54,7 @@ describe("Prospect page", () => {
 
   it("shows the check and flags, disables sending until the owner keeps or switches", async () => {
     let routeBody: unknown;
-    const held = { channel: "whatsapp" as const, to: "6580000001", direct: true, label: "DM phone +65 8000 0001", person: "Evelyn Tan", title: "Founder" };
-    const found = { channel: "email" as const, to: "owner@example.com", direct: true, label: "DM email (valid) owner@example.com", person: "Amelia Lee", title: "Founder" };
+    const current = { channel: "email" as const, to: "owner@example.com", direct: true, label: "DM email (valid) owner@example.com", person: "Amelia Lee", title: "Founder" };
     const flags = [
       { kind: "duplicate" as const, text: "DUP-CHECK: Brand 2 may be the same business" },
       { kind: "blocked" as const, text: "AUDIT-FLAG: owner@example.com do not send" },
@@ -63,14 +62,14 @@ describe("Prospect page", () => {
     const calls = stubApi({
       [GET]: () => ({ body: prospectPage({
         prospect: prospectRow({ flags: { duplicate: true, blocked: true, check: true } }),
-        contact: { whatsapp: [{ number: "6580000001" }], sendTo: { ...held, person: "New Person", title: "Director" }, decisionMaker: "New Person", dmTitle: "Director" },
+        contact: { whatsapp: [{ number: "6580000001" }], sendTo: current, decisionMaker: "Amelia Lee", dmTitle: "Founder" },
         flags,
-        check: { kept: held, found },
+        check: true,
         message: { step: 0, messages: messages() },
       }) }),
       "POST /api/outreach/prospects/00001/route": (body) => ((routeBody = body), { body: prospectPage({
         prospect: prospectRow({ flags: { duplicate: true, blocked: true, check: false } }),
-        contact: { whatsapp: [{ number: "6580000001" }], sendTo: found, decisionMaker: "Amelia Lee", dmTitle: "Founder" },
+        contact: { whatsapp: [{ number: "6580000001" }], sendTo: current, decisionMaker: "Amelia Lee", dmTitle: "Founder" },
         flags,
         message: { step: 0, messages: messages() },
       }) }),
@@ -79,11 +78,11 @@ describe("Prospect page", () => {
     expect(await screen.findByText("Brand 2 may be the same business")).toBeInTheDocument();
     expect(screen.getByText("Do not use: owner@example.com do not send")).toBeInTheDocument();
     expect(screen.queryByText(/AUDIT-FLAG:|DUP-CHECK:/)).not.toBeInTheDocument();
-    expect(screen.getByText("A newer contact was found. Now: WhatsApp to Evelyn Tan, Founder (+6580000001). New: Email to Amelia Lee, Founder (owner@example.com).")).toBeInTheDocument();
+    expect(screen.getByText("The best contact changed. Now: Email to Amelia Lee, Founder (owner@example.com).")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Mark as sent" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Keep" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Keep" }));
-    await waitFor(() => expect(routeBody).toEqual({ choice: "kept" }));
+    expect(screen.getByRole("button", { name: "Use it" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Use it" }));
+    await waitFor(() => expect(routeBody).toEqual({}));
     expect(calls).toContain("POST /api/outreach/prospects/00001/route");
     await waitFor(() => expect(screen.getByRole("button", { name: "Mark as sent" })).toBeEnabled());
   });

@@ -262,7 +262,6 @@ export class OutreachDesk {
           flags: profile.flags,
           route: routeOpen(profile.route) ? profile.route : undefined,
           second: routeOpen(profile.second) ? profile.second : undefined,
-          routeHeld: routeOpen(profile.routeHeld) ? profile.routeHeld : undefined,
           email: openEmail(profile.email) ? profile.email : undefined,
           phone: profile.phone && openNumber(profile.phone) ? profile.phone : undefined,
           decisionMaker: profile.decisionMaker,

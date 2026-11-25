@@ -38,7 +38,7 @@ const WRITES: [string, unknown][] = [
   ["/api/outreach/prospects/00001/stage", { stage: "lost" }],
   ["/api/outreach/prospects/00001/note", { text: "A note." }],
   ["/api/outreach/prospects/00001/channel", { channel: "email" }],
-  ["/api/outreach/prospects/00001/route", { choice: "kept" }],
+  ["/api/outreach/prospects/00001/route", {}],
   ["/api/outreach/prospects/00001/kind", { kind: "service" }],
   ["/api/outreach/prospects/00001/choose", {}],
   ["/api/outreach/prospects/00001/remove", {}],
@@ -220,26 +220,26 @@ describe("the owner's day", () => {
     expect((await get("/api/outreach/prospects/00009")).status).toBe(404);
   });
 
-  it("holds a changed contact until the owner keeps or switches it", async () => {
+  it("shows the current changed contact and confirms before sending", async () => {
     await ready([row(1, { email: "brand1@example.com", bestRoute: "DM phone +65 8000 0001", decisionMaker: "Amelia Lee", dmTitle: "Founder" })]);
     await loadProspects(studio, [row(1, { email: "new@example.com", bestRoute: "DM email (valid) new@example.com", decisionMaker: "Evelyn Tan", dmTitle: "Director" })]);
     const waiting = await json(await get("/api/outreach/prospects/00001"));
-    expect(waiting.check).toMatchObject({
-      kept: { channel: "whatsapp", to: "6580000001", person: "Amelia Lee", title: "Founder" },
-      found: { channel: "email", to: "new@example.com", person: "Evelyn Tan", title: "Director" },
-    });
-    expect(waiting.contact.sendTo).toMatchObject({ to: "6580000001", person: "Amelia Lee", title: "Founder" });
-    expect(waiting.message.messages[0].href).toMatch(/^https:\/\/wa\.me\/6580000001/);
+    expect(waiting.check).toBe(true);
+    expect(waiting.contact.sendTo).toMatchObject({ channel: "email", to: "new@example.com", person: "Evelyn Tan", title: "Director" });
+    expect(waiting.message.messages[0].href).toMatch(/^mailto:new@example\.com\?/);
 
     const channelChanged = await json(await on("00001", "channel", { channel: "email" }));
-    expect(channelChanged.contact.sendTo).toMatchObject({ to: "6580000001", person: "Amelia Lee", title: "Founder" });
-    expect(channelChanged.message.messages[0].href).toMatch(/^https:\/\/wa\.me\/6580000001/);
+    expect(channelChanged.contact.sendTo).toMatchObject({ channel: "email", to: "new@example.com", person: "Evelyn Tan", title: "Director" });
+    expect(channelChanged.message.messages[0].href).toMatch(/^mailto:new@example\.com\?/);
 
-    const switched = await json(await on("00001", "route", { choice: "new" }));
-    expect(switched.check).toBeUndefined();
-    expect(switched.contact.sendTo).toMatchObject({ channel: "email", to: "new@example.com", person: "Evelyn Tan", title: "Director" });
-    expect(switched.message.messages[0].href).toMatch(/^mailto:new@example\.com\?/);
-    expect(switched.events[0]).toMatchObject({ type: "route", choice: "new", by: "owner" });
+    expect((await on("00001", "route", { choice: "kept" })).status).toBe(400);
+    const confirmed = await json(await on("00001", "route", {}));
+    expect(confirmed.check).toBeUndefined();
+    expect(confirmed.contact.sendTo).toMatchObject({ channel: "email", to: "new@example.com", person: "Evelyn Tan", title: "Director" });
+    expect(confirmed.message.messages[0].href).toMatch(/^mailto:new@example\.com\?/);
+    expect(confirmed.events[0]).toMatchObject({ type: "route", choice: "confirmed", by: "owner" });
+    expect(confirmed.events[0]).not.toHaveProperty("to");
+    expect(confirmed.events[0]).not.toHaveProperty("target");
     studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
     const channelAfterRoute = await json(await on("00001", "channel", { channel: "whatsapp" }));
     expect(channelAfterRoute.contact.sendTo).toMatchObject({ channel: "whatsapp", to: "6580000001" });
@@ -248,24 +248,20 @@ describe("the owner's day", () => {
     expect(sent.sends[0].to).toBe(channelAfterRoute.contact.sendTo.to);
   });
 
-  it("keeps saved direct-recipient details after Keep instead of filling from the new row", async () => {
+  it("refreshes direct-recipient details from the current workbook row", async () => {
     await ready([
       row(1, { bestRoute: "DM phone +65 8000 0001", decisionMaker: "Amelia Lee" }),
       row(2, { bestRoute: "DM phone +65 8000 0002" }),
     ]);
     const incoming = [
-      row(1, { bestRoute: "DM email (valid) new1@example.com", whatsapp: undefined, email: "new1@example.com", decisionMaker: "Evelyn Tan", dmTitle: "Director" }),
-      row(2, { bestRoute: "DM email (valid) new2@example.com", whatsapp: undefined, email: "new2@example.com", decisionMaker: "New Person", dmTitle: "Director" }),
+      row(1, { bestRoute: "DM phone +65 8000 0001", decisionMaker: "Amelia Li", dmTitle: "Director" }),
+      row(2, { bestRoute: "DM phone +65 8000 0002" }),
     ];
-    await loadProspects(studio, incoming);
-    await on("00001", "route", { choice: "kept" });
-    await on("00002", "route", { choice: "kept" });
     await loadProspects(studio, incoming);
 
     const named = await json(await get("/api/outreach/prospects/00001"));
-    expect(named.contact.sendTo).toMatchObject({ person: "Amelia Lee" });
-    expect(named.contact.sendTo).not.toHaveProperty("title");
-    expect(named.prospect.person).toBe("Amelia Lee");
+    expect(named.contact.sendTo).toMatchObject({ person: "Amelia Li", title: "Director" });
+    expect(named.prospect.person).toBe("Amelia Li");
     const unnamed = await json(await get("/api/outreach/prospects/00002"));
     expect(unnamed.contact.sendTo).not.toHaveProperty("person");
     expect(unnamed.contact.sendTo).not.toHaveProperty("title");
@@ -274,9 +270,8 @@ describe("the owner's day", () => {
     const today = await json(await get("/api/outreach/today"));
     const namedLine = today.firsts.find((line: { prospect: { id: string } }) => line.prospect.id === "00001");
     const unnamedLine = today.firsts.find((line: { prospect: { id: string } }) => line.prospect.id === "00002");
-    expect(namedLine.sendTo).toMatchObject({ person: "Amelia Lee" });
-    expect(namedLine.sendTo).not.toHaveProperty("title");
-    expect(namedLine.prospect.person).toBe("Amelia Lee");
+    expect(namedLine.sendTo).toMatchObject({ person: "Amelia Li", title: "Director" });
+    expect(namedLine.prospect.person).toBe("Amelia Li");
     expect(unnamedLine.sendTo).not.toHaveProperty("person");
     expect(unnamedLine.sendTo).not.toHaveProperty("title");
     expect(unnamedLine.prospect.person).toBeUndefined();
@@ -294,6 +289,11 @@ describe("the owner's day", () => {
     await loadProspects(studio, [
       row(2, { whatsapp: number, bestRoute: "DM email (valid) new@example.com", decisionMaker: "Amelia Lee", dmTitle: "Founder", notes: "AUDIT-FLAG: hidden@example.com do not use" }),
     ]);
+    await outreach().store.addEvent("00002", {
+      type: "route",
+      choice: "kept",
+      target: { channel: "email", to: "old@example.com", direct: true, person: "Previous Person" },
+    } as never, "owner");
     await outreach().sequence.optOut("00001");
 
     const page = await json(await get("/api/outreach/prospects/00002"));
@@ -303,7 +303,7 @@ describe("the owner's day", () => {
     expect(page.check).toBeUndefined();
     expect(page.flags).toEqual([]);
     expect(page.sends[0].to).toBeUndefined();
-    expect(JSON.stringify(page)).not.toMatch(/Amelia Lee|6580000001|new@example\.com|hidden@example\.com/);
+    expect(JSON.stringify(page)).not.toMatch(/Amelia Lee|6580000001|new@example\.com|old@example\.com|hidden@example\.com|Previous Person/);
   });
 
   it("does not expose a test prospect's contact when its number belongs to an opted-out brand", async () => {
@@ -315,9 +315,8 @@ describe("the owner's day", () => {
       ...profile,
       bestRoute: "WhatsApp +65 8000 0001",
       secondRoute: "WhatsApp +65 8000 0001",
-      route: { channel: "email", to: "alternate@example.com", direct: false, label: "Email (valid) alternate@example.com" },
-      routeHeld: { channel: "whatsapp", to: "6580000001", direct: false, label: "WhatsApp +65 8000 0001", since: "2026-11-23T02:00:00.000Z" },
     });
+    await outreach().sequence.setChannel(test.id, "whatsapp");
 
     const page = await json(await get(`/api/outreach/prospects/${test.id}`));
     expect(page.contact.whatsapp).toEqual([]);

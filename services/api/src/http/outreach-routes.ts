@@ -9,7 +9,7 @@ import { makeTestProspect } from "../outreach/load.js";
 import { BRAND, mailLink, messagesFor, profileLink } from "../outreach/messages.js";
 import { filtered, filterOf, numbersOf } from "../outreach/numbers.js";
 import { DAILY, nextStep, sameContact } from "../outreach/sequence.js";
-import { approvedAd, defaultRoute, owedAnswer, optedOut, routeHeldUnresolved, sendTarget, sellsOf, stageOf } from "../outreach/stage.js";
+import { approvedAd, owedAnswer, optedOut, routeCheckUnresolved, sendTarget, sellsOf, stageOf } from "../outreach/stage.js";
 import { adView, rowOf, todayPage } from "../outreach/today.js";
 import { routeOf } from "../outreach/routes.js";
 import { contactKeys } from "../outreach/store.js";
@@ -31,7 +31,7 @@ const BODY = {
   stage: z.strictObject({ stage: z.enum(["in_talks", "client", "lost", "parked", "auto"]), reason: z.string().trim().min(1).max(500).optional() }),
   note: z.strictObject({ text: TEXT }),
   channel: z.strictObject({ channel: z.enum(["whatsapp", "email"]) }),
-  route: z.strictObject({ choice: z.enum(["kept", "new"]) }),
+  route: NONE,
   kind: z.strictObject({ kind: z.enum(["product", "service"]) }),
   choose: NONE,
   remove: NONE,
@@ -132,16 +132,7 @@ export function outreachRoutes(
     const candidates = await picks.view(file, optOuts);
     const closed = new Set(optOuts);
     for (const opted of files) if (!opted.profile.test && optedOut(opted, optOuts)) contactKeys(opted.profile).forEach((key) => closed.add(key));
-    const found = defaultRoute(file);
-    const check =
-      stage !== "opted_out" &&
-      routeHeldUnresolved(file) &&
-      file.profile.routeHeld &&
-      found &&
-      routeOpen(file.profile.routeHeld, closed) &&
-      routeOpen(found, closed)
-        ? { kept: file.profile.routeHeld, found }
-        : undefined;
+    const check = stage !== "opted_out" && routeCheckUnresolved(file);
     const messageTarget = step !== undefined ? sendTarget(file) : undefined;
     const sends = [...file.sends]
       .sort((a, b) => a.step - b.step)
@@ -163,7 +154,12 @@ export function outreachRoutes(
       ...(check ? { check } : {}),
       ads,
       sends,
-      events: [...file.events].sort((a, b) => b.at.localeCompare(a.at)),
+      events: [...file.events]
+        .filter((event) => event.type !== "route" || event.choice === "confirmed")
+        .map((event) =>
+          event.type === "route" ? { type: event.type, choice: event.choice, id: event.id, at: event.at, by: event.by } : event,
+        )
+        .sort((a, b) => b.at.localeCompare(a.at)),
       day,
       ...(message ? { message } : {}),
       ...(reply && (stage === "replied" || stage === "in_talks") ? { owed: { ...(reply.text ? { text: reply.text } : {}), at: reply.at } } : {}),
@@ -222,7 +218,7 @@ export function outreachRoutes(
   write("stage", (id, body) => sequence.setStage(id, body.stage, body.reason));
   write("note", (id, body) => sequence.note(id, body.text));
   write("channel", (id, body) => sequence.setChannel(id, body.channel));
-  write("route", (id, body) => sequence.setRoute(id, body.choice));
+  write("route", (id) => sequence.confirmRoute(id));
   write("kind", (id, body) => sequence.setKind(id, body.kind, "owner"));
   write("choose", (id) => sequence.choose(id));
   write("remove", async (id) => {
