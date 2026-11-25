@@ -294,26 +294,24 @@ def _box_mask(mask_path, box_str, out_path):
             raise Refused("box must lie inside the pack photo.")
         grey = m.convert("L")
         px0, py0, px1, py1 = max(0, x0 - pad), max(0, y0 - pad), min(w, x1 + pad), min(h, y1 + pad)
-        full = np.asarray(grey) > 128
-        arr = full[py0:py1, px0:px1]
-        ix0, iy0, ix1, iy1 = x0 - px0, y0 - py0, x1 - px0, y1 - py0
-        # Clip a padded side back to the exact box only when opaque foreground continues *past* the PAD margin
-        # (uncut studio fill), never when a real cutout pack edge simply ends inside PAD.
-        top = iy0 if py0 > 0 and full[py0 - 1, x0:x1].mean() >= 0.9 else 0
-        bot = iy1 if py1 < h and full[py1, x0:x1].mean() >= 0.9 else arr.shape[0]
-        left = ix0 if px0 > 0 and full[y0:y1, px0 - 1].mean() >= 0.9 else 0
-        right = ix1 if px1 < w and full[y0:y1, px1].mean() >= 0.9 else arr.shape[1]
-        arr = arr[top:bot, left:right]
-        ix0, iy0, ix1, iy1 = ix0 - left, iy0 - top, ix1 - left, iy1 - top
-        # Keep only foreground regions that overlap the inner box, so detached props in the PAD margin are excluded.
+        ex0, ey0, ex1, ey1 = max(0, x0 - pad - 1), max(0, y0 - pad - 1), min(w, x1 + pad + 1), min(h, y1 + pad + 1)
+        ext = np.asarray(grey.crop((ex0, ey0, ex1, ey1))) > 128
+        ix0, iy0, ix1, iy1 = x0 - ex0, y0 - ey0, x1 - ex0, y1 - ey0
+        # Keep only foreground regions that overlap the inner box, so detached props in or just outside PAD are excluded.
         import cv2
-        _, labels = cv2.connectedComponents(arr.astype(np.uint8), connectivity=4)
+        _, labels = cv2.connectedComponents(ext.astype(np.uint8), connectivity=4)
         inside_labels = set(np.unique(labels[iy0:iy1, ix0:ix1])) - {0}
         if not inside_labels:
             raise Refused("No product was found inside box.")
-        keep = np.isin(labels, list(inside_labels)).astype(np.uint8) * 255
-        cropped = Image.new("L", (keep.shape[1] + 2, keep.shape[0] + 2), 0)
-        cropped.paste(Image.fromarray(keep, "L"), (1, 1))
+        keep = np.isin(labels, list(inside_labels))
+        # Clip a padded side back to the exact box only when connected foreground continues past PAD (or to the photo edge).
+        top = iy0 if y0 > 0 and keep[0, ix0:ix1].mean() >= 0.9 else py0 - ey0
+        bot = iy1 if y1 < h and keep[-1, ix0:ix1].mean() >= 0.9 else py1 - ey0
+        left = ix0 if x0 > 0 and keep[iy0:iy1, 0].mean() >= 0.9 else px0 - ex0
+        right = ix1 if x1 < w and keep[iy0:iy1, -1].mean() >= 0.9 else px1 - ex0
+        out = keep[top:bot, left:right].astype(np.uint8) * 255
+        cropped = Image.new("L", (out.shape[1] + 2, out.shape[0] + 2), 0)
+        cropped.paste(Image.fromarray(out, "L"), (1, 1))
         cropped.save(out_path)
         return out_path
 
