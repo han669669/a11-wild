@@ -81,9 +81,13 @@ export class OutreachSequence {
   }
 
   /** Records a message the owner sent by hand: the day, the channel and the exact text. A second mark of the same step changes nothing. */
-  async send(id: string, input: { step: OutreachStep; title: 0 | 1 }): Promise<{ send: OutreachSend; already: boolean }> {
+  async send(id: string, input: { step: OutreachStep; title: 0 | 1; to?: string | undefined; channel?: OutreachChannel | undefined }): Promise<{ send: OutreachSend; already: boolean }> {
     const { file, files, optOuts } = await this.file(id);
     const { step } = input;
+    const target = sendTarget(file, optOuts);
+    if ((input.to !== undefined && input.to !== target?.to) || (input.channel !== undefined && input.channel !== target?.channel)) {
+      throw new Refusal("The contact for this brand changed. Reload the page and check it before marking.");
+    }
     const before = file.sends.find((send) => send.step === step);
     if (before) return { send: before, already: true };
     if (step === 0) {
@@ -104,7 +108,6 @@ export class OutreachSequence {
     }
     const templates = await this.templates();
     if (!templates) throw new Refusal("The message text is not loaded yet.");
-    const target = sendTarget(file, optOuts);
     if (!target) throw new Refusal("This brand has no checked number or address.");
     const { channel } = target;
     const counted = step === 0 && !file.profile.test;
@@ -137,16 +140,8 @@ export class OutreachSequence {
     // The place goes back before the note of it is written: the mark is gone, so the day must not count it.
     if (step === 0 && !file.profile.test) await this.store.givePlace(day);
     const current = sendTarget(file, optOuts);
-    if (step === 0 && (send.channel !== current?.channel || send.to !== current?.to)) {
-      const confirmations = file.events
-        .filter((event) => event.type === "route" && event.choice === "confirmed")
-        .map((event) => new Date(event.at).getTime() + 1);
-      await this.store.saveProfile({
-        ...file.profile,
-        routeCheck: { since: new Date(Math.max(this.now().getTime(), ...confirmations)).toISOString(), channel: send.channel, direct: false },
-      });
-    }
-    await this.store.addEvent(id, { type: "unsent", step }, "owner");
+    const recheck = step === 0 && (send.channel !== current?.channel || send.to !== current?.to);
+    await this.store.addEvent(id, { type: "unsent", step, ...(recheck ? { recheck: true as const } : {}) }, "owner");
   }
 
   /** A reply the owner got. "no" is an opt-out, at once and for good. */

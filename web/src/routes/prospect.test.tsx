@@ -64,6 +64,28 @@ describe("Prospect page", () => {
     expect(screen.getAllByRole("listitem").map((item) => item.textContent).filter((text) => /Note|Yes to|attached/.test(text ?? "")).map((text) => text!.split(/You|The agent/)[0])).toEqual(["Note: Met at a fair.", "Yes to ad 1.", "Ad 1 attached: The cup on its own colour."]);
   });
 
+  it("marks a message with the contact displayed on the page", async () => {
+    let sent: unknown;
+    stubApi({
+      [GET]: () => ({ body: prospectPage({ message: { step: 0, messages: messages() } }) }),
+      "POST /api/outreach/prospects/00001/sent": (body) => ((sent = body), { body: prospectPage() }),
+    });
+    open();
+    await userEvent.click(await screen.findByRole("button", { name: "Mark as sent" }));
+    await waitFor(() => expect(sent).toEqual({ step: 0, title: 0, to: "6580000001", channel: "whatsapp" }));
+  });
+
+  it("shows when a due message has no usable contact and hides the mark button", async () => {
+    stubApi({
+      [GET]: () =>
+        ({ body: prospectPage({ prospect: prospectRow({ stage: "contacted" }), contact: { whatsapp: [] }, message: { step: 1, messages: messages() } }) }),
+    });
+    open();
+    expect(await screen.findByText("No contact to send this to.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mark as sent" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open WhatsApp" })).not.toBeInTheDocument();
+  });
+
   it("shows the check and flags, disables sending until the owner confirms it", async () => {
     let routeBody: unknown;
     const current = { channel: "email" as const, to: "owner@example.com", direct: true, label: "DM email (valid) owner@example.com", person: "Amelia Lee", title: "Founder" };

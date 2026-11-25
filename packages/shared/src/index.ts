@@ -1258,7 +1258,7 @@ export type OutreachEventBody =
   | { type: "reply"; reply: "more" | "no" | "other"; text?: string }
   | { type: "answered" }
   | { type: "optout" }
-  | { type: "unsent"; step: OutreachStep }
+  | { type: "unsent"; step: OutreachStep; recheck?: true }
   | { type: "note"; text: string }
   | { type: "channel"; channel: OutreachChannel }
   | { type: "route"; choice: "confirmed" }

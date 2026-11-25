@@ -127,6 +127,7 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
               step={page.message.step}
               messages={page.message.messages}
               done={done}
+              sendTo={contact.sendTo}
               disabled={Boolean(page.check && page.message.step === 0)}
             />
           </Card>

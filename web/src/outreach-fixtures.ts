@@ -21,7 +21,14 @@ export const messages = (brand = "Koi Tea"): [OutreachMessage, OutreachMessage] 
   { title: `${brand}, I made this for you`, text: `Hi, I made this ad for ${brand}.`, href: "https://wa.me/6580000001?text=two" },
 ];
 
-export const firstLine = (overrides: Partial<TodayLine> = {}): TodayLine => ({ prospect: prospectRow(), ad: adView({ verdict: "yes" }), step: 0, messages: messages(), ...overrides });
+export const firstLine = (overrides: Partial<TodayLine> = {}): TodayLine => ({
+  prospect: prospectRow(),
+  ad: adView({ verdict: "yes" }),
+  step: 0,
+  messages: messages(),
+  sendTo: { channel: "whatsapp", to: "6580000001", direct: false },
+  ...overrides,
+});
 
 export const todayPage = (overrides: Partial<TodayPage> = {}): TodayPage => ({
   day: "2026-11-23",
@@ -40,7 +47,11 @@ export const todayPage = (overrides: Partial<TodayPage> = {}): TodayPage => ({
 
 export const prospectPage = (overrides: Partial<ProspectPage> = {}): ProspectPage => ({
   prospect: prospectRow(),
-  contact: { whatsapp: [{ number: "6580000001", href: "https://wa.me/6580000001" }], email: { address: "owner@example.com", href: "mailto:owner@example.com" } },
+  contact: {
+    whatsapp: [{ number: "6580000001", href: "https://wa.me/6580000001" }],
+    email: { address: "owner@example.com", href: "mailto:owner@example.com" },
+    sendTo: { channel: "whatsapp", to: "6580000001", direct: false },
+  },
   flags: [],
   ads: [adView({ verdict: "yes" })],
   sends: [],

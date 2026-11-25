@@ -135,6 +135,18 @@ describe("marking a message as sent", () => {
     expect(followUp.send).toMatchObject({ channel: "email", to: "replacement@example.com" });
   });
 
+  it("refuses a follow-up marked against the contact shown before an import", async () => {
+    await ready("00001");
+    const first = await sequence.send("00001", { step: 0, title: 0 });
+    at("2026-11-26T10:00:00");
+    await loadRows(store, [row(1, { bestRoute: "Email (valid) replacement@example.com" })], now);
+
+    await expect(sequence.send("00001", { step: 1, title: 0, channel: first.send.channel, to: first.send.to })).rejects.toThrow(
+      "The contact for this brand changed. Reload the page and check it before marking.",
+    );
+    expect((await store.all()).find((entry) => entry.profile.id === "00001")?.sends).toHaveLength(1);
+  });
+
   it("keeps an unresolved check when an identical import finds the brand parked", async () => {
     await loadRows(store, [row(1, { bestRoute: "WhatsApp +65 8000 0001" })], now);
     await ready("00001");
@@ -363,21 +375,29 @@ describe("taking a mark back", () => {
     await ready("00001");
     await loadRows(store, [row(1, { bestRoute: "Email (valid) original@example.com" })], now);
     await sequence.confirmRoute("00001");
-    const first = await sequence.send("00001", { step: 0, title: 0 });
+    await sequence.send("00001", { step: 0, title: 0 });
+    const priorCheck = (await store.get("00001")).routeCheck;
+    at("2026-11-23T10:01:00");
     await loadRows(store, [row(1, { bestRoute: "Email (valid) replacement@example.com" })], now);
     const imported = (await store.all()).find((entry) => entry.profile.id === "00001")!;
     expect(routeCheckUnresolved(imported)).toBe(false);
 
+    const saveProfile = vi.spyOn(store, "saveProfile");
     await sequence.takeBack("00001", 0);
     const file = (await store.all()).find((entry) => entry.profile.id === "00001")!;
     expect(await stage("00001")).toBe("ready");
-    expect(file.profile.routeCheck).toMatchObject({ since: new Date(now().getTime() + 1).toISOString(), channel: first.send.channel, direct: false });
-    expect(file.profile.routeCheck).not.toHaveProperty("to");
+    expect(saveProfile).not.toHaveBeenCalled();
+    expect(file.profile.routeCheck).toEqual(priorCheck);
+    expect(file.events.at(-1)).toMatchObject({ type: "unsent", step: 0, recheck: true });
+    expect(file.events.at(-1)).not.toHaveProperty("to");
+    expect(file.events.at(-1)).not.toHaveProperty("person");
     expect(routeCheckUnresolved(file)).toBe(true);
     await expect(sequence.send("00001", { step: 0, title: 0 })).rejects.toThrow("The best contact for this brand changed. Check it, then send.");
 
     at("2026-11-23T10:02:00");
     await sequence.confirmRoute("00001");
+    const confirmed = (await store.all()).find((entry) => entry.profile.id === "00001")!;
+    expect(routeCheckUnresolved(confirmed)).toBe(false);
     expect((await sequence.send("00001", { step: 0, title: 0 })).send).toMatchObject({ channel: "email", to: "replacement@example.com" });
   });
 

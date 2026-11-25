@@ -17,6 +17,7 @@ export function rowOf(file: ProspectFile, optOuts: ReadonlySet<string>, shared: 
   const stage = stageOf(file, optOuts);
   const channel = channelOf(file);
   const target = sendTarget(file);
+  const openTarget = target && !sendTargetUnavailable(file, target, optOuts) ? target : undefined;
   const staleDays = profile.newestAd ? Math.max(0, Math.floor((utcDay(singaporeDay(now)) - utcDay(profile.newestAd)) / 86_400_000)) : undefined;
   const next = stage === "contacted" ? nextStep(file) : undefined;
   const earlier = shared.get(profile.id);
@@ -29,7 +30,7 @@ export function rowOf(file: ProspectFile, optOuts: ReadonlySet<string>, shared: 
     tier: profile.tier,
     stage,
     ...(channel ? { channel } : {}),
-    ...(stage !== "opted_out" && target?.direct && target.person ? { person: target.person } : {}),
+    ...(stage !== "opted_out" && openTarget?.direct && openTarget.person ? { person: openTarget.person } : {}),
     ...(staleDays !== undefined ? { staleDays } : {}),
     flags: {
       duplicate: profile.flags?.some((flag) => flag.kind === "duplicate") ?? false,
@@ -126,7 +127,8 @@ export async function todayPage(deps: { store: OutreachStore; sequence: Outreach
 
   const line = async (file: ProspectFile, step: OutreachStep | undefined, ad: OutreachAd | undefined, extra: Partial<TodayLine> = {}): Promise<TodayLine> => {
     const routeCheck = routeCheckUnresolved(file);
-    const routeCheckTo = routeCheck ? sendTarget(file, optOuts) : undefined;
+    const checkTarget = routeCheck ? sendTarget(file, optOuts) : undefined;
+    const routeCheckTo = checkTarget && !sendTargetUnavailable(file, checkTarget, optOuts) ? checkTarget : undefined;
     const currentTarget = (step !== undefined && templates !== undefined) || routeCheck ? sendTarget(file, optOuts) : undefined;
     const target = currentTarget;
     const sendTo = target && !sendTargetUnavailable(file, target, optOuts) ? target : undefined;

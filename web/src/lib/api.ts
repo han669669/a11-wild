@@ -28,7 +28,7 @@ const send = <T>(path: string, body: unknown) => request<T>(path, { method: "POS
 /** A write on one prospect, by the name of its route. The answer is the prospect as it now stands. */
 export type ProspectWrite =
   | { action: "ad"; body: { ad: number; yes: boolean; ownerSaid?: string } }
-  | { action: "sent"; body: { step: OutreachStep; title: 0 | 1 } }
+  | { action: "sent"; body: { step: OutreachStep; title: 0 | 1; to?: string; channel?: "whatsapp" | "email" } }
   | { action: "unsent"; body: { step: OutreachStep } }
   | { action: "reply"; body: { reply: "more" | "no" | "other"; text?: string } }
   | { action: "stage"; body: { stage: "in_talks" | "client" | "lost" | "parked" | "auto"; reason?: string } }

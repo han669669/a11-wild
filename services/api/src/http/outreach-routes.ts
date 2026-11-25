@@ -23,7 +23,12 @@ const TEMPLATE = z.strictObject({ titles: z.tuple([z.string().max(200), z.string
 /** The bodies of the owner's writes. Each is strict: an unknown field is refused. */
 const BODY = {
   ad: z.strictObject({ ad: z.number().int().min(1).max(99), yes: z.boolean(), ownerSaid: TEXT.optional() }),
-  sent: z.strictObject({ step: STEP, title: z.union([z.literal(0), z.literal(1)]) }),
+  sent: z.strictObject({
+    step: STEP,
+    title: z.union([z.literal(0), z.literal(1)]),
+    channel: z.enum(["whatsapp", "email"]).optional(),
+    to: z.string().min(1).max(254).optional(),
+  }),
   unsent: z.strictObject({ step: STEP }),
   reply: z.strictObject({ reply: z.enum(["more", "no", "other"]), text: TEXT.optional() }),
   answered: NONE,
@@ -93,8 +98,8 @@ export function outreachRoutes(
       return (!route || routeOpen(route, closed)) && emails.every(openEmail) && numbers.every(openNumber);
     };
     if (optedOut(file, optOuts)) return { whatsapp: [] };
-    const target = sendTarget(file);
-    const sendTo = target && routeOpen(target, closed) ? target : undefined;
+    const target = sendTarget(file, optOuts);
+    const sendTo = target && !sendTargetUnavailable(file, target, optOuts) && routeOpen(target, closed) ? target : undefined;
     const dmCheck = { valid: "checked", risky: "risky", invalid: "invalid", unknown: "not checked" } as const;
     return {
       whatsapp: profile.whatsapp.filter(openNumber).map((number) => ({ number, ...link(/^\d{10,15}$/.test(number) ? `https://wa.me/${number}` : undefined) })),
@@ -143,8 +148,8 @@ export function outreachRoutes(
         return withoutTarget;
     });
     const message =
-      step !== undefined && templates && approvedAd(file) && target && (step > 0 || messageTarget)
-        ? { step, channel: target.channel, messages: messagesFor(templates.steps[step], file.profile, messageTarget) }
+      step !== undefined && templates && approvedAd(file)
+        ? { step, ...(messageTarget ? { channel: messageTarget.channel } : {}), messages: messagesFor(templates.steps[step], file.profile, messageTarget) }
         : undefined;
     return {
       prospect: rowOf(file, optOuts, sameContact(files), deps.now()),

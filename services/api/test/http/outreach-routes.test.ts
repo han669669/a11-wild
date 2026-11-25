@@ -169,6 +169,18 @@ describe("the owner's day", () => {
     expect(sent.sends[1]).toMatchObject({ step: 1, channel: "email", to: "replacement@example.com" });
   });
 
+  it("refuses to mark a message at the contact shown before an import", async () => {
+    await ready([row(1, { bestRoute: "Email (valid) original@example.com", whatsapp: "", email: "" })]);
+    const shown = await json(await get("/api/outreach/prospects/00001"));
+    expect(shown.contact.sendTo).toMatchObject({ channel: "email", to: "original@example.com" });
+
+    await loadProspects(studio, [row(1, { bestRoute: "Email (valid) replacement@example.com", whatsapp: "", email: "" })]);
+    const refused = await on("00001", "sent", { step: 0, title: 0, channel: shown.contact.sendTo.channel, to: shown.contact.sendTo.to });
+    expect(refused.status).toBe(400);
+    expect((await json(refused)).message).toBe("The contact for this brand changed. Reload the page and check it before marking.");
+    expect((await outreach().store.all())[0]!.sends).toEqual([]);
+  });
+
   it("marks a message as sent once, with the title he used, and takes it back on the same day only", async () => {
     await ready();
     const sent = await json(await on("00001", "sent", { step: 0, title: 1 }));
@@ -332,13 +344,28 @@ describe("the owner's day", () => {
       ...profile,
       bestRoute: "WhatsApp +65 8000 0001",
       secondRoute: "WhatsApp +65 8000 0001",
+      routeCheck: { since: studio.clock.now.toISOString(), channel: "whatsapp", direct: false },
     });
     await outreach().sequence.setChannel(test.id, "whatsapp");
+    await outreach().sequence.choose(test.id);
+    await outreach().sequence.saveTemplates(TEMPLATES as never);
+    const ad = await outreach().store.addAd(test.id, AD);
+    await outreach().sequence.verdict(test.id, { ad: ad.n, yes: true });
+
+    const today = await json(await get("/api/outreach/today"));
+    const line = today.firsts.find((entry: { prospect: { id: string } }) => entry.prospect.id === test.id);
+    expect(line).toMatchObject({ routeCheck: true, prospect: { id: test.id } });
+    expect(line.sendTo).toBeUndefined();
+    expect(line.routeCheckTo).toBeUndefined();
+    expect(line.prospect.person).toBeUndefined();
+    expect(JSON.stringify(line)).not.toContain("6580000001");
 
     const page = await json(await get(`/api/outreach/prospects/${test.id}`));
     expect(page.contact.whatsapp).toEqual([]);
     expect(page.contact.sendTo).toBeUndefined();
-    expect(page.check).toBeUndefined();
+    expect(page.check).toBe(true);
+    expect(page.message).toMatchObject({ step: 0 });
+    expect(page.message.messages[0].href).toBeUndefined();
     expect(JSON.stringify(page.contact)).not.toContain("6580000001");
     expect(JSON.stringify(page)).not.toContain("6580000001");
   });
@@ -377,7 +404,8 @@ describe("the owner's day", () => {
     await outreach().sequence.takeBack(test.id, 0);
     const readyPage = await json(await get(`/api/outreach/prospects/${test.id}`));
     expect(readyPage.contact.sendTo).toBeUndefined();
-    expect(readyPage.message).toBeUndefined();
+    expect(readyPage.message).toMatchObject({ step: 0 });
+    expect(readyPage.message.messages[0].href).toBeUndefined();
     expect(JSON.stringify(readyPage)).not.toContain("6580000001");
     expect(JSON.stringify(readyPage)).not.toContain("8000 0001");
   });

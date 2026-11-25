@@ -146,7 +146,12 @@ export function legacyTargets(profile: Prospect): ProspectSendTarget[] {
 /** True until the owner confirms a changed contact. */
 export function routeCheckUnresolved(file: ProspectFile): boolean {
   const check = file.profile.routeCheck;
-  return Boolean(check && !file.events.some((event) => event.type === "route" && event.choice === "confirmed" && event.at >= check.since));
+  const confirmations = file.events.filter((event) => event.type === "route" && event.choice === "confirmed");
+  const latestConfirmation = confirmations.reduce((latest, event) => (event.at > latest ? event.at : latest), "");
+  return Boolean(
+    (check && !confirmations.some((event) => event.at >= check.since)) ||
+      file.events.some((event) => event.type === "unsent" && event.recheck === true && event.at > latestConfirmation),
+  );
 }
 
 /** The current checked email or number, using only contacts in the latest workbook row. */

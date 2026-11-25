@@ -152,25 +152,25 @@ function Message({ line, done }: { line: TodayLine; done: () => void }) {
 function MessageLine({ line, done }: { line: TodayLine; done: () => void }) {
   const checkOpen = line.prospect.flags.check && line.step === 0;
   const sendTo = line.sendTo;
-  const person = sendTo?.person ?? (line.step === 0 && !sendTo?.direct ? line.prospect.person : undefined);
+  const person = sendTo?.person ?? (line.step === 0 && sendTo && !sendTo.direct ? line.prospect.person : undefined);
   const who = sendTo
-    ? line.step !== 0
-      ? `To the brand on ${CHANNELS[sendTo.channel]}`
-      : sendTo.direct && person
-        ? `To ${person}${sendTo.title ? `, ${sendTo.title},` : ""} on ${CHANNELS[sendTo.channel]}`
+    ? person
+      ? `To ${person}${sendTo.title ? `, ${sendTo.title},` : ""} on ${CHANNELS[sendTo.channel]}`
+      : line.step !== 0
+        ? `To the brand on ${CHANNELS[sendTo.channel]}`
         : sendTo.channel === "email"
           ? "To the brand's general inbox"
           : `To the brand on ${CHANNELS[sendTo.channel]}`
-    : "To the brand's general inbox";
+    : undefined;
   return (
     <div className="grid gap-3">
-      <p className="text-body">{who}</p>
+      {who ? <p className="text-body">{who}</p> : null}
       {line.prospect.staleDays !== undefined && line.prospect.staleDays >= 30 ? (
         <p className="text-body">Their newest ad is {line.prospect.staleDays} days old.</p>
       ) : null}
       {line.flags?.some((flag) => flag.kind === "duplicate") ? <p className="text-body">Might be the same business as another brand. Look before you send.</p> : null}
       {line.flags?.filter((flag) => flag.kind === "blocked").map((flag) => <p key={flag.text} className="text-body">Do not use: {outreachFlagText(flag.text)}</p>)}
-      <MessageCard prospect={sendTo ? { ...line.prospect, channel: sendTo.channel } : line.prospect} ad={line.ad} step={line.step!} messages={line.messages!} done={done} disabled={checkOpen} />
+      <MessageCard prospect={sendTo ? { ...line.prospect, channel: sendTo.channel } : line.prospect} ad={line.ad} step={line.step!} messages={line.messages!} done={done} sendTo={sendTo} disabled={checkOpen} />
     </div>
   );
 }

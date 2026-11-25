@@ -55,8 +55,17 @@ describe("Today page", () => {
     expect(line.getByRole("link", { name: "Open WhatsApp" })).toHaveAttribute("href", "https://wa.me/6580000001?text=two");
     await userEvent.click(line.getByRole("button", { name: "Mark as sent" }));
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("4 of 5"));
-    expect(sent).toEqual({ step: 0, title: 1 });
+    expect(sent).toEqual({ step: 0, title: 1, to: "6580000001", channel: "whatsapp" });
     expect(screen.queryByRole("link", { name: "Koi Tea" })).not.toBeInTheDocument();
+  });
+
+  it("shows when a due message has no usable contact and hides the mark button", async () => {
+    const line = firstLine({ sendTo: undefined });
+    stubApi({ "GET /api/outreach/today": () => ({ body: todayPage({ firsts: [line] }) }) });
+    renderSignedIn(<Outreach />);
+    expect(await screen.findByText("No contact to send this to.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mark as sent" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open WhatsApp" })).not.toBeInTheDocument();
   });
 
   it("leaves the line and shows the reason when the save fails", async () => {
@@ -132,7 +141,7 @@ describe("Today page", () => {
     stubApi({ "GET /api/outreach/today": () => ({ body: todayPage({ firsts: [], followUps: [line] }) }) });
     renderSignedIn(<Outreach />);
     expect(await screen.findByText("The best contact changed. Now: Email to Amelia Lee, Founder (amelia@example.com).")).toBeInTheDocument();
-    expect(screen.getByText("To the brand on Email")).toBeInTheDocument();
+    expect(screen.getByText("To Amelia Lee, Founder, on Email")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open the mail program" })).toHaveAttribute("href", "mailto:amelia@example.com");
     expect(screen.getByRole("button", { name: "Mark as sent" })).toBeEnabled();
   });
