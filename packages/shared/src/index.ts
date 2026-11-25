@@ -1116,6 +1116,9 @@ export interface ProspectRoute {
   person?: string;
   title?: string;
 }
+export interface ProspectHeldRoute extends ProspectRoute {
+  since: string;
+}
 export interface ProspectFlag {
   kind: "duplicate" | "blocked" | "fixed";
   text: string;
@@ -1152,7 +1155,7 @@ export interface Prospect {
   flags?: ProspectFlag[];
   route?: ProspectRoute;
   second?: ProspectRoute;
-  routeHeld?: ProspectRoute;
+  routeHeld?: ProspectHeldRoute;
   mergedInto?: string;
   /** WhatsApp numbers: digits only, with the country code. */
   whatsapp: string[];
@@ -1192,7 +1195,7 @@ export interface ProspectContacts extends ProspectBrief {
   flags?: ProspectFlag[];
   route?: ProspectRoute;
   second?: ProspectRoute;
-  routeHeld?: ProspectRoute;
+  routeHeld?: ProspectHeldRoute;
   whatsapp?: string[];
   email?: string;
   phone?: string;
@@ -1262,7 +1265,7 @@ export type OutreachEventBody =
   | { type: "unsent"; step: OutreachStep }
   | { type: "note"; text: string }
   | { type: "channel"; channel: OutreachChannel }
-  | { type: "route"; choice: "kept" | "new" }
+  | { type: "route"; choice: "kept" | "new"; target?: ProspectSendTarget }
   /** The owner chose to send to a prospect that shares its contact with an earlier one. */
   | { type: "chosen" };
 

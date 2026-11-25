@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { OUTREACH_TIERS, type OutreachTier, type Prospect, type ProspectFlag, type ProspectRoute, type ProspectSells } from "@a11-wild/shared";
+import { OUTREACH_TIERS, type OutreachTier, type Prospect, type ProspectFile, type ProspectFlag, type ProspectHeldRoute, type ProspectRoute, type ProspectSendTarget, type ProspectSells } from "@a11-wild/shared";
 import { Refusal } from "../mcp/registry.js";
+import { blockedValues, EMAIL_IN_TEXT, isBlockedTarget, numberKey } from "./blocked.js";
 import { EMAIL } from "./messages.js";
 import { routeOf } from "./routes.js";
-import { defaultRoute, legacyTargets, sendTarget, stageOf } from "./stage.js";
+import { freshTarget, routeHeldUnresolved, sendTarget, stageOf } from "./stage.js";
 import { type OutreachStore, prospectId } from "./store.js";
 
 /** One row of the owner's list, as plain text and numbers. The spreadsheet is read outside the server. */
@@ -142,34 +143,29 @@ function flagsFrom(notes: string | undefined): ProspectFlag[] {
   return flags;
 }
 
-const digits = (value: string): string => value.replace(/\D/g, "");
-const EMAIL_IN_TEXT = /[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}/gi;
-const numberKey = (value: string): string => {
-  const found = digits(value);
-  return found.length === 8 ? `65${found}` : found;
-};
-
-function blockedValues(flags: ProspectFlag[]): { emails: Set<string>; numbers: Set<string> } {
-  const emails = new Set<string>();
-  const numbers = new Set<string>();
-  for (const flag of flags) {
-    if (flag.kind !== "blocked") continue;
-    const text = flag.text.replace(/(\.[a-z]{2,})\/(?=[^\s@/]+@)/gi, "$1 ");
-    for (const found of text.match(EMAIL_IN_TEXT) ?? []) emails.add(found.toLowerCase());
-    for (const found of flag.text.match(/\+?\d[\d().\s-]{5,}\d/g) ?? []) {
-      const key = numberKey(found);
-      if (key.length >= 8) numbers.add(key);
-    }
-  }
-  return { emails, numbers };
+function heldRoute(file: ProspectFile, target: ProspectSendTarget, since: string): ProspectHeldRoute {
+  const known = [
+    file.profile.route,
+    file.profile.second,
+    file.profile.routeHeld,
+    routeOf(file.profile.bestRoute),
+    routeOf(file.profile.secondRoute),
+  ].find((route) => route?.channel === target.channel && route.to === target.to);
+  return {
+    ...target,
+    label: known?.label ?? (target.direct ? (target.channel === "whatsapp" ? "DM phone" : "DM email") : target.channel === "whatsapp" ? "WhatsApp" : "Email"),
+    since,
+  };
 }
+
+const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 function removeBlocked(profile: Prospect): Prospect {
   const blocked = blockedValues(profile.flags ?? []);
   const isEmailBlocked = (value: string | undefined) => value !== undefined && blocked.emails.has(value.toLowerCase());
   const isNumberBlocked = (value: string | undefined) => value !== undefined && blocked.numbers.has(numberKey(value));
   const isRouteBlocked = (value: ProspectRoute | undefined) =>
-    value !== undefined && (value.channel === "email" ? isEmailBlocked(value.to) : value.channel === "whatsapp" || value.channel === "call" ? isNumberBlocked(value.to) : false);
+    value !== undefined && isBlockedTarget(blocked, value);
   const stripRoute = (value: string | undefined): string | undefined => {
     if (!value) return undefined;
     const clean = value
@@ -247,18 +243,7 @@ export function profileOf(row: LoadRow, loadedAt: string): Prospect {
   });
 }
 
-const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
-
-function workbookTarget(profile: Prospect): { channel: "whatsapp" | "email"; to: string } | undefined {
-  const route = [routeOf(profile.bestRoute), routeOf(profile.secondRoute)].find(
-    (candidate) => candidate?.channel === "whatsapp" || candidate?.channel === "email",
-  );
-  if (route?.channel === "whatsapp" || route?.channel === "email") return { channel: route.channel, to: route.to };
-  const target = legacyTargets(profile)[0];
-  return target ? { channel: target.channel, to: target.to } : undefined;
-}
-
-const sameTarget = (a: { channel: string; to: string } | undefined, b: { channel: string; to: string } | undefined) =>
+const sameChannelAndTo = (a: { channel: string; to: string } | undefined, b: { channel: string; to: string } | undefined) =>
   (!a && !b) || Boolean(a && b && a.channel === b.channel && a.to === b.to);
 
 /**
@@ -317,42 +302,21 @@ export async function loadRows(
       }
       if (file && before) {
         const previous = { ...file, profile: before };
-        const routeEvent = [...file.events].filter((event) => event.type === "route").sort((a, b) => a.at.localeCompare(b.at)).at(-1);
-        const resolved = Boolean(before.routeHeld && routeEvent && routeEvent.at >= before.loadedAt);
-        const oldTarget = sendTarget(previous);
-        const newTarget = workbookTarget(profile);
-        const sameWorkbookTarget = sameTarget(workbookTarget(before), newTarget);
-        if (sameWorkbookTarget) {
-          if (resolved && before.routeHeld) {
-            if (routeEvent?.choice === "kept") profile.route = before.routeHeld;
-            delete profile.routeHeld;
-          } else {
-            if (before.route) profile.route = before.route;
-            if (before.routeHeld) profile.routeHeld = before.routeHeld;
-          }
-        }
-        if (
-          !sameWorkbookTarget &&
-          oldTarget &&
-          newTarget &&
-          !sameTarget(oldTarget, newTarget) &&
-          ["pick_waits", "pick_made", "ad_waits", "ready", "contacted", "replied", "in_talks", "client"].includes(stageOf(previous, optOuts))
-        ) {
-          const oldRoute =
-            [before.route, before.second, before.routeHeld].find((route) => route?.channel === oldTarget.channel && route.to === oldTarget.to) ??
-            {
-              ...oldTarget,
-              label: before.bestRoute ?? (oldTarget.direct ? (oldTarget.channel === "whatsapp" ? "DM phone" : "DM email") : oldTarget.channel === "whatsapp" ? "WhatsApp" : "Email"),
-            };
-          profile.routeHeld = oldRoute;
+        const oldTarget = sendTarget(previous, optOuts);
+        const newFile = { ...file, profile };
+        const oldFreshTarget = freshTarget(previous, optOuts);
+        const newFreshTarget = freshTarget(newFile, optOuts);
+        const active = ["pick_waits", "pick_made", "ad_waits", "ready", "contacted", "replied", "in_talks", "client"].includes(stageOf(previous, optOuts));
+        const withdrawn = before.routeHeld && sameChannelAndTo(newFreshTarget, before.routeHeld);
+        const unchanged = sameChannelAndTo(newFreshTarget, oldFreshTarget);
+        if (active && !withdrawn && unchanged && before.routeHeld && routeHeldUnresolved(previous)) {
+          profile.routeHeld = before.routeHeld;
+        } else if (active && !withdrawn && !unchanged && newFreshTarget && oldTarget && !sameChannelAndTo(newFreshTarget, oldTarget)) {
+          profile.routeHeld = heldRoute(previous, oldTarget, loadedAt);
         }
         if (before.newestAd && (!profile.newestAd || before.newestAd > profile.newestAd)) profile.newestAd = before.newestAd;
       }
       profile = removeBlocked(profile);
-      if (file && profile.routeHeld) {
-        const defaultTarget = defaultRoute({ ...file, profile });
-        if (!defaultTarget || (defaultTarget.channel === profile.routeHeld.channel && defaultTarget.to === profile.routeHeld.to)) delete profile.routeHeld;
-      }
       await store.saveProfile(profile);
       // An opt-out is for the contact. A number or an address the list now gives to an opted-out brand is off every list too.
       if (file && !profile.test && file.events.some((event) => event.type === "optout")) await store.addOptOut(profile);

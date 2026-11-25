@@ -199,10 +199,10 @@ export class OutreachSequence {
   }
 
   async setRoute(id: string, choice: "kept" | "new"): Promise<OutreachEvent> {
-    const [profile, files] = await Promise.all([this.store.get(id), this.store.all()]);
-    const file = files.find((entry) => entry.profile.id === id);
-    if (!profile.routeHeld || !file || !routeHeldUnresolved(file)) throw new Refusal("There is no newer contact waiting for your choice.");
-    return this.store.addEvent(id, { type: "route", choice }, "owner");
+    const { file } = await this.file(id);
+    if (!file.profile.routeHeld || !routeHeldUnresolved(file)) throw new Refusal("There is no newer contact waiting for your choice.");
+    const target = choice === "kept" ? sendTarget(file) : undefined;
+    return this.store.addEvent(id, { type: "route", choice, ...(target ? { target } : {}) }, "owner");
   }
 
   /** The owner chooses to send to a brand that shares its contact with an earlier one. */

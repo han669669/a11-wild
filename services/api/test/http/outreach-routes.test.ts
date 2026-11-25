@@ -254,8 +254,8 @@ describe("the owner's day", () => {
       row(2, { bestRoute: "DM phone +65 8000 0002" }),
     ]);
     const incoming = [
-      row(1, { bestRoute: "DM email (valid) new1@example.com", email: "new1@example.com", decisionMaker: "Evelyn Tan", dmTitle: "Director" }),
-      row(2, { bestRoute: "DM email (valid) new2@example.com", email: "new2@example.com", decisionMaker: "New Person", dmTitle: "Director" }),
+      row(1, { bestRoute: "DM email (valid) new1@example.com", whatsapp: undefined, email: "new1@example.com", decisionMaker: "Evelyn Tan", dmTitle: "Director" }),
+      row(2, { bestRoute: "DM email (valid) new2@example.com", whatsapp: undefined, email: "new2@example.com", decisionMaker: "New Person", dmTitle: "Director" }),
     ];
     await loadProspects(studio, incoming);
     await on("00001", "route", { choice: "kept" });
@@ -316,7 +316,7 @@ describe("the owner's day", () => {
       bestRoute: "WhatsApp +65 8000 0001",
       secondRoute: "WhatsApp +65 8000 0001",
       route: { channel: "email", to: "alternate@example.com", direct: false, label: "Email (valid) alternate@example.com" },
-      routeHeld: { channel: "whatsapp", to: "6580000001", direct: false, label: "WhatsApp +65 8000 0001" },
+      routeHeld: { channel: "whatsapp", to: "6580000001", direct: false, label: "WhatsApp +65 8000 0001", since: "2026-11-23T02:00:00.000Z" },
     });
 
     const page = await json(await get(`/api/outreach/prospects/${test.id}`));

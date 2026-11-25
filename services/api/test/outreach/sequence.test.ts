@@ -70,6 +70,27 @@ describe("marking a message as sent", () => {
     expect(sent.send).toMatchObject({ channel: "whatsapp", to: "6580000001" });
   });
 
+  it("refreshes route names and titles without holding an unchanged contact", async () => {
+    await loadRows(store, [row(1, { bestRoute: "DM phone +65 8000 0001", decisionMaker: "Amelia Lee", dmTitle: "Founder" })], now);
+    await ready("00001");
+    await loadRows(store, [row(1, { bestRoute: "DM phone +65 8000 0001", decisionMaker: "Amelia Li", dmTitle: "Managing Director" })], now);
+
+    const saved = (await store.all()).find((file) => file.profile.id === "00001")!;
+    expect(saved.profile.route).toMatchObject({ channel: "whatsapp", to: "6580000001", person: "Amelia Li", title: "Managing Director" });
+    expect(saved.profile.routeHeld).toBeUndefined();
+    expect(sendTarget(saved)).toMatchObject({ channel: "whatsapp", to: "6580000001", person: "Amelia Li", title: "Managing Director" });
+  });
+
+  it("holds an email change selected by the owner's email preference", async () => {
+    await ready("00001");
+    await sequence.setChannel("00001", "email");
+    const incoming = row(1, { bestRoute: "WhatsApp +65 8000 0001", email: "replacement@example.com" });
+    await loadRows(store, [incoming], now);
+
+    expect((await store.get("00001")).routeHeld).toMatchObject({ channel: "email", to: "brand1@example.com" });
+    expect((await store.get("00001")).routeHeld?.since).toBe((await store.get("00001")).loadedAt);
+  });
+
   it("keeps a newer Keep choice over an older channel preference after a reload", async () => {
     await ready("00001");
     at("2026-11-23T10:05:00");
@@ -84,9 +105,13 @@ describe("marking a message as sent", () => {
 
     const reloaded = (await store.all()).find((file) => file.profile.id === "00001")!;
     const routeEvent = reloaded.events.find((event) => event.type === "route")!;
-    expect(Date.parse(reloaded.profile.loadedAt)).toBeGreaterThan(Date.parse(routeEvent.at));
+    expect(routeEvent).toMatchObject({
+      choice: "kept",
+      target: { channel: "whatsapp", to: "6580000001" },
+    });
     expect(reloaded.profile.routeHeld).toBeUndefined();
-    expect(reloaded.profile.route).toMatchObject({ channel: "whatsapp", to: "6580000001" });
+    expect(reloaded.profile.route).toMatchObject({ channel: "email", to: "new@example.com" });
+    expect(sendTarget(reloaded)).toMatchObject({ channel: "whatsapp", to: "6580000001" });
 
     const sent = await sequence.send("00001", { step: 0, title: 0 });
     expect(sent.send).toMatchObject({ channel: "whatsapp", to: "6580000001" });
@@ -103,7 +128,7 @@ describe("marking a message as sent", () => {
     await sequence.setRoute("00001", "kept");
     await loadRows(store, [changed], now);
     expect((await store.get("00001")).routeHeld).toBeUndefined();
-    expect((await store.get("00001")).route).toMatchObject({ channel: "whatsapp", to: "6580000001" });
+    expect((await store.get("00001")).route).toBeUndefined();
 
     await loadRows(store, [changed], now);
     expect((await store.get("00001")).routeHeld).toBeUndefined();
@@ -122,7 +147,7 @@ describe("marking a message as sent", () => {
     await sequence.setRoute("00001", "kept");
     await loadRows(store, [changed], now);
     expect((await store.get("00001")).routeHeld).toBeUndefined();
-    expect((await store.get("00001")).route).toMatchObject({ channel: "email", to: "first@example.com" });
+    expect((await store.get("00001")).route).toBeUndefined();
     await loadRows(store, [changed], now);
     expect((await store.get("00001")).routeHeld).toBeUndefined();
     expect((await sequence.send("00001", { step: 0, title: 0 })).send).toMatchObject({ channel: "email", to: "first@example.com" });
@@ -133,7 +158,7 @@ describe("marking a message as sent", () => {
     const removed = row(1, { bestRoute: undefined, secondRoute: undefined, whatsapp: undefined, email: undefined });
     await loadRows(store, [removed], now);
     expect((await store.get("00001")).routeHeld).toBeUndefined();
-    expect(sendTarget((await store.all()).find((file) => file.profile.id === "00001")!)).toBeUndefined();
+    expect(sendTarget((await store.all()).find((file) => file.profile.id === "00001")!)).toMatchObject({ channel: "email", to: "first@example.com" });
   });
 
   it("counts a send at 23:30 on Monday in Singapore on Monday", async () => {

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { loadRows, type LoadRow } from "../../src/outreach/load.js";
 import { routeOf } from "../../src/outreach/routes.js";
+import { sendTarget } from "../../src/outreach/stage.js";
 import { OutreachStore } from "../../src/outreach/store.js";
 import { MemoryTable } from "../helpers/memory-table.js";
 import { row } from "./helpers.js";
@@ -120,7 +121,7 @@ describe("loading the additional list fields", () => {
     expect(profile.secondRoute).toBe("Email (valid)");
   });
 
-  it("blocks a slash-local-part email without blocking its suffix as another address", async () => {
+  it("blocks a slash-local-part email and its address suffix", async () => {
     await loadRows(store, [
       listed(10, {
         email: "a/b@example.com",
@@ -132,11 +133,31 @@ describe("loading the additional list fields", () => {
     ], now);
     const profile = await store.get("00010");
     expect(profile.email).toBeUndefined();
-    expect(profile.dmEmail).toBe("b@example.com");
+    expect(profile.dmEmail).toBeUndefined();
     expect(profile.route).toBeUndefined();
-    expect(profile.second).toMatchObject({ channel: "email", to: "b@example.com" });
+    expect(profile.second).toBeUndefined();
     expect(profile.bestRoute).toBe("Email (valid)");
-    expect(profile.secondRoute).toBe("Email (valid) b@example.com");
+    expect(profile.secondRoute).toBe("Email (valid)");
+  });
+
+  it("blocks department-style addresses and their slash-separated address", async () => {
+    await loadRows(store, [
+      listed(11, {
+        email: "dept.co/team@example.com",
+        dmEmail: "team@example.com",
+        dmVerify: "valid",
+        bestRoute: "Email (valid) dept.co/team@example.com",
+        secondRoute: "DM email (valid) team@example.com",
+        notes: "AUDIT-FLAG: dept.co/team@example.com do not use",
+      }),
+    ], now);
+    const profile = await store.get("00011");
+    expect(profile.email).toBeUndefined();
+    expect(profile.dmEmail).toBeUndefined();
+    expect(profile.route).toBeUndefined();
+    expect(profile.second).toBeUndefined();
+    expect(profile.bestRoute).toBe("Email (valid)");
+    expect(profile.secondRoute).toBe("DM email (valid)");
   });
 
   it("applies the row limits and accepts 500 characters of raw notes", async () => {
@@ -183,13 +204,21 @@ describe("a held contact", () => {
     await store.addEvent("00001", { type: "ad_yes", ad: attached.n }, "owner");
     const incoming = listed(1, { bestRoute: "Email (valid) new@example.com" });
     expect(await loadRows(store, [incoming], now)).toMatchObject({ held: 1 });
-    expect((await store.get("00001")).routeHeld).toMatchObject({ channel: "whatsapp", to: "6580000001", direct: false, label: "WhatsApp +65 8000 0001" });
+    expect((await store.get("00001")).routeHeld).toMatchObject({
+      channel: "whatsapp",
+      to: "6580000001",
+      direct: false,
+      label: "WhatsApp +65 8000 0001",
+      since: now().toISOString(),
+    });
 
-    await store.addEvent("00001", { type: "route", choice: "kept" }, "owner");
+    await store.addEvent("00001", { type: "route", choice: "kept", target: { channel: "whatsapp", to: "6580000001", direct: false } }, "owner");
     await loadRows(store, [incoming], now);
     expect((await store.get("00001")).routeHeld).toBeUndefined();
     expect(await loadRows(store, [incoming], now)).toMatchObject({ held: 0 });
-    expect((await store.get("00001")).route).toMatchObject({ channel: "whatsapp", to: "6580000001" });
+    const reloaded = await store.get("00001");
+    expect(reloaded.route).toMatchObject({ channel: "email", to: "new@example.com" });
+    expect(sendTarget((await store.all()).find((file) => file.profile.id === "00001")!)).toMatchObject({ channel: "whatsapp", to: "6580000001" });
   });
 
   it("does not add the new person's name to an already-held direct route", async () => {
@@ -209,12 +238,32 @@ describe("a held contact", () => {
     await loadRows(store, [incoming], now);
     expect((await store.get("00001")).routeHeld).not.toHaveProperty("person");
     expect((await store.get("00001")).routeHeld).not.toHaveProperty("title");
-    await store.addEvent("00001", { type: "route", choice: "kept" }, "owner");
+    await store.addEvent("00001", { type: "route", choice: "kept", target: { channel: "whatsapp", to: "6580000001", direct: true } }, "owner");
     await loadRows(store, [incoming], now);
     expect((await store.get("00001")).routeHeld).toBeUndefined();
-    expect((await store.get("00001")).route).toMatchObject({ channel: "whatsapp", to: "6580000001", direct: true });
-    expect((await store.get("00001")).route).not.toHaveProperty("person");
-    expect((await store.get("00001")).route).not.toHaveProperty("title");
+    const reloaded = await store.get("00001");
+    expect(reloaded.route).toMatchObject({ channel: "email", to: "evelyn@example.com", person: "Evelyn Tan", title: "Director" });
+    const saved = (await store.all()).find((file) => file.profile.id === "00001")!;
+    expect(sendTarget(saved)).toMatchObject({ channel: "whatsapp", to: "6580000001", direct: false });
+    expect(sendTarget(saved)).not.toHaveProperty("person");
+    expect(sendTarget(saved)).not.toHaveProperty("title");
+  });
+
+  it("refreshes current route facts without holding the same contact", async () => {
+    await loadRows(store, [
+      listed(1, { bestRoute: "DM phone +65 8000 0001", decisionMaker: "Amelia Lee", dmTitle: "Founder" }),
+    ], now);
+    const attached = await store.addAd("00001", { batchId: "b", imageId: "i", kind: "v1", key: "outreach/ad.png", why: "The cup." });
+    await store.addEvent("00001", { type: "ad_yes", ad: attached.n }, "owner");
+
+    await loadRows(store, [
+      listed(1, { bestRoute: "DM phone +65 8000 0001", decisionMaker: "Amelia Li", dmTitle: "Managing Director" }),
+    ], now);
+
+    const saved = (await store.all()).find((file) => file.profile.id === "00001")!;
+    expect(saved.profile.route).toMatchObject({ channel: "whatsapp", to: "6580000001", person: "Amelia Li", title: "Managing Director" });
+    expect(saved.profile.routeHeld).toBeUndefined();
+    expect(sendTarget(saved)).toMatchObject({ channel: "whatsapp", to: "6580000001", person: "Amelia Li", title: "Managing Director" });
   });
 
   it("drops a hold when the new default is the held target or no send target remains", async () => {
@@ -228,5 +277,14 @@ describe("a held contact", () => {
 
     await loadRows(store, [listed(1, { bestRoute: undefined, whatsapp: undefined, email: undefined })], now);
     expect((await store.get("00001")).routeHeld).toBeUndefined();
+  });
+
+  it("never holds a changed route for a prospect outside the active stages", async () => {
+    await loadRows(store, [listed(1, { bestRoute: "WhatsApp +65 8000 0001" })], now);
+    await loadRows(store, [listed(1, { bestRoute: "Email (valid) new@example.com" })], now);
+
+    const profile = await store.get("00001");
+    expect(profile.route).toMatchObject({ channel: "email", to: "new@example.com" });
+    expect(profile.routeHeld).toBeUndefined();
   });
 });
