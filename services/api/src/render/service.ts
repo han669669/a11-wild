@@ -52,6 +52,8 @@ export interface RenderRequest {
   fromId?: string;
   /** A draft of a concept ad: which of the direction's three drafts it is. */
   draft?: number;
+  /** The finished v1 or v2 draft to make again when its checks reject it. */
+  redo?: string;
   /** Other pictures the model sees: keys of the product's photos or the brand's logo. */
   /** Names of the product's photos and the brand's logo: "logo", "pack-1", "food-2". Never a key. */
   references: string[];
@@ -136,6 +138,8 @@ export class RenderService {
     if (asked) {
       throw new Refusal(`R16: a picture carries the brand logo and no words. This prompt asks for words in the picture ("${asked}"). Describe the scene only. The studio adds the no-words rule itself, and the logo is the one mark.`);
     }
+    if (input.redo !== undefined && input.kind !== "draft") throw new Refusal("You can use redo only for a v1 or v2 draft, not a rough or final.");
+    if (input.redo !== undefined && batch.kind === "v3") throw new Refusal("A concept ad (v3) uses draft, not redo.");
     if (input.kind === "rough" && batch.kind !== "v3") throw new Refusal("Only a batch of concept ads (v3) has roughs. A v1 or v2 batch starts with its drafts.");
     // A rough is made of any concept of the set. A draft or a final is made of an idea the batch chose.
     const idea: Idea | undefined = (input.kind === "rough" ? await batches.burst(batch.id) : await batches.ideas(batch.id)).find((saved) => saved.id === input.ideaId);
@@ -207,10 +211,22 @@ export class RenderService {
         if (!rough && !input.fromId) {
           throw new Refusal(`Concept ${idea.id} has no rough, so its draft starts from a plan of the real photos. Build one (skeleton_make, with the real photo of each thing it shows) and give its id as fromId.`);
         }
-      } else if (input.draft !== undefined) {
-        throw new Refusal("Only a draft of a concept ad (v3) has a number from its direction.");
+      } else {
+        if (input.draft !== undefined) throw new Refusal("Only a draft of a concept ad (v3) has a number from its direction.");
+        if (input.redo !== undefined) {
+          const before = mine.find((render) => render.id === input.redo || render.imageId === input.redo);
+          if (!before) throw new Refusal("That id is not a live draft of this idea.");
+          if (before.status !== "done") throw new Refusal("Only a finished draft can be made again.");
+          if (before.redoOf) throw new Refusal("A draft can be made again only once.");
+          if (!before.imageId) throw new Refusal("That finished draft has no picture to check.");
+          const fault = await finals.rejection(batch.id, before.imageId);
+          if (!fault) throw new Refusal("A draft is made again once, and only when its checks reject it (a D item, or two F items).");
+          redoOf = before.id;
+        }
       }
-      if (mine.length - (redoOf ? 1 : 0) >= DRAFTS_PER_IDEA) throw new Refusal(`Idea ${idea.id} has its ${DRAFTS_PER_IDEA} drafts. A draft that failed can be sent again; one that is done cannot.`);
+      if (mine.length - (redoOf ? 1 : 0) >= DRAFTS_PER_IDEA) {
+        throw new Refusal(`Idea ${idea.id} has its ${DRAFTS_PER_IDEA} drafts. A failed render can be sent again; a finished draft can be made again once with redo only if its checks reject it.`);
+      }
       const hasPack = product.photos.some((photo) => photo.kind === "pack");
       if (input.fromId) {
         from = await images.get(batch.id, input.fromId);
