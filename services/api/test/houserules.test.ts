@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { BATCH_KINDS } from "@a11-wild/shared";
-import { HOUSE_RULES, RULE_ROLES, rulesFor } from "../src/houserules.js";
+import { HOUSE_RULES, RULES_VERSION, RULE_ROLES, rulesFor } from "../src/houserules.js";
 
 describe("house rules", () => {
+  it("bumps the version when the settled-batch logo rule changes", () => {
+    expect(RULES_VERSION).toBe("2026-11-26.2");
+    expect(rulesFor("main", "v1").find((rule) => rule.id === "v1-logo")?.text).toContain(
+      "A batch whose drafts were already checked when the brand's logo was saved keeps going without it.",
+    );
+  });
+
   it("gives every rule a unique id and at least one role", () => {
     const ids = HOUSE_RULES.map((rule) => rule.id);
     expect(new Set(ids).size).toBe(ids.length);

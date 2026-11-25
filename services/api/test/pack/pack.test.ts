@@ -194,7 +194,8 @@ describe("pack_publish", () => {
     });
     const saved = await callTool(studio, "brand_logo_save", { brandId: brand.id, extractId: offer.id, logoUrl: LOGO_URL });
     expect(saved.ok).toBe(true);
-    expect(await studio.services.batches.get(batchId)).toMatchObject({ state: "done", logoFree: true });
+    expect(await studio.services.batches.get(batchId)).toMatchObject({ state: "done" });
+    expect(await studio.services.batches.logoFree(batchId)).toBe(true);
     const after = await actualFinals(await studio.services.batches.get(batchId));
     expect(after).toHaveLength(3);
     expect(after.every((entry) => entry.missing.length === 0 && entry.delivered?.kind === "finish")).toBe(true);
@@ -204,7 +205,8 @@ describe("pack_publish", () => {
 
     await studio.services.checks.measure(batchId, "idea-1-final", "cap_check", { code: "D11", note: "The pouch is too wide." });
     const reopened = await studio.services.board.progress(await studio.services.batches.get(batchId));
-    expect(reopened.batch).toMatchObject({ state: "finals", logoFree: true });
+    expect(reopened.batch).toMatchObject({ state: "finals" });
+    expect(await studio.services.batches.logoFree(batchId)).toBe(true);
     await studio.services.checks.measure(batchId, "idea-1-final", "cap_check", null);
     expect((await actualFinals(reopened.batch)).find((entry) => entry.ideaId === "idea-1")?.missing.some((missing) => missing.includes("logo_set"))).toBe(false);
   });

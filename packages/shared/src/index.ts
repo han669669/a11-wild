@@ -282,8 +282,6 @@ export interface Batch {
   state: BatchState;
   /** The version of the product's truth sheet that this batch saved. Its ideas are written from it. */
   truthVersion?: number;
-  /** A completed batch that must not be made incomplete by adding its brand's logo later. */
-  logoFree?: true;
   /** The text spec of a batch whose format the studio does not render. */
   spec?: string;
   createdAt: string;

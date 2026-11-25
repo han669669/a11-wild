@@ -45,14 +45,14 @@ export class BatchStore {
   }
 
   async markLogoFree(batchId: string): Promise<boolean> {
-    let batch = await this.get(batchId);
-    while (LOGO_FREE_STATES.has(batch.state)) {
-      if (batch.logoFree) return true;
-      const marked: Batch = { ...batch, logoFree: true, updatedAt: this.now().toISOString() };
-      if (await this.table.put({ pk: PK, sk: marked.id, ...marked }, { ifEquals: { attribute: "state", value: batch.state } })) return true;
-      batch = await this.get(batchId);
-    }
-    return false;
+    const batch = await this.get(batchId);
+    if (!LOGO_FREE_STATES.has(batch.state)) return false;
+    await this.table.put({ pk: `${PK}#${batchId}`, sk: "LOGOFREE", at: this.now().toISOString() }, { ifNotExists: true });
+    return true;
+  }
+
+  async logoFree(batchId: string): Promise<boolean> {
+    return Boolean(await this.table.get(`${PK}#${batchId}`, "LOGOFREE"));
   }
 
   /** Moves a batch to a state the diagram allows from where it is. A save of the same step again keeps the state. */

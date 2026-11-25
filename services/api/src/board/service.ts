@@ -229,9 +229,9 @@ export class BoardService implements FinalRule {
   /** Where each idea stands on its way to a final: the owner's choice, and what its newest final still needs. */
   async finals(batch: Batch): Promise<IdeaFinal[]> {
     const { batches, brands, checks, picks } = this.deps;
-    const [brand, product] = await Promise.all([brands.brand(batch.brandId), brands.product(batch.productId)]);
+    const [brand, product, logoFree] = await Promise.all([brands.brand(batch.brandId), brands.product(batch.productId), batches.logoFree(batch.id)]);
     const hasPack = product.photos.some((photo) => photo.kind === "pack");
-    const hasLogo = Boolean(brand.logo) && !batch.logoFree;
+    const hasLogo = Boolean(brand.logo) && !logoFree;
     const [found, all, finals, made] = await Promise.all([checks.all(batch.id), this.deps.images.list(batch.id), this.sent(batch.id, "final"), picks.all(batch.id)]);
     const approved = hasWords(batch.kind) ? await this.deps.copy.list(batch.id) : [];
     const entries: IdeaFinal[] = [];
@@ -284,9 +284,9 @@ export class BoardService implements FinalRule {
     const { batches, brands, checks, critic } = this.deps;
     const missing: string[] = [];
     if (batch.state === "drafting") {
-      const [brand, product] = await Promise.all([brands.brand(batch.brandId), brands.product(batch.productId)]);
+      const [brand, product, logoFree] = await Promise.all([brands.brand(batch.brandId), brands.product(batch.productId), batches.logoFree(batch.id)]);
       const hasPack = product.photos.some((photo) => photo.kind === "pack");
-      const hasLogo = Boolean(brand.logo) && !batch.logoFree;
+      const hasLogo = Boolean(brand.logo) && !logoFree;
       const [found, all, drafts, ranks] = await Promise.all([checks.all(batch.id), this.deps.images.list(batch.id), this.sent(batch.id, "draft"), critic.ranks(batch.id)]);
       const approved = hasWords(batch.kind) ? await this.deps.copy.list(batch.id) : [];
       const ideas = await batches.ideas(batch.id);

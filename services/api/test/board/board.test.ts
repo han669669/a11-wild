@@ -123,7 +123,7 @@ describe("checks", () => {
     expect(saved.ok).toBe(true);
     const afterSave = await studio.services.batches.get(batchId);
     expect(afterSave.state).toBe("drafting");
-    expect(afterSave.logoFree).toBeUndefined();
+    expect(await studio.services.batches.logoFree(batchId)).toBe(false);
     const imageId = drafts["idea-1"]![0]!;
     const checked = await check(imageId);
     expect(checked.value.state).toBe("drafting");
@@ -135,6 +135,7 @@ describe("checks", () => {
     const before = await callTool(studio, "board_show", { batchId });
     expect(before.value.batch.state).toBe("waiting_pick");
     expect(await state()).toBe("waiting_pick");
+    const staleBatch = await studio.services.batches.get(batchId);
 
     const batch = await studio.services.batches.get(batchId);
     const offer = await studio.services.brands.offer({
@@ -148,7 +149,8 @@ describe("checks", () => {
     });
     const saved = await callTool(studio, "brand_logo_save", { brandId: batch.brandId, extractId: offer.id, logoUrl: LOGO_URL });
     expect(saved.ok).toBe(true);
-    expect(await studio.services.batches.get(batchId)).toMatchObject({ state: "waiting_pick", logoFree: true });
+    expect(await studio.services.batches.get(batchId)).toMatchObject({ state: "waiting_pick" });
+    expect(await studio.services.batches.logoFree(batchId)).toBe(true);
 
     const page = await json(await studio.app.request(`/api/batches/${batchId}/board`, { headers: { cookie: await sessionCookie(studio) } }));
     expect(page.batch.state).toBe("waiting_pick");
@@ -171,8 +173,11 @@ describe("checks", () => {
     const final = await render("idea-1", "final", drafts["idea-1"]![0]!);
     expect(final.ok).toBe(true);
     const finalBatch = await studio.services.batches.get(batchId);
-    expect(finalBatch).toMatchObject({ state: "finals", logoFree: true });
-    const finals = await studio.services.board.finals(finalBatch);
+    expect(finalBatch).toMatchObject({ state: "finals" });
+    expect(await studio.services.batches.logoFree(batchId)).toBe(true);
+    const moved = await studio.services.batches.move(staleBatch, "finals", "render_submit");
+    expect(await studio.services.batches.logoFree(batchId)).toBe(true);
+    const finals = await studio.services.board.finals(moved);
     expect(finals.find((entry) => entry.ideaId === "idea-1")?.missing.some((missing) => missing.includes("logo_set"))).toBe(false);
   });
 
