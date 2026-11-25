@@ -231,11 +231,62 @@ describe("the owner's day", () => {
     expect(waiting.contact.sendTo.to).toBe("6580000001");
     expect(waiting.message.messages[0].href).toMatch(/^https:\/\/wa\.me\/6580000001/);
 
+    const channelChanged = await json(await on("00001", "channel", { channel: "email" }));
+    expect(channelChanged.contact.sendTo.to).toBe("6580000001");
+    expect(channelChanged.message.messages[0].href).toMatch(/^https:\/\/wa\.me\/6580000001/);
+
     const switched = await json(await on("00001", "route", { choice: "new" }));
     expect(switched.check).toBeUndefined();
     expect(switched.contact.sendTo).toMatchObject({ channel: "email", to: "new@example.com" });
     expect(switched.message.messages[0].href).toMatch(/^mailto:new@example\.com\?/);
     expect(switched.events[0]).toMatchObject({ type: "route", choice: "new", by: "owner" });
+    const channelAfterRoute = await json(await on("00001", "channel", { channel: "whatsapp" }));
+    expect(channelAfterRoute.contact.sendTo).toMatchObject({ channel: "whatsapp", to: "6580000001" });
+    expect(channelAfterRoute.message.messages[0].href).toMatch(/^https:\/\/wa\.me\/6580000001/);
+    const sent = await json(await on("00001", "sent", { step: 0, title: 0 }));
+    expect(sent.sends[0].to).toBe(channelAfterRoute.contact.sendTo.to);
+  });
+
+  it("hides every person and contact field from a prospect closed by a shared opted-out number", async () => {
+    const number = "+65 8000 0001";
+    await ready([
+      row(1, { whatsapp: number }),
+      row(2, { whatsapp: number, bestRoute: `DM phone ${number}`, decisionMaker: "Amelia Lee", dmTitle: "Founder", notes: "AUDIT-FLAG: hidden@example.com do not use" }),
+    ]);
+    await outreach().sequence.choose("00002");
+    const sent = await json(await on("00002", "sent", { step: 0, title: 0 }));
+    expect(sent.sends[0].to).toBe("6580000001");
+    await loadProspects(studio, [
+      row(2, { whatsapp: number, bestRoute: "DM email (valid) new@example.com", decisionMaker: "Amelia Lee", dmTitle: "Founder", notes: "AUDIT-FLAG: hidden@example.com do not use" }),
+    ]);
+    await outreach().sequence.optOut("00001");
+
+    const page = await json(await get("/api/outreach/prospects/00002"));
+    expect(page.prospect).toMatchObject({ stage: "opted_out" });
+    expect(page.prospect.person).toBeUndefined();
+    expect(page.contact).toEqual({ whatsapp: [] });
+    expect(page.check).toBeUndefined();
+    expect(page.flags).toEqual([]);
+    expect(page.sends[0].to).toBeUndefined();
+    expect(JSON.stringify(page)).not.toMatch(/Amelia Lee|6580000001|new@example\.com|hidden@example\.com/);
+  });
+
+  it("does not expose a test prospect's contact when its number belongs to an opted-out brand", async () => {
+    await loadProspects(studio, [row(1, { whatsapp: "+65 8000 0001" })]);
+    await outreach().sequence.optOut("00001");
+    const test = await json(await post("/api/outreach/test-prospect", { whatsapp: "+65 8000 0001" }));
+    const profile = await outreach().store.get(test.id);
+    await outreach().store.saveProfile({
+      ...profile,
+      route: { channel: "email", to: "alternate@example.com", direct: false, label: "Email (valid) alternate@example.com" },
+      routeHeld: { channel: "whatsapp", to: "6580000001", direct: false, label: "WhatsApp +65 8000 0001" },
+    });
+
+    const page = await json(await get(`/api/outreach/prospects/${test.id}`));
+    expect(page.contact.whatsapp).toEqual([]);
+    expect(page.contact.sendTo).toBeUndefined();
+    expect(page.check).toBeUndefined();
+    expect(JSON.stringify(page)).not.toContain("6580000001");
   });
 
   it("gives the owner the contact, each link only from a checked value", async () => {

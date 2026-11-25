@@ -145,6 +145,23 @@ describe("what a prospect needs next", () => {
     const switched = { ...fileWithHold, events: [event({ type: "route", choice: "new" })] };
     expect(sendTarget(switched)).toMatchObject({ channel: "email", to: "person@example.com", direct: true });
   });
+
+  it("uses the held target until resolved, then follows the newer owner event", () => {
+    const current = { channel: "whatsapp" as const, to: "6580000001", direct: false, label: "WhatsApp" };
+    const second = { channel: "email" as const, to: "new@example.com", direct: true, label: "DM email" };
+    const held = { channel: "email" as const, to: "old@example.com", direct: false, label: "Email" };
+    const waiting = file({ profile: profile(1, { route: current, second, routeHeld: held }) });
+    expect(sendTarget({ ...waiting, events: [event({ type: "channel", channel: "whatsapp" })] })).toMatchObject({ channel: "email", to: "old@example.com" });
+
+    const channelThenKeep = { ...waiting, events: [event({ type: "channel", channel: "whatsapp" }), event({ type: "route", choice: "kept" })] };
+    expect(sendTarget(channelThenKeep)).toMatchObject({ channel: "email", to: "old@example.com" });
+
+    const channelThenSwitch = { ...waiting, events: [event({ type: "channel", channel: "email" }), event({ type: "route", choice: "new" })] };
+    expect(sendTarget(channelThenSwitch)).toMatchObject({ channel: "whatsapp", to: "6580000001" });
+
+    const keepThenChannel = { ...waiting, events: [event({ type: "route", choice: "kept" }), event({ type: "channel", channel: "email" })] };
+    expect(sendTarget(keepThenChannel)).toMatchObject({ channel: "email", to: "new@example.com" });
+  });
 });
 
 describe("the owner's pick among the drafts", () => {

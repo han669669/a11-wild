@@ -57,27 +57,29 @@ describe("Prospect page", () => {
     const held = { channel: "whatsapp" as const, to: "6580000001", direct: false, label: "WhatsApp +65 8000 0001" };
     const found = { channel: "email" as const, to: "owner@example.com", direct: true, label: "DM email (valid) owner@example.com" };
     const flags = [
-      { kind: "duplicate" as const, text: "DUP-CHECK: possibly listed twice" },
+      { kind: "duplicate" as const, text: "DUP-CHECK: Brand 2 may be the same business" },
       { kind: "blocked" as const, text: "AUDIT-FLAG: owner@example.com do not send" },
     ];
     const calls = stubApi({
       [GET]: () => ({ body: prospectPage({
         prospect: prospectRow({ flags: { duplicate: true, blocked: true, check: true } }),
-        contact: { whatsapp: [{ number: "6580000001" }], sendTo: held },
+        contact: { whatsapp: [{ number: "6580000001" }], sendTo: held, decisionMaker: "Amelia Lee", dmTitle: "Founder" },
         flags,
         check: { kept: held, found },
         message: { step: 0, messages: messages() },
       }) }),
       "POST /api/outreach/prospects/00001/route": (body) => ((routeBody = body), { body: prospectPage({
         prospect: prospectRow({ flags: { duplicate: true, blocked: true, check: false } }),
-        contact: { whatsapp: [{ number: "6580000001" }], sendTo: found },
+        contact: { whatsapp: [{ number: "6580000001" }], sendTo: found, decisionMaker: "Amelia Lee", dmTitle: "Founder" },
         flags,
         message: { step: 0, messages: messages() },
       }) }),
     });
     open();
-    expect(await screen.findByText("Might be the same business as another brand. Look before you send.")).toBeInTheDocument();
-    expect(screen.getByText("AUDIT-FLAG: owner@example.com do not send")).toBeInTheDocument();
+    expect(await screen.findByText("Brand 2 may be the same business")).toBeInTheDocument();
+    expect(screen.getByText("Do not use: owner@example.com do not send")).toBeInTheDocument();
+    expect(screen.queryByText(/AUDIT-FLAG:|DUP-CHECK:/)).not.toBeInTheDocument();
+    expect(screen.getByText("A newer contact was found. Now: WhatsApp to the brand (+6580000001). New: Email to Amelia Lee, Founder (owner@example.com).")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Mark as sent" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Keep" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Keep" }));

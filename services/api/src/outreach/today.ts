@@ -29,7 +29,7 @@ export function rowOf(file: ProspectFile, optOuts: ReadonlySet<string>, shared: 
     tier: profile.tier,
     stage,
     ...(channel ? { channel } : {}),
-    ...(target?.direct && profile.decisionMaker ? { person: profile.decisionMaker } : {}),
+    ...(stage !== "opted_out" && target?.direct && profile.decisionMaker ? { person: profile.decisionMaker } : {}),
     ...(staleDays !== undefined ? { staleDays } : {}),
     flags: {
       duplicate: profile.flags?.some((flag) => flag.kind === "duplicate") ?? false,
@@ -124,16 +124,28 @@ export async function todayPage(deps: { store: OutreachStore; sequence: Outreach
   const now = deps.now();
   const { day, daily, firstsSent, templates, optOuts, shared, owed, followUps, firsts, adsWaiting, picks } = await todayLists(deps);
 
-  const line = async (file: ProspectFile, step: OutreachStep | undefined, ad: OutreachAd | undefined, extra: Partial<TodayLine> = {}): Promise<TodayLine> => ({
-    prospect: rowOf(file, optOuts, shared, now),
-    ...(ad ? { ad: await adView(file, ad, pictures) } : {}),
-    ...(step !== undefined ? { step } : {}),
-    ...(step !== undefined && templates ? { messages: messagesFor(templates.steps[step], file.profile, sendTarget(file)) } : {}),
-    ...(step !== undefined && templates && sendTarget(file) ? { sendTo: { ...sendTarget(file)!, ...(sendTarget(file)!.direct && file.profile.decisionMaker ? { person: file.profile.decisionMaker } : {}), ...(sendTarget(file)!.direct && file.profile.dmTitle ? { title: file.profile.dmTitle } : {}) } } : {}),
-    ...(routeHeldUnresolved(file) && file.profile.routeHeld && defaultRoute(file) ? { routeCheck: { kept: file.profile.routeHeld, found: defaultRoute(file)! } } : {}),
-    ...(file.profile.flags?.length ? { flags: file.profile.flags } : {}),
-    ...extra,
-  });
+  const line = async (file: ProspectFile, step: OutreachStep | undefined, ad: OutreachAd | undefined, extra: Partial<TodayLine> = {}): Promise<TodayLine> => {
+    const found = defaultRoute(file);
+    const routeCheck =
+      routeHeldUnresolved(file) && file.profile.routeHeld && found
+        ? {
+            kept: file.profile.routeHeld,
+            found,
+            ...(found.direct && file.profile.decisionMaker ? { foundPerson: file.profile.decisionMaker } : {}),
+            ...(found.direct && file.profile.dmTitle ? { foundTitle: file.profile.dmTitle } : {}),
+          }
+        : undefined;
+    return {
+      prospect: rowOf(file, optOuts, shared, now),
+      ...(ad ? { ad: await adView(file, ad, pictures) } : {}),
+      ...(step !== undefined ? { step } : {}),
+      ...(step !== undefined && templates ? { messages: messagesFor(templates.steps[step], file.profile, sendTarget(file)) } : {}),
+      ...(step !== undefined && templates && sendTarget(file) ? { sendTo: { ...sendTarget(file)!, ...(sendTarget(file)!.direct && file.profile.decisionMaker ? { person: file.profile.decisionMaker } : {}), ...(sendTarget(file)!.direct && file.profile.dmTitle ? { title: file.profile.dmTitle } : {}) } } : {}),
+      ...(routeCheck ? { routeCheck } : {}),
+      ...(file.profile.flags?.length ? { flags: file.profile.flags } : {}),
+      ...extra,
+    };
+  };
 
   const [owedLines, followUpLines, firstLines, waitingLines, pickLines] = await Promise.all([
     Promise.all(owed.map(({ file, reply }) => line(file, undefined, approvedAd(file), { reply }))),

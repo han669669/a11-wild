@@ -61,6 +61,20 @@ export function outreachRoutes(
 ): void {
   const { store, sequence, picture, picks } = deps.studio.outreach;
   const ownerRead = [session, requireOwner] as const;
+  const numberKey = (value: string) => {
+    const digits = value.replace(/\D/g, "");
+    return `W#${digits.length === 8 ? `65${digits}` : digits}`;
+  };
+  const routeOpen = (route: Pick<ProspectRoute, "channel" | "to"> | undefined, closed: ReadonlySet<string>) => {
+    if (!route) return false;
+    const key =
+      route.channel === "email"
+        ? `E#${route.to.toLowerCase()}`
+        : route.channel === "whatsapp" || route.channel === "call"
+          ? numberKey(route.to)
+          : `${route.channel === "instagram" ? "I" : "F"}#${route.to.toLowerCase()}`;
+    return !closed.has(key);
+  };
   const refused = (error: unknown) => {
     if (error instanceof Refusal) return { error: "refused", message: error.message };
     throw error;
@@ -69,21 +83,11 @@ export function outreachRoutes(
   const contactOf = (file: ProspectFile, optOuts: ReadonlySet<string>, closed: ReadonlySet<string>): ProspectContact => {
     const { profile } = file;
     const link = (href: string | undefined) => (href ? { href } : {});
-    const numberKey = (value: string) => {
-      const digits = value.replace(/\D/g, "");
-      return `W#${digits.length === 8 ? `65${digits}` : digits}`;
-    };
     const openNumber = (value: string | undefined) => Boolean(value && !closed.has(numberKey(value)));
     const openEmail = (value: string | undefined) => Boolean(value && !closed.has(`E#${value.toLowerCase()}`));
-    const openRoute = (route: ProspectRoute | undefined) => {
-      if (!route) return false;
-      if (route.channel === "email") return openEmail(route.to);
-      if (route.channel === "whatsapp" || route.channel === "call") return openNumber(route.to);
-      return !closed.has(`${route.channel === "instagram" ? "I" : "F"}#${route.to.toLowerCase()}`);
-    };
     if (optedOut(file, optOuts)) return { whatsapp: [] };
     const target = sendTarget(file);
-    const sendTo = target
+    const sendTo = target && routeOpen(target, closed)
       ? {
           ...target,
           ...(target.direct && profile.decisionMaker ? { person: profile.decisionMaker } : {}),
@@ -103,7 +107,7 @@ export function outreachRoutes(
       ...(profile.secondRoute ? { secondRoute: profile.secondRoute } : {}),
       ...(sendTo ? { sendTo } : {}),
       others: {
-        ...(openRoute(profile.second) ? { second: profile.second } : {}),
+        ...(routeOpen(profile.second, closed) ? { second: profile.second } : {}),
         ...(openEmail(profile.dmEmail) && profile.dmEmail ? { dmEmail: { address: profile.dmEmail, check: dmCheck[profile.dmVerify ?? "unknown"] } } : {}),
         ...(openNumber(profile.dmPhone) && profile.dmPhone ? { dmPhone: profile.dmPhone } : {}),
         ...(profile.instagram ? { instagram: { name: profile.instagram, ...link(profileLink("instagram", profile.instagram)) } } : {}),
@@ -127,16 +131,32 @@ export function outreachRoutes(
     const candidates = await picks.view(file, optOuts);
     const closed = new Set(optOuts);
     for (const opted of files) if (!opted.profile.test && optedOut(opted, optOuts)) contactKeys(opted.profile).forEach((key) => closed.add(key));
-    const check = routeHeldUnresolved(file) && file.profile.routeHeld && defaultRoute(file) ? { kept: file.profile.routeHeld, found: defaultRoute(file)! } : undefined;
+    const found = defaultRoute(file);
+    const check =
+      stage !== "opted_out" &&
+      routeHeldUnresolved(file) &&
+      file.profile.routeHeld &&
+      found &&
+      routeOpen(file.profile.routeHeld, closed) &&
+      routeOpen(found, closed)
+        ? { kept: file.profile.routeHeld, found }
+        : undefined;
+    const sends = [...file.sends]
+      .sort((a, b) => a.step - b.step)
+      .map((send) => {
+        if (stage !== "opted_out") return send;
+        const { to: _to, ...withoutTarget } = send;
+        return withoutTarget;
+      });
     return {
       prospect: rowOf(file, optOuts, sameContact(files), deps.now()),
       ...(file.profile.newestAd ? { newestAd: file.profile.newestAd } : {}),
       ...(sells ? { sells } : {}),
       contact: contactOf(file, optOuts, closed),
-      flags: file.profile.flags ?? [],
+      flags: stage === "opted_out" ? [] : file.profile.flags ?? [],
       ...(check ? { check } : {}),
       ads,
-      sends: [...file.sends].sort((a, b) => a.step - b.step),
+      sends,
       events: [...file.events].sort((a, b) => b.at.localeCompare(a.at)),
       day,
       ...(step !== undefined && templates && approvedAd(file) ? { message: { step, messages: messagesFor(templates.steps[step], file.profile, sendTarget(file)) } } : {}),

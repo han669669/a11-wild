@@ -63,7 +63,7 @@ export function outreachTools({ store, sequence, desk, picks, now }: OutreachToo
       },
       writes: true,
       handler: async ({ rows, templates }) => {
-        const loaded = await loadRows(store, rows, now);
+        const loaded = await loadRows(store, rows, now, await desk.openBatchIds());
         const saved = templates ? await sequence.saveTemplates(templates, { onlyFirst: true }) : undefined;
         return {
           ...loaded,

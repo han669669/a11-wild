@@ -1,7 +1,7 @@
 import type { TodayLine } from "@a11-wild/shared";
 import { Link } from "react-router";
 import { Loading } from "@/components/loading";
-import { AdPicture, AdVerdict, BrandLine, CHANNELS, Failure, MessageCard, OutreachTabs, TAP, useWrite } from "@/components/outreach";
+import { AdPicture, AdVerdict, BrandLine, CHANNELS, Failure, MessageCard, OutreachTabs, outreachFlagText, TAP, useWrite } from "@/components/outreach";
 import { Card, PageHeader, Section, Step } from "@/components/page";
 import { Banner, BannerTitle } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
@@ -129,8 +129,13 @@ function MessageLine({ line, done }: { line: TodayLine; done: () => void }) {
   const routeWrite = (choice: "kept" | "new") => write({ action: "route", body: { choice } } as unknown as ProspectWrite);
   const sendTo = line.sendTo;
   const person = sendTo?.person ?? line.prospect.person;
+  const checkTarget = (route: NonNullable<TodayLine["routeCheck"]>["kept"], targetName?: string, title?: string) => {
+    const channel = route.channel === "whatsapp" ? "WhatsApp" : route.channel === "email" ? "Email" : "another way";
+    const recipient = route.direct && targetName ? `${targetName}${title ? `, ${title}` : ""}` : "the brand";
+    return `${channel} to ${recipient}`;
+  };
   const who = sendTo?.direct && person
-    ? `To ${person}${sendTo.title ? `, ${sendTo.title}` : ""} on ${CHANNELS[sendTo.channel]}`
+    ? `To ${person}${sendTo.title ? `, ${sendTo.title},` : ""} on ${CHANNELS[sendTo.channel]}`
     : sendTo?.channel === "email"
       ? "To the brand's general inbox"
       : sendTo
@@ -143,10 +148,12 @@ function MessageLine({ line, done }: { line: TodayLine; done: () => void }) {
         <p className="text-body">Their newest ad is {line.prospect.staleDays} days old.</p>
       ) : null}
       {line.flags?.some((flag) => flag.kind === "duplicate") ? <p className="text-body">Might be the same business as another brand. Look before you send.</p> : null}
-      {line.flags?.filter((flag) => flag.kind === "blocked").map((flag) => <p key={flag.text} className="text-body">{flag.text}</p>)}
+      {line.flags?.filter((flag) => flag.kind === "blocked").map((flag) => <p key={flag.text} className="text-body">Do not use: {outreachFlagText(flag.text)}</p>)}
       {line.routeCheck ? (
         <div className="grid gap-2">
-          <p className="text-body">A newer contact was found. Keep the current way to reach it or switch to the new one ({CHANNELS[line.routeCheck.found.channel as "whatsapp" | "email"] ?? "another way"}).</p>
+          <p className="text-body">
+            A newer contact was found. Now: {checkTarget(line.routeCheck.kept, sendTo?.person, sendTo?.title)}. New: {checkTarget(line.routeCheck.found, line.routeCheck.foundPerson, line.routeCheck.foundTitle)}.
+          </p>
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="secondary" className={TAP} disabled={busy !== undefined} loading={routeBusy} onClick={() => routeWrite("kept")}>Keep</Button>
             <Button type="button" variant="secondary" className={TAP} disabled={busy !== undefined} loading={routeBusy} onClick={() => routeWrite("new")}>Switch</Button>

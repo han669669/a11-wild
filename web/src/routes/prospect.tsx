@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { Candidates } from "@/components/candidates";
 import { FIELD } from "@/components/canon-card";
 import { Loading, OutLink } from "@/components/loading";
-import { AdPicture, AdVerdict, BrandLine, CHANNELS, Failure, MessageCard, OutreachTabs, CheckNote, STAGES, STEPS, TAP, useWrite } from "@/components/outreach";
+import { AdPicture, AdVerdict, BrandLine, CHANNELS, Failure, MessageCard, OutreachTabs, CheckNote, outreachFlagText, STAGES, STEPS, TAP, useWrite } from "@/components/outreach";
 import { Card, Empty, Fold, PageHeader, Section, Step } from "@/components/page";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -48,6 +48,11 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
   const routeBusy = (busy as string | undefined) === "route";
   const routeError = (failed as string | undefined) === "route" ? error : undefined;
   const routeName = (channel: string) => ({ whatsapp: "WhatsApp", email: "Email", instagram: "Instagram", facebook: "Facebook", call: "Phone" })[channel] ?? "another way";
+  const checkTarget = (route: NonNullable<ProspectPage["check"]>["kept"], person?: string, title?: string) => {
+    const recipient = route.direct && person ? `${person}${title ? `, ${title}` : ""}` : "the brand";
+    const value = route.channel === "whatsapp" && /^\d+$/.test(route.to) ? `+${route.to}` : route.to;
+    return `${routeName(route.channel)} to ${recipient} (${value})`;
+  };
 
   return (
     <>
@@ -64,12 +69,12 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
             <div className="flex flex-wrap gap-1.5">
               {page.flags.map((flag) => (
                 <Badge key={flag.text} color={flag.kind === "blocked" ? "red" : flag.kind === "duplicate" ? "amber" : "gray"}>
-                  {flag.kind === "duplicate" ? "Possible duplicate" : flag.kind === "blocked" ? "Do not send" : "Checked"}
+                  {flag.kind === "duplicate" ? "Possible duplicate" : flag.kind === "blocked" ? "Do not use" : "Checked"}
                 </Badge>
               ))}
             </div>
-            {page.flags.filter((flag) => flag.kind === "blocked").map((flag) => <p key={flag.text} className="text-body">{flag.text}</p>)}
-            {page.flags.some((flag) => flag.kind === "duplicate") ? <p className="text-body">Might be the same business as another brand. Look before you send.</p> : null}
+            {page.flags.filter((flag) => flag.kind === "blocked").map((flag) => <p key={flag.text} className="text-body">Do not use: {outreachFlagText(flag.text)}</p>)}
+            {page.flags.filter((flag) => flag.kind === "duplicate").map((flag) => <p key={flag.text} className="text-body">{outreachFlagText(flag.text)}</p>)}
           </div>
         ) : null}
         {prospect.sameContactAs ? (
@@ -100,7 +105,9 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
       {page.check ? (
         <Section title="A newer way to reach this brand was found">
           <Card className="grid gap-3">
-            <p className="text-body">The current checked contact is held until you choose. The new one is {routeName(page.check.found.channel)}.</p>
+            <p className="text-body">
+              A newer contact was found. Now: {checkTarget(page.check.kept, contact.sendTo?.person, contact.sendTo?.title)}. New: {checkTarget(page.check.found, contact.decisionMaker, contact.dmTitle)}.
+            </p>
             <div className="flex flex-wrap gap-2">
               <Button type="button" variant="secondary" className={TAP} disabled={busy !== undefined} loading={routeBusy} onClick={() => routeWrite("kept")}>Keep</Button>
               <Button type="button" variant="secondary" className={TAP} disabled={busy !== undefined} loading={routeBusy} onClick={() => routeWrite("new")}>Switch</Button>

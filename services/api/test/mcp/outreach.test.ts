@@ -39,6 +39,14 @@ describe("outreach_load", () => {
     expect((await outreach().sequence.templates())!.steps[0].body).toBe("Hi, I made this ad for {Brand}.");
   });
 
+  it("refuses to merge a donor with an open outreach batch", async () => {
+    await loadProspects(studio, [row(1), row(2)]);
+    await batchAtTruth(studio, { prospectId: "00002" });
+    const merged = await callTool(studio, "outreach_load", { rows: [row(2, { mergedInto: 1 })] });
+    expect(merged.value.refused).toEqual([{ row: 2, field: "mergedInto", why: "the merged row has its own history: the owner decides" }]);
+    expect((await outreach().store.get("00002")).mergedInto).toBeUndefined();
+  });
+
   it("names a refused row by its number and field, never by its value", async () => {
     const loaded = await callTool(studio, "outreach_load", { rows: [row(1, { ...PRIVATE, email: "founder at secretbrand" })] });
     expect(loaded.value).toMatchObject({ added: 0, refused: [{ row: 1, field: "email" }] });
@@ -256,7 +264,9 @@ describe("outreach_next", () => {
   it("names the batch of a brand whose drafts are not shown yet, so a new session resumes it", async () => {
     await loadProspects(studio);
     const open = await outreachBatch(studio, "00001", { upTo: "checked" });
+    await callTool(studio, "outreach_load", { rows: [row(1, { liveAds: 2 })] });
     expect((await callTool(studio, "outreach_next", {})).value).toMatchObject({ owed: [], brands: [{ brand: "Brand 1", openBatchId: open }] });
+    expect((await outreach().store.get("00001")).tier).toBe("<5");
   });
 
   it("gives a brand to nobody while its drafts wait for the owner's pick", async () => {

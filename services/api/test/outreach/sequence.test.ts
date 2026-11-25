@@ -62,6 +62,14 @@ describe("marking a message as sent", () => {
     expect(sent.send).toMatchObject({ channel: "email", to: "new@example.com" });
   });
 
+  it("sends to the unchanged default after a reload removes an obsolete hold", async () => {
+    await ready("00001");
+    await loadRows(store, [row(1, { bestRoute: "Email (valid) new@example.com" })], now);
+    await loadRows(store, [row(1, { bestRoute: "WhatsApp +65 8000 0001" })], now);
+    const sent = await sequence.send("00001", { step: 0, title: 0 });
+    expect(sent.send).toMatchObject({ channel: "whatsapp", to: "6580000001" });
+  });
+
   it("counts a send at 23:30 on Monday in Singapore on Monday", async () => {
     await ready("00001");
     at("2026-11-23T23:30:00");
@@ -205,6 +213,7 @@ describe("new contact and campaign membership rules", () => {
     expect(inCampaign(file({ profile: profile(1, { email: "person@example.com", tier: "<5" }) }))).toBe(false);
     expect(inCampaign(file({ profile: profile(1, { email: "person@example.com", tier: "<5" }), ads: [ad(1)] }))).toBe(true);
     expect(inCampaign(file({ profile: profile(1, { email: "person@example.com", tier: "<5" }), events: [event({ type: "candidates", batchId: "b", drafts: 2 }, "agent")] }))).toBe(true);
+    expect(inCampaign(file({ profile: profile(1, { email: "person@example.com", tier: "<5" }) }), "open-batch")).toBe(true);
     expect(inCampaign(file({ profile: profile(1, { email: "person@example.com", tier: "20+" }) }))).toBe(true);
     expect(inCampaign(file({ profile: profile(1, { email: "person@example.com", tier: "20+", test: true }), ads: [ad(1)] }))).toBe(false);
   });

@@ -28,6 +28,7 @@ export const STAGES: Record<OutreachStage, { label: string; color: "green" | "am
 };
 export const STEPS: Record<OutreachStep, string> = { 0: "First message", 1: "Follow-up 1", 2: "Follow-up 2" };
 export const CHANNELS: Record<OutreachChannel, string> = { whatsapp: "WhatsApp", email: "Email" };
+export const outreachFlagText = (text: string): string => text.replace(/^(?:AUDIT-FLAG|DUP-CHECK|QA-FLAG):\s*/i, "").trim();
 /** A button large enough for a thumb: the pages are used on a phone first. */
 export const TAP = "min-h-11 sm:min-h-0";
 

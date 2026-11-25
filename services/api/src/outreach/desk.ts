@@ -52,27 +52,39 @@ function briefOf(file: ProspectFile): ProspectBrief {
   return { id, n, brand, sector, liveAds, tier, ...(newestAd ? { newestAd } : {}), ...(instagram ? { instagram } : {}) };
 }
 
-export const inCampaign = (file: ProspectFile): boolean =>
-  !file.profile.test && (CAMPAIGN.tiers.includes(file.profile.tier) || file.ads.length > 0 || file.events.some((event) => event.type === "candidates"));
+export const inCampaign = (file: ProspectFile, openBatchId?: string): boolean =>
+  !file.profile.test && (CAMPAIGN.tiers.includes(file.profile.tier) || file.ads.length > 0 || file.events.some((event) => event.type === "candidates") || openBatchId !== undefined);
+
+function openBatchIdByProspect(files: ProspectFile[], all: Batch[]): Map<string, string> {
+  const refused = new Set(files.flatMap((file) => file.events.flatMap((event) => (event.type === "none" ? [event.batchId] : []))));
+  const open = new Map<string, string>();
+  for (const batch of all) {
+    if (batch.purpose !== "outreach" || !batch.prospectId) continue;
+    // A batch whose drafts the owner refused whole is not resumed: the next try is a new batch.
+    if (batch.state !== "done" && !open.has(batch.prospectId) && !refused.has(batch.id)) open.set(batch.prospectId, batch.id);
+  }
+  return open;
+}
 
 /** The agent's side of the outreach: which brand needs an ad, where a finished ad goes, and the contacts of the list. */
 export class OutreachDesk {
   constructor(private readonly deps: Deps) {}
 
+  async openBatchIds(): Promise<ReadonlyMap<string, string>> {
+    const [files, batches] = await Promise.all([this.deps.store.all(), this.deps.batches.list()]);
+    return openBatchIdByProspect(files, batches);
+  }
+
   private async read() {
     const { store, batches } = this.deps;
     const [files, optOuts, all] = await Promise.all([store.all(), store.optOuts(), batches.list()]);
-    // Newest first, so the first one found for a prospect is its newest.
-    const refused = new Set(files.flatMap((file) => file.events.flatMap((event) => (event.type === "none" ? [event.batchId] : []))));
-    const open = new Map<string, string>();
     const newest = new Map<string, Batch>();
     for (const batch of all) {
       if (batch.purpose !== "outreach" || !batch.prospectId) continue;
       if (!newest.has(batch.prospectId)) newest.set(batch.prospectId, batch);
-      // A batch whose drafts the owner refused whole is not resumed: the next try is a new batch.
-      if (batch.state !== "done" && !open.has(batch.prospectId) && !refused.has(batch.id)) open.set(batch.prospectId, batch.id);
     }
-    const started = files.filter((file) => inCampaign(file) && (file.ads.length > 0 || file.events.some((event) => event.type === "candidates"))).length;
+    const open = openBatchIdByProspect(files, all);
+    const started = files.filter((file) => inCampaign(file, open.get(file.profile.id)) && (file.ads.length > 0 || file.events.some((event) => event.type === "candidates"))).length;
     return { files, optOuts, open, started, shared: sameContact(files) };
   }
 
@@ -99,7 +111,7 @@ export class OutreachDesk {
         more.push({ at: asked?.at ?? "", brand });
         continue;
       }
-      if (!inCampaign(file)) continue;
+      if (!inCampaign(file, openBatchId)) continue;
       // One person gets the first message once: a brand that shares its contact with an earlier one waits for the owner's choice.
       if (shared.has(file.profile.id) && !chosen(file)) continue;
       if (want.why === "first") {
@@ -265,18 +277,18 @@ export class OutreachDesk {
 
   /** The campaign in numbers. It names no brand and holds no contact. */
   async state() {
-    const { files, optOuts, started } = await this.read();
+    const { files, optOuts, started, open } = await this.read();
     const count = (of: ProspectFile[]) => {
       const stages = Object.fromEntries(OUTREACH_STAGES.map((stage) => [stage, 0])) as Record<OutreachStage, number>;
       for (const file of of) stages[stageOf(file, optOuts)] += 1;
       return stages;
     };
     const real = files.filter((file) => !file.profile.test);
-    const campaign = real.filter(inCampaign);
+    const campaign = real.filter((file) => inCampaign(file, open.get(file.profile.id)));
     const wants = { first: 0, again: 0, more: 0 };
     for (const file of real) {
       const want = wantsAd(file, optOuts);
-      if (want && (want.why === "more" || inCampaign(file))) wants[want.why] += 1;
+      if (want && (want.why === "more" || inCampaign(file, open.get(file.profile.id)))) wants[want.why] += 1;
     }
     const spend = (await this.deps.ledger.summary()).campaign;
     return {

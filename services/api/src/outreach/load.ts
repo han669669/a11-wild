@@ -3,7 +3,7 @@ import { OUTREACH_TIERS, type OutreachTier, type Prospect, type ProspectFlag, ty
 import { Refusal } from "../mcp/registry.js";
 import { EMAIL } from "./messages.js";
 import { routeOf } from "./routes.js";
-import { sendTarget, stageOf } from "./stage.js";
+import { defaultRoute, sendTarget, stageOf } from "./stage.js";
 import { type OutreachStore, prospectId } from "./store.js";
 
 /** One row of the owner's list, as plain text and numbers. The spreadsheet is read outside the server. */
@@ -126,6 +126,7 @@ function flagsFrom(notes: string | undefined): ProspectFlag[] {
 }
 
 const digits = (value: string): string => value.replace(/\D/g, "");
+const EMAIL_IN_TEXT = /[^\s<>()[\]"',;:|]+@[^\s<>()[\]"',;:|]+\.[a-z]{2,}/gi;
 const numberKey = (value: string): string => {
   const found = digits(value);
   return found.length === 8 ? `65${found}` : found;
@@ -136,7 +137,7 @@ function blockedValues(flags: ProspectFlag[]): { emails: Set<string>; numbers: S
   const numbers = new Set<string>();
   for (const flag of flags) {
     if (flag.kind !== "blocked") continue;
-    for (const found of flag.text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []) emails.add(found.toLowerCase());
+    for (const found of flag.text.match(EMAIL_IN_TEXT) ?? []) emails.add(found.toLowerCase());
     for (const found of flag.text.match(/\+?\d[\d().\s-]{5,}\d/g) ?? []) {
       const key = numberKey(found);
       if (key.length >= 8) numbers.add(key);
@@ -154,7 +155,7 @@ function removeBlocked(profile: Prospect): Prospect {
   const stripRoute = (value: string | undefined): string | undefined => {
     if (!value) return undefined;
     const clean = value
-      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, (email) => (blocked.emails.has(email.toLowerCase()) ? "" : email))
+      .replace(EMAIL_IN_TEXT, (email) => (blocked.emails.has(email.toLowerCase()) ? "" : email))
       .replace(/\+?\d[\d().\s-]{5,}\d/g, (number) => (blocked.numbers.has(numberKey(number)) ? "" : number))
       .replace(/\s{2,}/g, " ")
       .trim();
@@ -236,6 +237,7 @@ export async function loadRows(
   store: OutreachStore,
   rows: LoadRow[],
   now: () => Date,
+  openBatches: ReadonlyMap<string, string> = new Map(),
 ): Promise<{ added: number; updated: number; merged: number; held: number; blocked: number; refused: LoadRefusal[] }> {
   const files = new Map((await store.all({ includeMerged: true })).map((file) => [file.profile.id, file]));
   const optOuts = await store.optOuts();
@@ -277,7 +279,7 @@ export async function loadRows(
       if (profile.mergedInto) {
         const survivor = files.get(profile.mergedInto)?.profile ?? await store.find(profile.mergedInto);
         if (!survivor || survivor.mergedInto || survivor.id === profile.id) throw new RowError("mergedInto", "the survivor does not exist or is itself merged");
-        if (file && (file.ads.length > 0 || file.sends.length > 0 || file.events.length > 0)) {
+        if (file && (file.ads.length > 0 || file.sends.length > 0 || file.events.length > 0 || openBatches.has(profile.id))) {
           throw new RowError("mergedInto", "the merged row has its own history: the owner decides");
         }
       }
@@ -308,6 +310,10 @@ export async function loadRows(
         if (before.newestAd && (!profile.newestAd || before.newestAd > profile.newestAd)) profile.newestAd = before.newestAd;
       }
       profile = removeBlocked(profile);
+      if (file && profile.routeHeld) {
+        const defaultTarget = defaultRoute({ ...file, profile });
+        if (!defaultTarget || (defaultTarget.channel === profile.routeHeld.channel && defaultTarget.to === profile.routeHeld.to)) delete profile.routeHeld;
+      }
       await store.saveProfile(profile);
       // An opt-out is for the contact. A number or an address the list now gives to an opted-out brand is off every list too.
       if (file && !profile.test && file.events.some((event) => event.type === "optout")) await store.addOptOut(profile);

@@ -1334,7 +1334,7 @@ export interface TodayLine {
   /** Both versions of the message, with the link of the brand's channel. */
   messages?: [OutreachMessage, OutreachMessage];
   sendTo?: ProspectSendTarget;
-  routeCheck?: { kept: ProspectRoute; found: ProspectRoute };
+  routeCheck?: { kept: ProspectRoute; found: ProspectRoute; foundPerson?: string; foundTitle?: string };
   flags?: ProspectFlag[];
   /** The reply that is owed an answer. */
   reply?: { text?: string; at: string };

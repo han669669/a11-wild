@@ -141,16 +141,19 @@ export function routeHeldUnresolved(file: ProspectFile): boolean {
 export function sendTarget(file: ProspectFile): ProspectSendTarget | undefined {
   const { profile } = file;
   const routeEvent = last(file.events, "route");
-  const heldEligible = profile.routeHeld && (routeHeldUnresolved(file) || (routeEvent?.choice === "kept" && routeEvent.at >= profile.loadedAt)) ? profile.routeHeld : undefined;
-  const heldTarget = sendable(heldEligible);
-  const targets = [sendable(profile.route), sendable(profile.second), heldTarget, ...legacyTargets(file)].filter((target): target is ProspectSendTarget => target !== undefined);
-  const chosen = last(file.events, "channel")?.channel;
-  if (chosen) {
-    const match = targets.find((target) => target.channel === chosen);
-    if (match) return match;
-  }
+  const channelEvent = last(file.events, "channel");
+  const heldTarget = sendable(profile.routeHeld);
   if (routeHeldUnresolved(file) && heldTarget) return heldTarget;
-  if (heldEligible && routeEvent?.choice === "kept" && routeEvent.at >= profile.loadedAt) return heldTarget;
+  if (routeEvent && profile.routeHeld && routeEvent.at >= profile.loadedAt) {
+    if (channelEvent && channelEvent.at > routeEvent.at) {
+      return targetForChannel(file, channelEvent.channel) ?? sendable(profile.route) ?? sendable(profile.second) ?? legacyTargets(file)[0];
+    }
+    if (routeEvent.choice === "kept" && heldTarget) return heldTarget;
+    if (routeEvent.choice === "new") return sendable(profile.route) ?? sendable(profile.second) ?? legacyTargets(file)[0];
+  }
+  if (channelEvent) {
+    return targetForChannel(file, channelEvent.channel) ?? sendable(profile.route) ?? sendable(profile.second) ?? legacyTargets(file)[0];
+  }
   return sendable(profile.route) ?? sendable(profile.second) ?? legacyTargets(file)[0];
 }
 
