@@ -107,6 +107,18 @@ const person = (value: string | undefined): string | undefined => {
   const text = plain(value);
   return text && !junkName.test(text) ? text : undefined;
 };
+function withRoutePerson(route: ProspectRoute, decisionMaker: string | undefined, dmTitle: string | undefined): ProspectRoute;
+function withRoutePerson(route: undefined, decisionMaker: string | undefined, dmTitle: string | undefined): undefined;
+function withRoutePerson(route: ProspectRoute | undefined, decisionMaker: string | undefined, dmTitle: string | undefined): ProspectRoute | undefined {
+  if (!route) return undefined;
+  if (!route.direct) {
+    const withoutPerson = { ...route };
+    delete withoutPerson.person;
+    return withoutPerson;
+  }
+  if (route.person || !decisionMaker) return route;
+  return { ...route, person: `${decisionMaker}${dmTitle ? `, ${dmTitle}` : ""}` };
+}
 
 function flagsFrom(notes: string | undefined): ProspectFlag[] {
   const flags: ProspectFlag[] = [];
@@ -126,7 +138,7 @@ function flagsFrom(notes: string | undefined): ProspectFlag[] {
 }
 
 const digits = (value: string): string => value.replace(/\D/g, "");
-const EMAIL_IN_TEXT = /[^\s<>()[\]"',;:|]+@[^\s<>()[\]"',;:|]+\.[a-z]{2,}/gi;
+const EMAIL_IN_TEXT = /[^\s<>()[\]"',;:|\x2f]+@[^\s<>()[\]"',;:|\x2f]+\.[a-z]{2,}/gi;
 const numberKey = (value: string): string => {
   const found = digits(value);
   return found.length === 8 ? `65${found}` : found;
@@ -197,6 +209,8 @@ export function profileOf(row: LoadRow, loadedAt: string): Prospect {
   if (row.mergedInto !== undefined && (!Number.isInteger(row.mergedInto) || row.mergedInto < 1 || row.mergedInto > 99999)) throw new RowError("mergedInto", "the survivor is not a whole number from 1");
   const route = routeOf(bestRoute);
   const second = routeOf(secondRoute);
+  const decisionMaker = person(row.decisionMaker);
+  const dmTitle = person(row.dmTitle);
   return removeBlocked({
     id: prospectId(row.n),
     n: row.n,
@@ -208,14 +222,14 @@ export function profileOf(row: LoadRow, loadedAt: string): Prospect {
     ...optional("newestAd", day(row.newestAd)),
     ...optional("bestRoute", bestRoute),
     ...optional("secondRoute", secondRoute),
-    ...(route ? { route } : {}),
-    ...(second ? { second } : {}),
+    ...(route ? { route: withRoutePerson(route, decisionMaker, dmTitle) } : {}),
+    ...(second ? { second: withRoutePerson(second, decisionMaker, dmTitle) } : {}),
     whatsapp: numbers(row.whatsapp),
     ...optional("email", address(row.email)),
     ...optional("phone", plain(row.phone)),
     ...optional("instagram", plain(row.instagram)),
-    ...optional("decisionMaker", person(row.decisionMaker)),
-    ...optional("dmTitle", person(row.dmTitle)),
+    ...optional("decisionMaker", decisionMaker),
+    ...optional("dmTitle", dmTitle),
     ...optional("linkedin", plain(row.linkedin)),
     ...optional("dmEmail", plain(row.dmEmail)?.toLowerCase()),
     ...(row.dmVerify ? { dmVerify: row.dmVerify } : {}),
@@ -290,12 +304,20 @@ export async function loadRows(
         const oldTarget = sendTarget(previous);
         const priorSourceRoute = routeOf(before.bestRoute);
         const sameSourceRoute = priorSourceRoute?.channel === profile.route?.channel && priorSourceRoute?.to === profile.route?.to;
-        if (sameSourceRoute && before.route) profile.route = before.route;
+        if (sameSourceRoute && before.route && profile.route) {
+          if (before.route.channel === profile.route.channel && before.route.to === profile.route.to) {
+            const updatedRoute = { ...before.route, ...profile.route };
+            if (!profile.route.person) delete updatedRoute.person;
+            profile.route = updatedRoute;
+          } else {
+            profile.route = withRoutePerson(before.route, before.decisionMaker, before.dmTitle);
+          }
+        }
         if (resolved && before.routeHeld) {
-          if (routeEvent?.choice === "kept") profile.route = before.routeHeld;
+          if (routeEvent?.choice === "kept") profile.route = withRoutePerson(before.routeHeld, before.decisionMaker, before.dmTitle);
           delete profile.routeHeld;
         } else if (before.routeHeld) {
-          profile.routeHeld = before.routeHeld;
+          profile.routeHeld = withRoutePerson(before.routeHeld, before.decisionMaker, before.dmTitle);
         }
         if ((!before.routeHeld || resolved) && ["pick_waits", "pick_made", "ad_waits", "ready", "contacted", "replied", "in_talks", "client"].includes(stageOf(previous, optOuts))) {
           const newTarget = sendTarget({ ...file, profile });
@@ -304,7 +326,7 @@ export async function loadRows(
               [before.route, before.second, ...legacyRoutes(before)]
                 .find((route) => route?.channel === oldTarget.channel && route.to === oldTarget.to) ??
               { channel: oldTarget.channel, to: oldTarget.to, direct: oldTarget.direct, label: before.bestRoute ?? (oldTarget.channel === "whatsapp" ? "WhatsApp" : "Email") };
-            profile.routeHeld = oldRoute;
+            profile.routeHeld = withRoutePerson(oldRoute, before.decisionMaker, before.dmTitle);
           }
         }
         if (before.newestAd && (!profile.newestAd || before.newestAd > profile.newestAd)) profile.newestAd = before.newestAd;

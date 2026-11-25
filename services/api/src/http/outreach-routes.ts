@@ -11,6 +11,7 @@ import { filtered, filterOf, numbersOf } from "../outreach/numbers.js";
 import { DAILY, nextStep, sameContact } from "../outreach/sequence.js";
 import { approvedAd, defaultRoute, owedAnswer, optedOut, routeHeldUnresolved, sendTarget, sellsOf, stageOf } from "../outreach/stage.js";
 import { adView, rowOf, todayPage } from "../outreach/today.js";
+import { routeOf } from "../outreach/routes.js";
 import { contactKeys } from "../outreach/store.js";
 import { requireOwner, type SessionEnv } from "./guards.js";
 
@@ -85,13 +86,18 @@ export function outreachRoutes(
     const link = (href: string | undefined) => (href ? { href } : {});
     const openNumber = (value: string | undefined) => Boolean(value && !closed.has(numberKey(value)));
     const openEmail = (value: string | undefined) => Boolean(value && !closed.has(`E#${value.toLowerCase()}`));
+    const openRouteLabel = (value: string | undefined) => {
+      const route = routeOf(value);
+      return !route || routeOpen(route, closed);
+    };
     if (optedOut(file, optOuts)) return { whatsapp: [] };
     const target = sendTarget(file);
+    const targetIsHeld = Boolean(target && profile.routeHeld?.channel === target.channel && profile.routeHeld.to === target.to);
     const sendTo = target && routeOpen(target, closed)
       ? {
           ...target,
-          ...(target.direct && profile.decisionMaker ? { person: profile.decisionMaker } : {}),
-          ...(target.direct && profile.dmTitle ? { title: profile.dmTitle } : {}),
+          ...(target.direct && !target.person && !targetIsHeld && profile.decisionMaker ? { person: profile.decisionMaker } : {}),
+          ...(target.direct && !target.person && !targetIsHeld && profile.dmTitle ? { title: profile.dmTitle } : {}),
         }
       : undefined;
     const dmCheck = { valid: "checked", risky: "risky", invalid: "invalid", unknown: "not checked" } as const;
@@ -103,8 +109,8 @@ export function outreachRoutes(
       ...(profile.decisionMaker ? { decisionMaker: profile.decisionMaker } : {}),
       ...(profile.dmTitle ? { dmTitle: profile.dmTitle } : {}),
       ...(profile.linkedin ? { linkedin: { text: profile.linkedin, ...link(profileLink("linkedin", profile.linkedin)) } } : {}),
-      ...(profile.bestRoute ? { bestRoute: profile.bestRoute } : {}),
-      ...(profile.secondRoute ? { secondRoute: profile.secondRoute } : {}),
+      ...(profile.bestRoute && openRouteLabel(profile.bestRoute) ? { bestRoute: profile.bestRoute } : {}),
+      ...(profile.secondRoute && openRouteLabel(profile.secondRoute) ? { secondRoute: profile.secondRoute } : {}),
       ...(sendTo ? { sendTo } : {}),
       others: {
         ...(routeOpen(profile.second, closed) ? { second: profile.second } : {}),

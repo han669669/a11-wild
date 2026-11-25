@@ -1113,6 +1113,7 @@ export interface ProspectRoute {
   to: string;
   direct: boolean;
   label: string;
+  person?: string;
 }
 export interface ProspectFlag {
   kind: "duplicate" | "blocked" | "fixed";
@@ -1334,7 +1335,7 @@ export interface TodayLine {
   /** Both versions of the message, with the link of the brand's channel. */
   messages?: [OutreachMessage, OutreachMessage];
   sendTo?: ProspectSendTarget;
-  routeCheck?: { kept: ProspectRoute; found: ProspectRoute; foundPerson?: string; foundTitle?: string };
+  routeCheck?: { kept: ProspectRoute; found: ProspectRoute };
   flags?: ProspectFlag[];
   /** The reply that is owed an answer. */
   reply?: { text?: string; at: string };

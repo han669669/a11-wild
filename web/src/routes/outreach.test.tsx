@@ -73,12 +73,12 @@ describe("Today page", () => {
   it("holds a first message for a check, shows its flags and lets the owner switch", async () => {
     let resolved = false;
     let routeBody: unknown;
-    const held = { channel: "whatsapp" as const, to: "6580000001", direct: false, label: "WhatsApp +65 8000 0001" };
-    const found = { channel: "email" as const, to: "owner@example.com", direct: true, label: "DM email (valid) owner@example.com" };
+    const held = { channel: "whatsapp" as const, to: "6580000001", direct: true, label: "DM phone +65 8000 0001", person: "Evelyn Tan, Founder" };
+    const found = { channel: "email" as const, to: "owner@example.com", direct: true, label: "DM email (valid) owner@example.com", person: "Amelia Lee, Founder" };
     const line = firstLine({
       prospect: prospectRow({ flags: { duplicate: true, blocked: true, check: true } }),
-      sendTo: held,
-      routeCheck: { kept: held, found, foundPerson: "Amelia Lee", foundTitle: "Founder" },
+      sendTo: { ...held, person: "New Person, Founder" },
+      routeCheck: { kept: held, found },
       flags: [
         { kind: "duplicate", text: "DUP-CHECK: possibly listed twice" },
         { kind: "blocked", text: "AUDIT-FLAG: owner@example.com do not send" },
@@ -92,7 +92,8 @@ describe("Today page", () => {
     expect(await screen.findByText("Might be the same business as another brand. Look before you send.")).toBeInTheDocument();
     expect(screen.getByText("Do not use: owner@example.com do not send")).toBeInTheDocument();
     expect(screen.queryByText(/AUDIT-FLAG:|DUP-CHECK:/)).not.toBeInTheDocument();
-    expect(screen.getByText("A newer contact was found. Now: WhatsApp to the brand. New: Email to Amelia Lee, Founder.")).toBeInTheDocument();
+    expect(screen.getByText("To New Person, Founder, on WhatsApp")).toBeInTheDocument();
+    expect(screen.getByText("A newer contact was found. Now: WhatsApp to Evelyn Tan, Founder. New: Email to Amelia Lee, Founder.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Mark as sent" })).toBeDisabled();
     expect(screen.queryByRole("link", { name: "Open WhatsApp" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Switch" }));
@@ -102,12 +103,12 @@ describe("Today page", () => {
   });
 
   it("formats direct recipients with and without a title", async () => {
-    const direct = { channel: "whatsapp" as const, to: "6580000001", direct: true, label: "DM phone +65 8000 0001", person: "Amelia Lee" };
-    stubApi({ "GET /api/outreach/today": () => ({ body: todayPage({ firsts: [firstLine({ sendTo: { ...direct, title: "Founder" } })] }) }) });
+    const direct = { channel: "whatsapp" as const, to: "6580000001", direct: true, label: "DM phone +65 8000 0001", person: "Amelia Lee, Founder" };
+    stubApi({ "GET /api/outreach/today": () => ({ body: todayPage({ firsts: [firstLine({ sendTo: direct })] }) }) });
     const first = renderSignedIn(<Outreach />);
     expect(await screen.findByText("To Amelia Lee, Founder, on WhatsApp")).toBeInTheDocument();
     first.unmount();
-    stubApi({ "GET /api/outreach/today": () => ({ body: todayPage({ firsts: [firstLine({ sendTo: direct })] }) }) });
+    stubApi({ "GET /api/outreach/today": () => ({ body: todayPage({ firsts: [{ ...firstLine(), sendTo: { ...direct, person: "Amelia Lee" } }] }) }) });
     renderSignedIn(<Outreach />);
     expect(await screen.findByText("To Amelia Lee on WhatsApp")).toBeInTheDocument();
   });

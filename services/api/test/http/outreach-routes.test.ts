@@ -221,25 +221,26 @@ describe("the owner's day", () => {
   });
 
   it("holds a changed contact until the owner keeps or switches it", async () => {
-    await ready([row(1, { email: "brand1@example.com", bestRoute: "WhatsApp +65 8000 0001" })]);
-    await loadProspects(studio, [row(1, { email: "brand1@example.com", bestRoute: "Email (valid) new@example.com" })]);
+    await ready([row(1, { email: "brand1@example.com", bestRoute: "DM phone +65 8000 0001", decisionMaker: "Amelia Lee", dmTitle: "Founder" })]);
+    await loadProspects(studio, [row(1, { email: "new@example.com", bestRoute: "DM email (valid) new@example.com", decisionMaker: "Evelyn Tan", dmTitle: "Director" })]);
     const waiting = await json(await get("/api/outreach/prospects/00001"));
     expect(waiting.check).toMatchObject({
-      kept: { channel: "whatsapp", to: "6580000001" },
-      found: { channel: "email", to: "new@example.com" },
+      kept: { channel: "whatsapp", to: "6580000001", person: "Amelia Lee, Founder" },
+      found: { channel: "email", to: "new@example.com", person: "Evelyn Tan, Director" },
     });
-    expect(waiting.contact.sendTo.to).toBe("6580000001");
+    expect(waiting.contact.sendTo).toMatchObject({ to: "6580000001", person: "Amelia Lee, Founder" });
     expect(waiting.message.messages[0].href).toMatch(/^https:\/\/wa\.me\/6580000001/);
 
     const channelChanged = await json(await on("00001", "channel", { channel: "email" }));
-    expect(channelChanged.contact.sendTo.to).toBe("6580000001");
+    expect(channelChanged.contact.sendTo).toMatchObject({ to: "6580000001", person: "Amelia Lee, Founder" });
     expect(channelChanged.message.messages[0].href).toMatch(/^https:\/\/wa\.me\/6580000001/);
 
     const switched = await json(await on("00001", "route", { choice: "new" }));
     expect(switched.check).toBeUndefined();
-    expect(switched.contact.sendTo).toMatchObject({ channel: "email", to: "new@example.com" });
+    expect(switched.contact.sendTo).toMatchObject({ channel: "email", to: "new@example.com", person: "Evelyn Tan, Director" });
     expect(switched.message.messages[0].href).toMatch(/^mailto:new@example\.com\?/);
     expect(switched.events[0]).toMatchObject({ type: "route", choice: "new", by: "owner" });
+    studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
     const channelAfterRoute = await json(await on("00001", "channel", { channel: "whatsapp" }));
     expect(channelAfterRoute.contact.sendTo).toMatchObject({ channel: "whatsapp", to: "6580000001" });
     expect(channelAfterRoute.message.messages[0].href).toMatch(/^https:\/\/wa\.me\/6580000001/);
@@ -278,6 +279,8 @@ describe("the owner's day", () => {
     const profile = await outreach().store.get(test.id);
     await outreach().store.saveProfile({
       ...profile,
+      bestRoute: "WhatsApp +65 8000 0001",
+      secondRoute: "WhatsApp +65 8000 0001",
       route: { channel: "email", to: "alternate@example.com", direct: false, label: "Email (valid) alternate@example.com" },
       routeHeld: { channel: "whatsapp", to: "6580000001", direct: false, label: "WhatsApp +65 8000 0001" },
     });
@@ -286,6 +289,7 @@ describe("the owner's day", () => {
     expect(page.contact.whatsapp).toEqual([]);
     expect(page.contact.sendTo).toBeUndefined();
     expect(page.check).toBeUndefined();
+    expect(JSON.stringify(page.contact)).not.toContain("6580000001");
     expect(JSON.stringify(page)).not.toContain("6580000001");
   });
 

@@ -128,14 +128,15 @@ function MessageLine({ line, done }: { line: TodayLine; done: () => void }) {
   const routeBusy = (busy as string | undefined) === "route";
   const routeWrite = (choice: "kept" | "new") => write({ action: "route", body: { choice } } as unknown as ProspectWrite);
   const sendTo = line.sendTo;
-  const person = sendTo?.person ?? line.prospect.person;
-  const checkTarget = (route: NonNullable<TodayLine["routeCheck"]>["kept"], targetName?: string, title?: string) => {
+  const person = sendTo?.person ?? (!sendTo?.direct ? line.prospect.person : undefined);
+  const checkTarget = (route: NonNullable<TodayLine["routeCheck"]>["kept"]) => {
     const channel = route.channel === "whatsapp" ? "WhatsApp" : route.channel === "email" ? "Email" : "another way";
-    const recipient = route.direct && targetName ? `${targetName}${title ? `, ${title}` : ""}` : "the brand";
+    const recipient = route.direct && route.person ? route.person : "the brand";
     return `${channel} to ${recipient}`;
   };
+  const hasTitle = Boolean(sendTo?.title || sendTo?.person?.includes(", "));
   const who = sendTo?.direct && person
-    ? `To ${person}${sendTo.title ? `, ${sendTo.title},` : ""} on ${CHANNELS[sendTo.channel]}`
+    ? `To ${person}${sendTo.title ? `, ${sendTo.title}` : ""}${hasTitle ? "," : ""} on ${CHANNELS[sendTo.channel]}`
     : sendTo?.channel === "email"
       ? "To the brand's general inbox"
       : sendTo
@@ -152,7 +153,7 @@ function MessageLine({ line, done }: { line: TodayLine; done: () => void }) {
       {line.routeCheck ? (
         <div className="grid gap-2">
           <p className="text-body">
-            A newer contact was found. Now: {checkTarget(line.routeCheck.kept, sendTo?.person, sendTo?.title)}. New: {checkTarget(line.routeCheck.found, line.routeCheck.foundPerson, line.routeCheck.foundTitle)}.
+            A newer contact was found. Now: {checkTarget(line.routeCheck.kept)}. New: {checkTarget(line.routeCheck.found)}.
           </p>
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="secondary" className={TAP} disabled={busy !== undefined} loading={routeBusy} onClick={() => routeWrite("kept")}>Keep</Button>

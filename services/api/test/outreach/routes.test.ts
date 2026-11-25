@@ -101,6 +101,25 @@ describe("loading the additional list fields", () => {
     expect(profile.bestRoute).toBe("Email (valid)");
   });
 
+  it("extracts and strips both slash-separated blocked email addresses", async () => {
+    await loadRows(store, [
+      listed(9, {
+        email: "a@example.com",
+        dmEmail: "b@example.com",
+        bestRoute: "Email (valid) a@example.com",
+        secondRoute: "Email (valid) b@example.com",
+        notes: "AUDIT-FLAG: a@example.com/b@example.com do not use",
+      }),
+    ], now);
+    const profile = await store.get("00009");
+    expect(profile.email).toBeUndefined();
+    expect(profile.dmEmail).toBeUndefined();
+    expect(profile.route).toBeUndefined();
+    expect(profile.second).toBeUndefined();
+    expect(profile.bestRoute).toBe("Email (valid)");
+    expect(profile.secondRoute).toBe("Email (valid)");
+  });
+
   it("applies the row limits and accepts 500 characters of raw notes", async () => {
     const notes = "n".repeat(500);
     const result = await loadRows(store, [

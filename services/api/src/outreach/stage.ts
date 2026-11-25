@@ -119,7 +119,9 @@ export function owedAnswer(file: ProspectFile): EventOf<"reply"> | undefined {
 }
 
 const sendable = (route: ProspectRoute | undefined): ProspectSendTarget | undefined =>
-  route && (route.channel === "whatsapp" || route.channel === "email") ? { channel: route.channel, to: route.to, direct: route.direct } : undefined;
+  route && (route.channel === "whatsapp" || route.channel === "email")
+    ? { channel: route.channel, to: route.to, direct: route.direct, ...(route.person ? { person: route.person } : {}) }
+    : undefined;
 
 const legacyTargets = (file: ProspectFile): ProspectSendTarget[] => {
   const { profile } = file;
@@ -144,16 +146,10 @@ export function sendTarget(file: ProspectFile): ProspectSendTarget | undefined {
   const channelEvent = last(file.events, "channel");
   const heldTarget = sendable(profile.routeHeld);
   if (routeHeldUnresolved(file) && heldTarget) return heldTarget;
-  if (routeEvent && profile.routeHeld && routeEvent.at >= profile.loadedAt) {
-    if (channelEvent && channelEvent.at > routeEvent.at) {
-      return targetForChannel(file, channelEvent.channel) ?? sendable(profile.route) ?? sendable(profile.second) ?? legacyTargets(file)[0];
-    }
-    if (routeEvent.choice === "kept" && heldTarget) return heldTarget;
-    if (routeEvent.choice === "new") return sendable(profile.route) ?? sendable(profile.second) ?? legacyTargets(file)[0];
-  }
-  if (channelEvent) {
+  if (channelEvent && (!routeEvent || channelEvent.at > routeEvent.at)) {
     return targetForChannel(file, channelEvent.channel) ?? sendable(profile.route) ?? sendable(profile.second) ?? legacyTargets(file)[0];
   }
+  if (routeEvent?.choice === "kept" && heldTarget) return heldTarget;
   return sendable(profile.route) ?? sendable(profile.second) ?? legacyTargets(file)[0];
 }
 

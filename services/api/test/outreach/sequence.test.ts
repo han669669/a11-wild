@@ -70,6 +70,28 @@ describe("marking a message as sent", () => {
     expect(sent.send).toMatchObject({ channel: "whatsapp", to: "6580000001" });
   });
 
+  it("keeps a newer Keep choice over an older channel preference after a reload", async () => {
+    await ready("00001");
+    at("2026-11-23T10:05:00");
+    const changed = row(1, { bestRoute: "Email (valid) new@example.com", email: "new@example.com" });
+    await loadRows(store, [changed], now);
+    at("2026-11-23T10:06:00");
+    await sequence.setChannel("00001", "email");
+    at("2026-11-23T10:07:00");
+    await sequence.setRoute("00001", "kept");
+    at("2026-11-23T10:08:00");
+    await loadRows(store, [changed], now);
+
+    const reloaded = (await store.all()).find((file) => file.profile.id === "00001")!;
+    const routeEvent = reloaded.events.find((event) => event.type === "route")!;
+    expect(Date.parse(reloaded.profile.loadedAt)).toBeGreaterThan(Date.parse(routeEvent.at));
+    expect(reloaded.profile.routeHeld).toBeUndefined();
+    expect(reloaded.profile.route).toMatchObject({ channel: "whatsapp", to: "6580000001" });
+
+    const sent = await sequence.send("00001", { step: 0, title: 0 });
+    expect(sent.send).toMatchObject({ channel: "whatsapp", to: "6580000001" });
+  });
+
   it("counts a send at 23:30 on Monday in Singapore on Monday", async () => {
     await ready("00001");
     at("2026-11-23T23:30:00");

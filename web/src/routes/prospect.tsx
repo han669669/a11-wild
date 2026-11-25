@@ -48,8 +48,8 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
   const routeBusy = (busy as string | undefined) === "route";
   const routeError = (failed as string | undefined) === "route" ? error : undefined;
   const routeName = (channel: string) => ({ whatsapp: "WhatsApp", email: "Email", instagram: "Instagram", facebook: "Facebook", call: "Phone" })[channel] ?? "another way";
-  const checkTarget = (route: NonNullable<ProspectPage["check"]>["kept"], person?: string, title?: string) => {
-    const recipient = route.direct && person ? `${person}${title ? `, ${title}` : ""}` : "the brand";
+  const checkTarget = (route: NonNullable<ProspectPage["check"]>["kept"]) => {
+    const recipient = route.direct && route.person ? route.person : "the brand";
     const value = route.channel === "whatsapp" && /^\d+$/.test(route.to) ? `+${route.to}` : route.to;
     return `${routeName(route.channel)} to ${recipient} (${value})`;
   };
@@ -106,7 +106,7 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
         <Section title="A newer way to reach this brand was found">
           <Card className="grid gap-3">
             <p className="text-body">
-              A newer contact was found. Now: {checkTarget(page.check.kept, contact.sendTo?.person, contact.sendTo?.title)}. New: {checkTarget(page.check.found, contact.decisionMaker, contact.dmTitle)}.
+              A newer contact was found. Now: {checkTarget(page.check.kept)}. New: {checkTarget(page.check.found)}.
             </p>
             <div className="flex flex-wrap gap-2">
               <Button type="button" variant="secondary" className={TAP} disabled={busy !== undefined} loading={routeBusy} onClick={() => routeWrite("kept")}>Keep</Button>
