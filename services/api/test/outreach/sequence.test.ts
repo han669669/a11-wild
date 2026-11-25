@@ -443,7 +443,7 @@ describe("taking a mark back", () => {
 });
 
 describe("a reply and the owner's choices", () => {
-  it("registers the latest sent contact without blocking an earlier recipient", async () => {
+  it("registers every sent contact when the brand opts out", async () => {
     await ready("00001");
     const first = await sequence.send("00001", { step: 0, title: 0 });
     expect(first.send).toMatchObject({ channel: "whatsapp", to: "6580000001" });
@@ -466,11 +466,9 @@ describe("a reply and the owner's choices", () => {
     await sequence.optOut("00001");
 
     expect(await store.optOuts()).toContain("E#replacement@example.com");
-    expect(await store.optOuts()).not.toContain("W#6580000001");
+    expect(await store.optOuts()).toContain("W#6580000001");
     await expect(sequence.send("00002", { step: 0, title: 0 })).rejects.toThrow(/opted out/);
-    await expect(sequence.send("00003", { step: 0, title: 0 })).resolves.toMatchObject({
-      send: { channel: "whatsapp", to: "6580000001" },
-    });
+    await expect(sequence.send("00003", { step: 0, title: 0 })).rejects.toThrow(/opted out/);
   });
 
   it("registers a sent contact that the workbook later dropped when the brand opts out", async () => {
