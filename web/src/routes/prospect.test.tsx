@@ -211,6 +211,18 @@ describe("Prospect page", () => {
     expect(screen.queryByRole("button", { name: "Mark as sent" })).not.toBeInTheDocument();
   });
 
+  it("explains that a test-brand opt-out closes no real contact", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    stubApi({
+      [GET]: () => ({ body: prospectPage({ prospect: prospectRow({ test: true, stage: "contacted" }), sends: [sendOf("2026-11-20")] }) }),
+    });
+    open();
+    await userEvent.click(await screen.findByRole("button", { name: "They said no" }));
+    expect(confirm).toHaveBeenCalledWith("This is a test brand: the opt-out stays on it and blocks no real contact. Save it?");
+    await userEvent.click(screen.getByRole("button", { name: "Opt this contact out" }));
+    expect(screen.getByText(/Final: This is a test brand: the opt-out stays on it and blocks no real contact\./)).toBeInTheDocument();
+  });
+
   it("offers take back on the day of the mark only", async () => {
     stubApi({ [GET]: () => ({ body: prospectPage({ prospect: prospectRow({ stage: "contacted" }), sends: [sendOf("2026-11-23")] }) }) });
     const { unmount } = open();

@@ -14,6 +14,7 @@ import { dayName, when } from "@/lib/when";
 
 const OWNER_STAGES = ["in_talks", "client", "lost", "parked"] as const;
 const OPT_OUT_CONFIRMATION = "This stops all messages to this brand's contacts and every number or address you messaged for it across all brands.";
+const TEST_OPT_OUT_CONFIRMATION = "This is a test brand: the opt-out stays on it and blocks no real contact.";
 
 /** One brand: the one step that is next first, then its ad and its message. How to reach it and what happened are folded below. */
 export function Prospect() {
@@ -35,6 +36,7 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
   const { write, busy, error, failed } = useWrite(prospect.id, done);
   // The reason a write failed is drawn beside its own action: one inside a closed fold would not be seen.
   const failure = (...actions: ProspectWrite["action"][]) => (failed && actions.includes(failed) ? <Failure error={error} /> : null);
+  const optOutConfirmation = prospect.test ? TEST_OPT_OUT_CONFIRMATION : OPT_OUT_CONFIRMATION;
   const newest = ads[0];
   const out = prospect.stage === "opted_out";
   const lastSend = sends.at(-1);
@@ -176,7 +178,7 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
       {sends.length > 0 && !out ? (
         <Section title="Did they reply?">
           <Card>
-            <Reply id={prospect.id} done={done} />
+            <Reply id={prospect.id} done={done} confirmation={optOutConfirmation} />
           </Card>
         </Section>
       ) : null}
@@ -240,7 +242,7 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
                   Take back "{STEPS[lastSend.step]} sent"
                 </Button>
               ) : null}
-              <OptOut onYes={() => write({ action: "optout" })} busy={busy === "optout"} />
+              <OptOut onYes={() => write({ action: "optout" })} busy={busy === "optout"} confirmation={optOutConfirmation} />
             </div>
             {failure("stage", "kind", "unsent", "optout")}
             </div>
@@ -382,11 +384,11 @@ function Line({ name, text, href }: { name: string; text: string; href?: string 
   );
 }
 
-function Reply({ id, done }: { id: string; done: (page: ProspectPage) => void }) {
+function Reply({ id, done, confirmation }: { id: string; done: (page: ProspectPage) => void; confirmation: string }) {
   const { write, busy, error } = useWrite(id, done);
   const [text, setText] = useState("");
   const log = async (reply: "more" | "no" | "other") => {
-    if (reply === "no" && !window.confirm(`${OPT_OUT_CONFIRMATION} Save it?`)) return;
+    if (reply === "no" && !window.confirm(`${confirmation} Save it?`)) return;
     if (await write({ action: "reply", body: { reply, ...(text.trim() ? { text: text.trim() } : {}) } })) setText("");
   };
   return (
@@ -435,7 +437,7 @@ function Note({ id, done }: { id: string; done: (page: ProspectPage) => void }) 
 }
 
 /** The opt-out asks once before it saves: it is final. */
-function OptOut({ onYes, busy }: { onYes: () => void; busy: boolean }) {
+function OptOut({ onYes, busy, confirmation }: { onYes: () => void; busy: boolean; confirmation: string }) {
   const [asked, setAsked] = useState(false);
   if (!asked) {
     return (
@@ -446,7 +448,7 @@ function OptOut({ onYes, busy }: { onYes: () => void; busy: boolean }) {
   }
   return (
     <span className="flex flex-wrap items-center gap-2 text-caption">
-      Final: {OPT_OUT_CONFIRMATION}
+      Final: {confirmation}
       <Button type="button" variant="destructive" size="compact" className={TAP} loading={busy} onClick={onYes}>
         Yes, opt out
       </Button>
