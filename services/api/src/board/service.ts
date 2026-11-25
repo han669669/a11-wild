@@ -57,6 +57,17 @@ export const typesetOf = (on: BatchImage, all: BatchImage[], words: ApprovedCopy
 /** The v1 picture with the brand's real logo set on it (no words): the newest logo_set made from this very picture. */
 export const logoOf = (on: BatchImage, all: BatchImage[]): BatchImage | undefined =>
   all.filter((other) => other.kind === "typeset" && other.fromId === on.id && other.wordsVersion === undefined).at(-1);
+export const pickedStamp = (pick: OwnerPick, all: BatchImage[]): BatchImage | undefined => {
+  if (pick.shownId !== undefined) {
+    return all.find((image) => image.id === pick.shownId && image.kind === "typeset" && image.wordsVersion === undefined);
+  }
+  if (!pick.imageId) return undefined;
+  const draft = all.find((image) => image.id === pick.imageId);
+  const counted = draft ? countedOf(draft, all) : undefined;
+  const onCounted = counted ? all.filter((image) => image.kind === "typeset" && image.wordsVersion === undefined && image.fromId === counted.id) : [];
+  const pool = onCounted.length > 0 ? onCounted : all.filter((image) => image.kind === "typeset" && image.wordsVersion === undefined && image.rootId === pick.imageId);
+  return pool.sort((one, other) => other.createdAt.localeCompare(one.createdAt))[0];
+};
 /** The picture the owner and the critic look at: the draft or its newest repair, and in an ad with words that picture with its words. */
 export const seenOf = (draft: Pick<BoardDraft, "shown" | "words">): BatchImage => draft.words?.image ?? draft.shown;
 /** The real-camera finish that was made from this very picture, the newest one. */
@@ -245,8 +256,7 @@ export class BoardService implements FinalRule {
       entries.push(entry);
       if (!pick) missing.push(`the owner's pick, or his pass, for ${idea.id}`);
       if (!pick?.imageId) continue;
-      const pickedDraft = all.find((image) => image.id === pick.imageId);
-      const pickedStamp = pickedDraft ? logoOf(countedOf(pickedDraft, all), all) : undefined;
+      const stampOnPick = pickedStamp(pick, all);
       // The newest final of the picked draft is the one that counts: an earlier one was made again because it failed, and a final of a draft he no longer picks does not count.
       const newest = finals.get(idea.id)?.filter((final) => final.fromId === pick.imageId).at(-1);
       if (!newest) {
@@ -267,7 +277,7 @@ export class BoardService implements FinalRule {
         const finish = finishOf(final, all) as BatchImage;
         const set = hasWords(batch.kind) ? typesetOf(finish, all, approved.find((copy) => copy.ideaId === idea.id)) : logoOf(finish, all);
         if (hasWords(batch.kind)) missing.push(...this.wordNeeds(batch, final, set, found, "finished final"));
-        else if (pickedStamp || set) missing.push(...this.logoNeeds(batch, final, set, found, "finished final"));
+        else if (stampOnPick || set) missing.push(...this.logoNeeds(batch, final, set, found, "finished final"));
         // The owner sends the picture with its words, so what the agent saw on that one is his to read too.
         const worded = set ? notesIn(batch, found.get(set.id)) : [];
         if (worded.length > 0) entry.warns = [...warns, ...worded];

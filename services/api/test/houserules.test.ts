@@ -5,8 +5,8 @@ import { HOUSE_RULES, RULES_VERSION, RULE_ROLES, rulesFor } from "../src/houseru
 describe("house rules", () => {
   it("keeps the current version for the picked-draft logo rule", () => {
     expect(RULES_VERSION).toBe("2026-11-26.2");
-    expect(rulesFor("main", "v1").find((rule) => rule.id === "v1-logo")?.text).toContain(
-      "A final carries the logo when its picked draft does.",
+    expect(rulesFor("main", "v1").find((rule) => rule.id === "v1-logo")?.text).toBe(
+      "Set the brand's real logo in code (logo_set) on every v1 draft before the owner sees it, so he judges a finished poster ad and not a bare photo, and on each final whose picked draft carries it. On a final, run photo_finish first and then logo_set; the studio repeats the picked draft's exact logo placement. A v1 draft that shows food alone names no pack photo and needs no skeleton or pack_check.",
     );
   });
 
