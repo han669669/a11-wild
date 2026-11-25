@@ -113,11 +113,7 @@ export class BoardService implements FinalRule {
 
   async board(batchId: string): Promise<Board> {
     const { batches, brands, truth, checks, picks, critic, pictures } = this.deps;
-    let batch = await batches.get(batchId);
-    if (batch.kind === "v1" && (batch.state === "checked" || batch.state === "waiting_pick")) {
-      await this.progress(batch);
-      batch = await batches.get(batchId);
-    }
+    const batch = await batches.get(batchId);
     const [brand, product, ideas, drafts, finals, found, picked, ranks] = await Promise.all([
       brands.brand(batch.brandId),
       brands.product(batch.productId),
@@ -287,44 +283,39 @@ export class BoardService implements FinalRule {
   async progress(batch: Batch): Promise<{ batch: Batch; missing: string[] }> {
     const { batches, brands, checks, critic } = this.deps;
     const missing: string[] = [];
-    const drafting = batch.state === "drafting";
-    const readyV1 = batch.kind === "v1" && (batch.state === "checked" || batch.state === "waiting_pick");
-    if (drafting || readyV1) {
+    if (batch.state === "drafting") {
       const [brand, product] = await Promise.all([brands.brand(batch.brandId), brands.product(batch.productId)]);
       const hasPack = product.photos.some((photo) => photo.kind === "pack");
       const hasLogo = Boolean(brand.logo) && !batch.logoFree;
-      if (drafting || hasLogo) {
-        const [found, all, drafts, ranks] = await Promise.all([checks.all(batch.id), this.deps.images.list(batch.id), this.sent(batch.id, "draft"), critic.ranks(batch.id)]);
-        const approved = hasWords(batch.kind) ? await this.deps.copy.list(batch.id) : [];
-        const ideas = await batches.ideas(batch.id);
-        // An outreach batch too owes the drafts of every idea the critic kept: the owner picks among all of them.
-        for (const idea of ideas) {
-          const mine = drafts.get(idea.id) ?? [];
-          const words = approved.find((copy) => copy.ideaId === idea.id);
-          if (mine.length < DRAFTS_PER_IDEA) missing.push(`${DRAFTS_PER_IDEA - mine.length} more finished draft(s) of ${idea.id}`);
-          for (const image of mine) {
-            const counted = countedOf(image, all);
-            missing.push(...(await this.needs(batch, counted, hasPack, found)));
-            // The owner judges an ad, not a bare photo: each draft carries the approved words and/or real logo before he sees it.
-            const out = rejected(judgedIn(batch, found.get(counted.id)));
-            const logo = !hasWords(batch.kind) ? logoOf(counted, all) : undefined;
-            if (hasWords(batch.kind)) missing.push(...this.wordNeeds(batch, counted, typesetOf(counted, all, words), found, "draft", out));
-            else if (hasLogo || logo) missing.push(...this.logoNeeds(batch, counted, logo, found, "draft", out));
-          }
-          // A rank counts while it is of the pictures the owner sees now: a repair made after it, or words set after it, needs a new rank.
-          const judged = new Map(ranks.get(idea.id)?.order.map((place) => [place.imageId, place.shownId]));
-          const seen = (image: BatchImage) => {
-            const counted = countedOf(image, all);
-            return (hasWords(batch.kind) ? typesetOf(counted, all, words) : logoOf(counted, all)) ?? counted;
-          };
-          // The owner sees every draft of an outreach batch and picks one himself, so no critic ranks them.
-          if (batch.purpose !== "outreach" && !mine.every((image) => judged.get(image.id) === seen(image).id)) {
-            missing.push(`the blind critic's rank of the drafts of ${idea.id} as they are now (a fresh helper: critic_open with step "drafts", then critic_rank)`);
-          }
+      const [found, all, drafts, ranks] = await Promise.all([checks.all(batch.id), this.deps.images.list(batch.id), this.sent(batch.id, "draft"), critic.ranks(batch.id)]);
+      const approved = hasWords(batch.kind) ? await this.deps.copy.list(batch.id) : [];
+      const ideas = await batches.ideas(batch.id);
+      // An outreach batch too owes the drafts of every idea the critic kept: the owner picks among all of them.
+      for (const idea of ideas) {
+        const mine = drafts.get(idea.id) ?? [];
+        const words = approved.find((copy) => copy.ideaId === idea.id);
+        if (mine.length < DRAFTS_PER_IDEA) missing.push(`${DRAFTS_PER_IDEA - mine.length} more finished draft(s) of ${idea.id}`);
+        for (const image of mine) {
+          const counted = countedOf(image, all);
+          missing.push(...(await this.needs(batch, counted, hasPack, found)));
+          // The owner judges an ad, not a bare photo: each draft carries the approved words and/or real logo before he sees it.
+          const out = rejected(judgedIn(batch, found.get(counted.id)));
+          const logo = !hasWords(batch.kind) ? logoOf(counted, all) : undefined;
+          if (hasWords(batch.kind)) missing.push(...this.wordNeeds(batch, counted, typesetOf(counted, all, words), found, "draft", out));
+          else if (hasLogo || logo) missing.push(...this.logoNeeds(batch, counted, logo, found, "draft", out));
         }
-        if (missing.length === 0 && drafting) batch = await batches.move(batch, "checked", "checks_save");
-        else if (missing.length > 0 && readyV1) batch = await batches.reopenDraftingForLogo(batch);
+        // A rank counts while it is of the pictures the owner sees now: a repair made after it, or words set after it, needs a new rank.
+        const judged = new Map(ranks.get(idea.id)?.order.map((place) => [place.imageId, place.shownId]));
+        const seen = (image: BatchImage) => {
+          const counted = countedOf(image, all);
+          return (hasWords(batch.kind) ? typesetOf(counted, all, words) : logoOf(counted, all)) ?? counted;
+        };
+        // The owner sees every draft of an outreach batch and picks one himself, so no critic ranks them.
+        if (batch.purpose !== "outreach" && !mine.every((image) => judged.get(image.id) === seen(image).id)) {
+          missing.push(`the blind critic's rank of the drafts of ${idea.id} as they are now (a fresh helper: critic_open with step "drafts", then critic_rank)`);
+        }
       }
+      if (missing.length === 0) batch = await batches.move(batch, "checked", "checks_save");
     } else if (batch.state === "finals" || batch.state === "finished" || batch.state === "done") {
       missing.push(...(await this.finals(batch)).flatMap((entry) => entry.missing));
       if (missing.length === 0 && batch.state === "finals") batch = await batches.move(batch, "finished", "checks_save");
@@ -365,11 +356,9 @@ export class BoardService implements FinalRule {
     if (["intake", "truth", "ideas", "judged", "worded", "priced", "waiting_spend", "spec_only"].includes(batch.state)) {
       throw new Refusal(`The board is not ready: the batch is at "${batch.state}", and its drafts are not all made.`);
     }
-    if (batch.state === "drafting" || (batch.kind === "v1" && (batch.state === "checked" || batch.state === "waiting_pick"))) {
+    if (batch.state === "drafting") {
       const { batch: after, missing } = await this.progress(batch);
-      if (after.state === "drafting" || missing.length > 0) throw new Refusal(`The board is not ready: the drafts are not all checked. Still missing: ${missing.join("; ")}.`);
-    } else if (batch.state === "finals" || batch.state === "finished" || batch.state === "done") {
-      await this.progress(batch);
+      if (after.state === "drafting") throw new Refusal(`The board is not ready: the drafts are not all checked. Still missing: ${missing.join("; ")}.`);
     }
     const now = await batches.get(batchId);
     if (now.state === "checked") await batches.move(now, "waiting_pick", "board_show");
@@ -385,13 +374,6 @@ export class BoardService implements FinalRule {
     let batch = await batches.get(batchId);
     // The ad of an outreach batch is chosen on the prospect's page, where the owner sees every draft of every idea at once.
     if (batch.purpose === "outreach") throw new Refusal(OWNER_PICKS);
-    if (batch.kind === "v1" && (batch.state === "checked" || batch.state === "waiting_pick")) {
-      const ready = await this.progress(batch);
-      batch = ready.batch;
-      if (ready.missing.length > 0 && batch.state !== "drafting") {
-        throw new Refusal(`The board is not ready: the drafts are not all checked. Still missing: ${ready.missing.join("; ")}.`);
-      }
-    }
     if (batch.state === "checked") batch = await batches.move(batch, "waiting_pick", "pick_save");
     if (!PICKING.includes(batch.state)) {
       throw new Refusal(`The owner picks when the board is ready. This batch is at "${batch.state}".`);

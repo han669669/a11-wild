@@ -5,6 +5,7 @@ import { type Item, record, type Table } from "../store/table.js";
 import { requireMove } from "./state.js";
 
 const PK = "BATCH";
+const LOGO_FREE_STATES = new Set<BatchState>(["checked", "waiting_pick", "finals", "finished", "done"]);
 
 /** A batch saved before the studio had kinds is a v1 batch. */
 const stored = (item: Item & Batch): Batch => ({ ...record<Batch>(item), kind: item.kind ?? "v1" });
@@ -43,32 +44,23 @@ export class BatchStore {
     return items.map(stored).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
-  async markLogoFreeIfDone(batchId: string): Promise<boolean> {
-    const batch = await this.get(batchId);
-    if (batch.state !== "done") return false;
-    if (batch.logoFree) return true;
-    const marked: Batch = { ...batch, logoFree: true, updatedAt: this.now().toISOString() };
-    return this.table.put({ pk: PK, sk: marked.id, ...marked }, { ifEquals: { attribute: "state", value: "done" } });
+  async markLogoFree(batchId: string): Promise<boolean> {
+    let batch = await this.get(batchId);
+    while (LOGO_FREE_STATES.has(batch.state)) {
+      if (batch.logoFree) return true;
+      const marked: Batch = { ...batch, logoFree: true, updatedAt: this.now().toISOString() };
+      if (await this.table.put({ pk: PK, sk: marked.id, ...marked }, { ifEquals: { attribute: "state", value: batch.state } })) return true;
+      batch = await this.get(batchId);
+    }
+    return false;
   }
 
   /** Moves a batch to a state the diagram allows from where it is. A save of the same step again keeps the state. */
   async move(batch: Batch, to: BatchState, tool: string, fields: Partial<Pick<Batch, "spec" | "truthVersion">> = {}): Promise<Batch> {
     if (batch.state !== to) requireMove(batch, to, tool);
     const moved: Batch = { ...batch, ...fields, state: to, updatedAt: this.now().toISOString() };
-    if (to !== "done") delete moved.logoFree;
     await this.table.put({ pk: PK, sk: moved.id, ...moved });
     return moved;
-  }
-
-  async reopenDraftingForLogo(batch: Batch): Promise<Batch> {
-    if (batch.kind !== "v1" || (batch.state !== "checked" && batch.state !== "waiting_pick")) {
-      throw new Refusal("Only a ready v1 board can go back to drafting for its logo.");
-    }
-    const reopened: Batch = { ...batch, state: "drafting", updatedAt: this.now().toISOString() };
-    if (!(await this.table.put({ pk: PK, sk: reopened.id, ...reopened }, { ifEquals: { attribute: "state", value: batch.state } }))) {
-      return this.get(batch.id);
-    }
-    return reopened;
   }
 
   async saveIdeas(batchId: string, ideas: Idea[], by: string): Promise<void> {

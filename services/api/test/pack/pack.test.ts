@@ -204,12 +204,9 @@ describe("pack_publish", () => {
 
     await studio.services.checks.measure(batchId, "idea-1-final", "cap_check", { code: "D11", note: "The pouch is too wide." });
     const reopened = await studio.services.board.progress(await studio.services.batches.get(batchId));
-    expect(reopened.batch).toMatchObject({ state: "finals" });
-    expect(reopened.batch.logoFree).toBeUndefined();
+    expect(reopened.batch).toMatchObject({ state: "finals", logoFree: true });
     await studio.services.checks.measure(batchId, "idea-1-final", "cap_check", null);
-    expect((await actualFinals(reopened.batch)).find((entry) => entry.ideaId === "idea-1")?.missing).toContain(
-      "logo_set for picture idea-1-final: the brand's real logo on the finished final",
-    );
+    expect((await actualFinals(reopened.batch)).find((entry) => entry.ideaId === "idea-1")?.missing.some((missing) => missing.includes("logo_set"))).toBe(false);
   });
 });
 

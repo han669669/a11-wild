@@ -121,16 +121,19 @@ describe("checks", () => {
 
     const saved = await callTool(studio, "brand_logo_save", { brandId: batch.brandId, extractId: offer.id, logoUrl: LOGO_URL });
     expect(saved.ok).toBe(true);
+    const afterSave = await studio.services.batches.get(batchId);
+    expect(afterSave.state).toBe("drafting");
+    expect(afterSave.logoFree).toBeUndefined();
     const imageId = drafts["idea-1"]![0]!;
     const checked = await check(imageId);
     expect(checked.value.state).toBe("drafting");
     expect(checked.value.stillMissing).toContain(`logo_set for picture ${imageId}: the brand's real logo on the draft`);
   });
 
-  it("reopens a ready v1 board when a later logo needs checks", async () => {
+  it("keeps a waiting-pick v1 board and its finals logo-free after a later logo save", async () => {
     await checkAll();
-    expect(await state()).toBe("checked");
-    await callTool(studio, "board_show", { batchId });
+    const before = await callTool(studio, "board_show", { batchId });
+    expect(before.value.batch.state).toBe("waiting_pick");
     expect(await state()).toBe("waiting_pick");
 
     const batch = await studio.services.batches.get(batchId);
@@ -143,13 +146,34 @@ describe("checks", () => {
       productPages: [],
       colours: [],
     });
-    await callTool(studio, "brand_logo_save", { brandId: batch.brandId, extractId: offer.id, logoUrl: LOGO_URL });
+    const saved = await callTool(studio, "brand_logo_save", { brandId: batch.brandId, extractId: offer.id, logoUrl: LOGO_URL });
+    expect(saved.ok).toBe(true);
+    expect(await studio.services.batches.get(batchId)).toMatchObject({ state: "waiting_pick", logoFree: true });
 
     const page = await json(await studio.app.request(`/api/batches/${batchId}/board`, { headers: { cookie: await sessionCookie(studio) } }));
-    expect(page.batch.state).toBe("drafting");
-    expect(page.picking).toBe("not_yet");
-    expect(await callTool(studio, "board_show", { batchId })).toEqual(refused(/drafts are not all checked.*logo_set/));
-    expect(await pick("idea-1", drafts["idea-1"]![0]!)).toEqual(refused(/owner picks when the board is ready.*drafting/));
+    expect(page.batch.state).toBe("waiting_pick");
+    expect(page.picking).toBe("open");
+    expect(await state()).toBe("waiting_pick");
+
+    const after = await callTool(studio, "board_show", { batchId });
+    expect(after.value.batch.state).toBe("waiting_pick");
+    expect(after.value.picking).toBe("open");
+    expect(after.value.ideas.map((entry: { idea: { id: string }; drafts: { image: { id: string } }[] }) => ({
+      ideaId: entry.idea.id,
+      drafts: entry.drafts.map(({ image }) => image.id),
+    }))).toEqual(before.value.ideas.map((entry: { idea: { id: string }; drafts: { image: { id: string } }[] }) => ({
+      ideaId: entry.idea.id,
+      drafts: entry.drafts.map(({ image }) => image.id),
+    })));
+    expect((await pick("idea-1", drafts["idea-1"]![0]!)).ok).toBe(true);
+    expect(await state()).toBe("waiting_pick");
+
+    const final = await render("idea-1", "final", drafts["idea-1"]![0]!);
+    expect(final.ok).toBe(true);
+    const finalBatch = await studio.services.batches.get(batchId);
+    expect(finalBatch).toMatchObject({ state: "finals", logoFree: true });
+    const finals = await studio.services.board.finals(finalBatch);
+    expect(finals.find((entry) => entry.ideaId === "idea-1")?.missing.some((missing) => missing.includes("logo_set"))).toBe(false);
   });
 
   it("refuses checks for a picture that is not a draft or a final, and from a caller that did not read the rules", async () => {

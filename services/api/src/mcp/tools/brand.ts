@@ -140,7 +140,7 @@ export function brandTools({ batches, brands, parallel, pictures, net }: BrandTo
         }
 
         for (const batch of await batches.list()) {
-          if (batch.brandId === brandId && batch.state === "done") await batches.markLogoFreeIfDone(batch.id);
+          if (batch.brandId === brandId) await batches.markLogoFree(batch.id);
         }
         const copied = await copyPicture({ url: logoUrl, folder: `brands/${brandId}`, what: "The logo" }, net, pictures);
         const { createdAt: _createdAt, ...kit } = brand;
