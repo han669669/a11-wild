@@ -164,4 +164,14 @@ describe("cubic review fixes", () => {
     expect(organizationLogo(graph, page)).toBe("https://brand.example/second.png");
     expect(siteName(graph)).toBe("Fox");
   });
+  test("prefers the largest srcset entry over a small header thumbnail src", () => {
+    const shopify = `<header><a href="/"><img src="//shop.example/cdn/shop/files/logo.png?v=1&amp;width=105" srcset="//shop.example/cdn/shop/files/logo.png?v=1&amp;width=105 105w, //shop.example/cdn/shop/files/logo.png?v=1&amp;width=150 150w, //shop.example/cdn/shop/files/logo.png?v=1&amp;width=300 300w" alt="Shop"></a></header>`;
+    expect(headerLogos(shopify, "https://shop.example/", "Shop")).toEqual([
+      { kind: "img", url: "https://shop.example/cdn/shop/files/logo.png?v=1&width=300" },
+    ]);
+    const density = `<header><a href="/"><img src="/logo-1x.png" srcset="/logo-1x.png 1x, /logo-2x.png 2x, /logo-3x.png 3x"></a></header>`;
+    expect(headerLogos(density, page, "Brand")).toEqual([{ kind: "img", url: "https://brand.example/logo-3x.png" }]);
+    const lazy = `<header><a href="/"><img src="data:image/gif;base64,R0lGOD" data-srcset="/logo-200.png 200w, /logo-800.png 800w"></a></header>`;
+    expect(headerLogos(lazy, page, "Brand")).toEqual([{ kind: "img", url: "https://brand.example/logo-800.png" }]);
+  });
 });

@@ -75,4 +75,22 @@ describe("brandExtract", () => {
     expect(result.logoCandidates).toEqual([]);
     expect(result.warnings.join(" ")).toMatch(/did not answer with an image/);
   });
+
+  it("upgrades Shopify CDN thumbnail logos to the full-size original when live, and falls back when not", async () => {
+    const shopPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="//shop.example/cdn/shop/files/logo.png?v=1&amp;width=105" srcset="//shop.example/cdn/shop/files/logo.png?v=1&amp;width=105 105w, //shop.example/cdn/shop/files/logo.png?v=1&amp;width=300 300w" alt="Brand"></a></header></body></html>`;
+    const liveFull = fakeNet({
+      "https://shop.example/": html(shopPage),
+      "https://shop.example/cdn/shop/files/logo.png?v=1": { body: "x", headers: { "content-type": "image/png" } },
+      "https://shop.example/cdn/shop/files/logo.png?v=1&width=300": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const upgraded = await brandExtract({ url: "https://shop.example/" }, liveFull);
+    expect(upgraded.logoCandidates).toEqual([{ url: "https://shop.example/cdn/shop/files/logo.png?v=1", kind: "header" }]);
+
+    const fallbackNet = fakeNet({
+      "https://shop.example/": html(shopPage),
+      "https://shop.example/cdn/shop/files/logo.png?v=1&width=300": { body: "x", headers: { "content-type": "image/png" } },
+    });
+    const kept = await brandExtract({ url: "https://shop.example/" }, fallbackNet);
+    expect(kept.logoCandidates).toEqual([{ url: "https://shop.example/cdn/shop/files/logo.png?v=1&width=300", kind: "header" }]);
+  });
 });

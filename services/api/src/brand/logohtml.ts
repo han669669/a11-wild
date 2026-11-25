@@ -138,6 +138,47 @@ export function headerLogos(html: string, pageUrl: string, brand: string): Heade
   return inHeaders.length ? inHeaders : logosIn(html.slice(0, HEAD_CHARS), pageUrl, brand);
 }
 
+/** Widest logo entry picked from a srcset when larger sizes exist. */
+const LOGO_SRCSET_MAX_W = 2000;
+
+type SrcsetEntry = { href: string; kind: "w" | "x" | "none"; value: number };
+
+/** Pick the highest-resolution usable entry from a srcset attribute (ignoring data: URIs). */
+export function largestSrcset(srcset: string | undefined): string | undefined {
+  if (!srcset) return undefined;
+  const entries: SrcsetEntry[] = decode(srcset)
+    .trim()
+    .split(/,\s+(?=\S)/)
+    .map((part) => part.trim().split(/\s+/))
+    .flatMap(([href, desc]): SrcsetEntry[] => {
+      if (!href || href.startsWith("data:")) return [];
+      const w = desc?.match(/^(\d+)w$/i);
+      if (w) return [{ href, kind: "w", value: Number.parseInt(w[1]!, 10) }];
+      const x = desc?.match(/^(\d+(?:\.\d+)?)x$/i);
+      if (x) return [{ href, kind: "x", value: Number.parseFloat(x[1]!) }];
+      return [{ href, kind: "none", value: 0 }];
+    });
+  if (!entries.length) return undefined;
+  const widths = entries.filter((e) => e.kind === "w");
+  if (widths.length) {
+    const fits = widths.filter((e) => e.value <= LOGO_SRCSET_MAX_W).sort((a, b) => b.value - a.value)[0];
+    return (fits ?? widths.sort((a, b) => a.value - b.value)[0])?.href;
+  }
+  const densities = entries.filter((e) => e.kind === "x");
+  if (densities.length) return densities.sort((a, b) => b.value - a.value)[0]?.href;
+  return entries.at(-1)?.href;
+}
+
+/** Pick the highest-resolution image address from an <img> tag, preferring srcset over thumbnail src. */
+export function bestImgSrc(imgTag: string): string | undefined {
+  return [
+    largestSrcset(attr(imgTag, "srcset")),
+    largestSrcset(attr(imgTag, "data-srcset")),
+    attr(imgTag, "data-src"),
+    attr(imgTag, "src"),
+  ].find((x) => !!x && !x.startsWith("data:"));
+}
+
 function logosIn(region: string, pageUrl: string, brand: string): HeaderLogo[] {
   const out: HeaderLogo[] = [];
   const seen = new Set<string>();
@@ -170,8 +211,8 @@ function logosIn(region: string, pageUrl: string, brand: string): HeaderLogo[] {
       } else {
         const img = rest.slice(imgAt).match(/^<img\b[^>]*>/i)?.[0] ?? "";
         pos += imgAt + Math.max(img.length, 4);
-        // A lazy-loaded logo has a data: placeholder in src and the real file in data-src or srcset.
-        const src = [attr(img, "src"), attr(img, "data-src"), (attr(img, "srcset") ?? "").split(/\s+/)[0], (attr(img, "data-srcset") ?? "").split(/\s+/)[0]].find((x) => !!x && !x.startsWith("data:"));
+        // Prefer the largest srcset entry over thumbnail src; lazy-loaded logos use data-src or data-srcset.
+        const src = bestImgSrc(img);
         if (!src) continue;
         try {
           const url = new URL(decode(src), pageUrl).toString();

@@ -1,6 +1,6 @@
 import { Refusal } from "../mcp/registry.js";
 import { isPublicHost, type Net, publicFetch, readCapped } from "../urlsafety.js";
-import { fileKey, headerLogos, organizationLogo, siteName } from "./logohtml.js";
+import { bestImgSrc, fileKey, headerLogos, organizationLogo, siteName } from "./logohtml.js";
 
 const HTML_MAX = 1_500_000;
 const CSS_MAX = 400_000;
@@ -60,6 +60,21 @@ const top = <T extends string>(counts: Map<T, number>, n: number, boost?: T | nu
 
 const LOGOS_MAX = 6;
 const PRODUCT_PAGES_MAX = 30;
+
+/** Strip Shopify CDN thumbnail resize params (`width`, `height`) to get the full-size raster logo when live. */
+function fullSizeShopifyLogo(url: string): string | null {
+  try {
+    const u = new URL(url);
+    const isShopify = u.hostname === "cdn.shopify.com" || /\/cdn\/shop\//i.test(u.pathname);
+    if (!isShopify || /\.svg$/i.test(u.pathname)) return null;
+    if (!u.searchParams.has("width") && !u.searchParams.has("height")) return null;
+    u.searchParams.delete("width");
+    u.searchParams.delete("height");
+    return u.href;
+  } catch {
+    return null;
+  }
+}
 
 /** live: a PNG, JPEG or WebP answered. svg: an SVG file answered (brand_save refuses SVG). dead: an error status or a reply that is not an image. unknown: no clear answer (a timeout keeps the logo). */
 async function probeLogo(net: Net, url: string, signal: AbortSignal): Promise<"live" | "svg" | "dead" | "unknown"> {
@@ -162,17 +177,25 @@ export async function brandExtract(input: { url: string }, net: Net) {
   let deadLogos = 0;
   let svgLogos = 0;
   const probe = async (list: typeof logoCandidates) => {
-    const states = await Promise.all(list.map((c) => probeLogo(net, c.url, probeSignal)));
-    deadLogos += states.filter((s) => s === "dead").length;
-    svgLogos += states.filter((s) => s === "svg").length;
-    return list.filter((_, i) => states[i] === "unknown" || states[i] === "live");
+    const resolved = await Promise.all(
+      list.map(async (c) => {
+        const full = fullSizeShopifyLogo(c.url);
+        if (full && (await probeLogo(net, full, probeSignal)) === "live") {
+          return { candidate: { ...c, url: full }, state: "live" as const };
+        }
+        return { candidate: c, state: await probeLogo(net, c.url, probeSignal) };
+      }),
+    );
+    deadLogos += resolved.filter((r) => r.state === "dead").length;
+    svgLogos += resolved.filter((r) => r.state === "svg").length;
+    return resolved.filter((r) => r.state === "unknown" || r.state === "live").map((r) => r.candidate);
   };
   let logos = await probe(logoCandidates.slice(0, LOGOS_MAX));
   if (!logos.length) {
     // Nothing usable from the header or the site data (or every file was dead): look for a logo-named image elsewhere on the page.
     const before = logoCandidates.length; // addLogo skips a file already listed, so what it adds is new
     for (const t of tags("img")) {
-      const src = attr(t, "src") ?? attr(t, "data-src");
+      const src = bestImgSrc(t);
       if (src && /logo/i.test(`${src} ${attr(t, "alt") ?? ""} ${attr(t, "class") ?? ""} ${attr(t, "id") ?? ""}`)) addLogo(src, "guess");
       if (logoCandidates.length - before >= 3) break;
     }
