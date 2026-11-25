@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Batch, BatchState, Idea } from "@a11-wild/shared";
 import { Refusal } from "../mcp/registry.js";
 import { type Item, record, type Table } from "../store/table.js";
-import { requireMove } from "./state.js";
+import { requireMove, StateError } from "./state.js";
 
 const PK = "BATCH";
 
@@ -47,6 +47,15 @@ export class BatchStore {
   async move(batch: Batch, to: BatchState, tool: string, fields: Partial<Pick<Batch, "spec" | "truthVersion">> = {}): Promise<Batch> {
     if (batch.state !== to) requireMove(batch, to, tool);
     const moved: Batch = { ...batch, ...fields, state: to, updatedAt: this.now().toISOString() };
+    await this.table.put({ pk: PK, sk: moved.id, ...moved });
+    return moved;
+  }
+
+  async reopenDraftingForRedo(batch: Batch): Promise<Batch> {
+    if (batch.kind === "v3" || batch.purpose === "outreach" || (batch.state !== "checked" && batch.state !== "waiting_pick")) {
+      throw new StateError("Only a checked or waiting-pick v1 or v2 batch can return to drafting for a redo.");
+    }
+    const moved: Batch = { ...batch, state: "drafting", updatedAt: this.now().toISOString() };
     await this.table.put({ pk: PK, sk: moved.id, ...moved });
     return moved;
   }

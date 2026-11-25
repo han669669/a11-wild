@@ -5,6 +5,7 @@ import type { BatchStore } from "../batch/store.js";
 import type { BrandStore } from "../brand/store.js";
 import { estimateUsd, type FalClient } from "../fal/client.js";
 import type { ImageStore } from "../images/store.js";
+import type { PickStore } from "../picks/store.js";
 import { Refusal } from "../mcp/registry.js";
 import type { Pictures } from "../pictures/store.js";
 import { GateError, type GateStage, type SpendGate } from "../spend/gate.js";
@@ -70,6 +71,7 @@ interface Deps {
   brands: BrandStore;
   images: ImageStore;
   renders: RenderStore;
+  picks: PickStore;
   ledger: SpendLedger;
   gate: SpendGate;
   fal: FalClient;
@@ -140,6 +142,9 @@ export class RenderService {
     }
     if (input.redo !== undefined && input.kind !== "draft") throw new Refusal("You can use redo only for a v1 or v2 draft, not a rough or final.");
     if (input.redo !== undefined && batch.kind === "v3") throw new Refusal("A concept ad (v3) uses draft, not redo.");
+    if (input.redo !== undefined && batch.purpose === "outreach") {
+      throw new Refusal("In an outreach batch, a draft with a warning stays pickable, so it is not made again.");
+    }
     if (input.kind === "rough" && batch.kind !== "v3") throw new Refusal("Only a batch of concept ads (v3) has roughs. A v1 or v2 batch starts with its drafts.");
     // A rough is made of any concept of the set. A draft or a final is made of an idea the batch chose.
     const idea: Idea | undefined = (input.kind === "rough" ? await batches.burst(batch.id) : await batches.ideas(batch.id)).find((saved) => saved.id === input.ideaId);
@@ -154,6 +159,12 @@ export class RenderService {
     };
 
     const [product, brand, all] = await Promise.all([brands.product(batch.productId), brands.brand(batch.brandId), renders.list(batch.id)]);
+    if (input.redo !== undefined) {
+      const picks = await this.deps.picks.all(batch.id);
+      if (picks.some((pick) => pick.ideaId === idea.id) || all.some((render) => render.kind === "final" && render.ideaId === idea.id)) {
+        throw new Refusal("The owner has already picked for this idea; a draft can no longer be made again.");
+      }
+    }
     const sent = all.filter((render) => render.kind === input.kind && live(render));
     const redone = new Set(sent.map((render) => render.redoOf));
     // A draft that was made again does not count: its redo stands in its place.
@@ -166,6 +177,7 @@ export class RenderService {
     let rough: BatchImage | undefined;
     let directionVersion: number | undefined;
     let redoOf: string | undefined;
+    let readyRedo = false;
 
     if (input.kind === "rough") {
       if (!["ideas", "reviewed"].includes(batch.state)) requireMove(batch, "ideas", "render_submit");
@@ -178,7 +190,8 @@ export class RenderService {
       }
       count = ROUGHS_PER_BATCH;
     } else if (input.kind === "draft") {
-      if (![draftsFrom(batch), "priced", "waiting_spend", "drafting"].includes(batch.state)) {
+      readyRedo = input.redo !== undefined && (batch.state === "checked" || batch.state === "waiting_pick");
+      if (![draftsFrom(batch), "priced", "waiting_spend", "drafting"].includes(batch.state) && !readyRedo) {
         // An ad with words waits for the owner's yes to them: no draft is paid for before it.
         if (batch.state === "judged" || (batch.kind === "v3" && batch.state === "worded")) throw new StateError(`render_submit cannot run yet: the batch is at "${batch.state}". The step that is missing: ${stepAfter(batch)}.`);
         requireMove(batch, "drafting", "render_submit");
@@ -283,6 +296,7 @@ export class RenderService {
       const billed = billedOf(all, input.kind);
       const usedMicro = billed.micro + sent.reduce((sum, render) => sum + render.reservation.micro, 0);
       batch = await this.passGate(batch, input.kind, sent, { usedMicro, micro: toMicro(usd), billed });
+      if (readyRedo) batch = await batches.reopenDraftingForRedo(batch);
       reservation = await ledger.reserve({ service: "fal", kind: input.kind, ref: `${idea.id}: ${idea.title}`, batchId: batch.id, usd });
     } catch (error) {
       if (input.kind === "rough") await renders.releaseRough(batch.id, idea.id);

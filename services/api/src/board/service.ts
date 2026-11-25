@@ -287,7 +287,16 @@ export class BoardService implements FinalRule {
       const [brand, product] = await Promise.all([brands.brand(batch.brandId), brands.product(batch.productId)]);
       const hasPack = product.photos.some((photo) => photo.kind === "pack");
       const hasLogo = Boolean(brand.logo);
-      const [found, all, drafts, ranks] = await Promise.all([checks.all(batch.id), this.deps.images.list(batch.id), this.sent(batch.id, "draft"), critic.ranks(batch.id)]);
+      const [found, all, drafts, ranks, renders] = await Promise.all([
+        checks.all(batch.id),
+        this.deps.images.list(batch.id),
+        this.sent(batch.id, "draft"),
+        critic.ranks(batch.id),
+        this.deps.renders.list(batch.id),
+      ]);
+      if (renders.some((render) => render.kind === "draft" && render.redoOf && render.status !== "done" && render.status !== "failed")) {
+        missing.push("a queued draft redo to finish");
+      }
       const approved = hasWords(batch.kind) ? await this.deps.copy.list(batch.id) : [];
       const ideas = await batches.ideas(batch.id);
       // An outreach batch too owes the drafts of every idea the critic kept: the owner picks among all of them.
@@ -480,7 +489,8 @@ export class BoardService implements FinalRule {
     const image = await images.get(batchId, imageId);
     const counted = countedOf(image, all);
     // A draft of an ad with words is judged with its words on: a composition that cannot hold them is rejected too.
-    const words = hasWords((await batches.get(batchId)).kind) ? typesetOf(counted, all, (await copy.list(batchId)).find((entry) => entry.ideaId === image.ideaId)) : undefined;
+    const batch = await batches.get(batchId);
+    const words = hasWords(batch.kind) ? typesetOf(counted, all, (await copy.list(batchId)).find((entry) => entry.ideaId === image.ideaId)) : logoOf(counted, all);
     for (const found of [await checks.get(batchId, counted.id), words ? await checks.get(batchId, words.id) : undefined]) {
       const defect = defectOf(found);
       if (defect) return `${defect.code} (${defect.note})`;

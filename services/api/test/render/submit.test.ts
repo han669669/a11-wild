@@ -4,7 +4,7 @@ import { RenderStore } from "../../src/render/store.js";
 import { DRAFTS_PER_IDEA } from "../../src/render/service.js";
 import { RULES_VERSION } from "../../src/houserules.js";
 import { MADE_BEFORE } from "../../src/made/count.js";
-import { batchAtTruth, idea, judgeIdeas } from "../helpers/batch.js";
+import { batchAtTruth, idea, judgeIdeas, rankDrafts, readTaste, savedProduct, sheet } from "../helpers/batch.js";
 import { approvedClient, callTool, createStudio, type Studio } from "../helpers/deps.js";
 import type { FalCall } from "../helpers/fal.js";
 
@@ -15,11 +15,21 @@ let studio: Studio;
 let batchId: string;
 
 /** A batch with its three ideas saved. With `pack`, the product has a pack photo, so drafts need skeletons. */
-async function batchAtIdeas(options: { fal?: (call: FalCall) => ReturnType<NonNullable<Parameters<typeof createStudio>[0]>["fal"] & object> | undefined; pack?: boolean } = {}) {
+async function batchAtIdeas(options: { fal?: (call: FalCall) => ReturnType<NonNullable<Parameters<typeof createStudio>[0]>["fal"] & object> | undefined; pack?: boolean; purpose?: "outreach" } = {}) {
   studio = await createStudio(options.fal ? { fal: options.fal } : {});
   await approvedClient(studio);
-  const made = await batchAtTruth(studio);
-  batchId = made.batchId;
+  let made: Awaited<ReturnType<typeof batchAtTruth>>;
+  if (options.purpose) {
+    const { brand, product } = await savedProduct(studio);
+    const batch = await studio.services.batches.create({ kind: "v1", brandId: brand.id, productId: product.id, format: "static_4x5", createdBy: "owner@example.com", purpose: options.purpose });
+    batchId = batch.id;
+    await callTool(studio, "truth_save", { batchId, ...sheet });
+    await readTaste(studio, batchId);
+    made = { batchId, brand, product };
+  } else {
+    made = await batchAtTruth(studio);
+    batchId = made.batchId;
+  }
   if (options.pack) {
     await studio.services.brands.saveProduct({ ...made.product, photos: [...made.product.photos, { key: "products/p/pack.png", sourceUrl: "https://cdn.wongi.example/pack.png", kind: "pack" }] });
   }
@@ -37,6 +47,23 @@ const doneDraft = async (extra: object = {}) => {
   if (!done.ok) throw new Error(done.error);
   return { renderId: sent.value.id as string, imageId: done.value.image.id as string };
 };
+async function readyBoard(leaveLastMissing = false) {
+  const drafts: { ideaId: string; renderId: string; imageId: string }[] = [];
+  for (const ideaId of ["idea-1", "idea-2", "idea-3"]) {
+    for (let n = 0; n < DRAFTS_PER_IDEA; n++) drafts.push({ ideaId, ...(await doneDraft({ ideaId })) });
+  }
+  for (const [index, draft] of drafts.entries()) {
+    if (leaveLastMissing && index === drafts.length - 1) continue;
+    await callTool(studio, "checks_save", {
+      rulesVersion: RULES_VERSION,
+      batchId,
+      imageId: draft.imageId,
+      items: index === 0 || index === DRAFTS_PER_IDEA ? [{ code: "D11", note: "The pouch is too tall." }] : [],
+    });
+  }
+  await rankDrafts(studio, batchId);
+  return drafts;
+}
 
 beforeEach(() => batchAtIdeas());
 
@@ -161,6 +188,124 @@ describe("render_submit", () => {
     expect(await draft({ redo: sent.value.id })).toEqual(refused(/A draft can be made again only once/));
     expect(await draft({ redo: first.renderId })).toEqual(refused(/not a live draft of this idea/));
     expect(studio.fal.submits()).toHaveLength(2);
+  });
+
+  it("allows a rejected redo from checked and waiting_pick, then requires checks and a fresh rank", async () => {
+    const initial = await readyBoard();
+    expect(await state()).toBe("checked");
+    const first = initial[0]!;
+    const sent = await draft({ redo: first.renderId });
+    if (!sent.ok) throw new Error(sent.error);
+    expect(await state()).toBe("drafting");
+    const done = await callTool(studio, "render_status", { batchId, renderId: sent.value.id });
+    await callTool(studio, "checks_save", { rulesVersion: RULES_VERSION, batchId, imageId: done.value.image.id, items: [] });
+    expect(await state()).toBe("drafting");
+    await rankDrafts(studio, batchId);
+    expect(await state()).toBe("checked");
+
+    await callTool(studio, "board_show", { batchId });
+    const waitingPickRedo = await draft({ ideaId: "idea-2", redo: initial[DRAFTS_PER_IDEA]!.renderId });
+    expect(waitingPickRedo.ok).toBe(true);
+    expect(await state()).toBe("drafting");
+  });
+
+  it("refuses a ready-board redo after the owner has picked that idea", async () => {
+    const initial = await readyBoard();
+    await callTool(studio, "board_show", { batchId });
+    await callTool(studio, "pick_save", { batchId, ideaId: "idea-1", imageId: initial[0]!.imageId, ownerSaid: "This is the one." });
+    expect(await draft({ redo: initial[0]!.renderId })).toEqual(refused(/The owner has already picked for this idea; a draft can no longer be made again/));
+  });
+
+  it("refuses a ready-board redo when a final already exists for the idea", async () => {
+    const initial = await readyBoard();
+    await callTool(studio, "board_show", { batchId });
+    const original = await studio.services.renders.get(batchId, initial[0]!.renderId);
+    await studio.services.renders.create({
+      batchId,
+      ideaId: "idea-1",
+      kind: "final",
+      prompt: SCENE,
+      usd: original.usd,
+      fal: original.fal,
+      reservation: original.reservation,
+      stageCount: original.stageCount,
+    });
+    expect(await draft({ redo: initial[0]!.renderId })).toEqual(refused(/The owner has already picked for this idea; a draft can no longer be made again/));
+  });
+
+  it("holds drafting for a queued redo and requires checks and a fresh rank when it finishes", async () => {
+    const initial = await readyBoard(true);
+    const redo = await draft({ redo: initial[0]!.renderId });
+    if (!redo.ok) throw new Error(redo.error);
+    await callTool(studio, "checks_save", { rulesVersion: RULES_VERSION, batchId, imageId: initial.at(-1)!.imageId, items: [] });
+    expect(await state()).toBe("drafting");
+    const done = await callTool(studio, "render_status", { batchId, renderId: redo.value.id });
+    expect(done.value.status).toBe("done");
+    await callTool(studio, "checks_save", { rulesVersion: RULES_VERSION, batchId, imageId: done.value.image.id, items: [] });
+    expect(await state()).toBe("drafting");
+    await rankDrafts(studio, batchId);
+    expect(await state()).toBe("checked");
+  });
+
+  it("releases the board hold when a queued redo fails", async () => {
+    const initial = await readyBoard(true);
+    const redo = await draft({ redo: initial[0]!.renderId });
+    if (!redo.ok) throw new Error(redo.error);
+    const queued = await studio.services.renders.get(batchId, redo.value.id);
+    await studio.services.renders.end(queued, { status: "failed", error: "The render failed." });
+    await callTool(studio, "checks_save", { rulesVersion: RULES_VERSION, batchId, imageId: initial.at(-1)!.imageId, items: [] });
+    expect(await state()).toBe("checked");
+  });
+
+  it("uses logo-stamped checks to allow a redo for either one D or two F items", async () => {
+    for (const items of [
+      [{ code: "F1", note: "The logo crowds the product." }, { code: "F2", note: "The logo crowds the product." }],
+      [{ code: "D11", note: "The logo crowds the product." }],
+    ]) {
+      const first = await doneDraft();
+      await callTool(studio, "checks_save", { rulesVersion: RULES_VERSION, batchId, imageId: first.imageId, items: [] });
+      const batch = await studio.services.batches.get(batchId);
+      const brand = await studio.services.brands.brand(batch.brandId);
+      await studio.services.brands.saveBrand({ ...brand, logo: { key: "brands/b/logo.png", sourceUrl: "https://cdn.wongi.example/logo.png" } });
+      const set = await callTool(studio, "logo_set", { rulesVersion: RULES_VERSION, batchId, imageId: first.imageId });
+      const logo = await callTool(studio, "pixel_status", { batchId, jobId: set.value.id });
+      await callTool(studio, "checks_save", { rulesVersion: RULES_VERSION, batchId, imageId: logo.value.image.id, items });
+      expect((await draft({ redo: first.renderId })).ok).toBe(true);
+      await batchAtIdeas();
+    }
+  });
+
+  it("refuses v1 and v2 redos in outreach batches", async () => {
+    await batchAtIdeas({ purpose: "outreach" });
+    const first = await doneDraft();
+    await callTool(studio, "checks_save", { rulesVersion: RULES_VERSION, batchId, imageId: first.imageId, items: [{ code: "D11", note: "The pouch is too tall." }] });
+    expect(await draft({ redo: first.renderId })).toEqual(refused(/In an outreach batch, a draft with a warning stays pickable, so it is not made again/));
+  });
+
+  it("allows a v2 redo rejected on its approved typeset picture and reuses its skeleton", async () => {
+    const made = await batchAtTruth(studio, { kind: "v2" });
+    batchId = made.batchId;
+    await studio.services.brands.saveProduct({
+      ...made.product,
+      photos: [...made.product.photos, { key: "products/p/pack.png", sourceUrl: "https://cdn.wongi.example/pack.png", kind: "pack" }],
+    });
+    const stages = ["tof", "mof", "bof"] as const;
+    const ideas = [1, 2, 3].map((n) => ({ id: `idea-${n}`, ...idea(n, { stage: stages[n - 1] }) }));
+    await studio.services.batches.saveIdeas(batchId, ideas, "owner");
+    const atIdeas = await studio.services.batches.move(await studio.services.batches.get(batchId), "ideas", "ideas_save");
+    await studio.services.batches.move(atIdeas, "judged", "critic_select");
+    await callTool(studio, "copy_approve", {
+      rulesVersion: RULES_VERSION,
+      batchId,
+      ideas: ideas.map(({ id }) => ({ ideaId: id, headline: "ONCE YOU START.", subline: "You cannot stop.", ownerSaid: "Yes, those words." })),
+    });
+    const skeletonId = await skeleton(1);
+    const first = await doneDraft({ fromId: skeletonId });
+    const typeset = await studio.services.images.add({ batchId, kind: "typeset", key: `batches/${batchId}/words.png`, fromId: first.imageId });
+    await callTool(studio, "checks_save", { rulesVersion: RULES_VERSION, batchId, imageId: typeset.id, items: [{ code: "D11", note: "The headline crowds the pouch." }] });
+    const redo = await draft({ redo: first.renderId, fromId: skeletonId });
+    expect(redo.ok).toBe(true);
+    expect(redo.value.fromId).toBe(skeletonId);
   });
 
   it("refuses a redo id from another idea", async () => {
