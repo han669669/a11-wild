@@ -44,7 +44,7 @@ describe("MCP server", () => {
   it("lists each tool with the JSON Schema of the input it accepts", async () => {
     const { body } = await send(rpc("tools/list"));
     const tools = Object.fromEntries(body.result.tools.map((tool: { name: string }) => [tool.name, tool]));
-    expect(Object.keys(tools)).toEqual(expect.arrayContaining(["rules_get", "whoami", "studio_status"]));
+    expect(Object.keys(tools)).toEqual(expect.arrayContaining(["rules_get", "whoami", "studio_status", "brand_logo_save"]));
     expect(tools.rules_get.inputSchema).toMatchObject({
       type: "object",
       required: ["role", "kind"],

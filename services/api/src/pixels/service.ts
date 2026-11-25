@@ -318,7 +318,7 @@ export class PixelService {
     const on = root.kind === "final" ? finishOf(counted, all) : counted;
     if (!on) throw new Refusal(`The logo goes on a final after its real-camera finish. Run photo_finish on picture ${counted.id} first.`);
     const brand = await brands.brand(batch.brandId);
-    if (!brand.logo) throw new Refusal("This brand has no saved logo. Save one with brand_save first.");
+    if (!brand.logo) throw new Refusal("This brand has no saved logo. Use brand_logo_save to add one from its brand_extract candidates.");
     const picked = root.kind === "final" && root.fromId ? await this.setAs(input.batchId, root.fromId, all) : undefined;
     const how = picked ?? {
       logoKey: brand.logo.key,
@@ -350,7 +350,7 @@ export class PixelService {
     if (input.subFamily && !sub) {
       throw new Refusal(`The studio holds no font file of "${input.subFamily}" for this brand. Save it with font_save, or leave subFamily out and the subline takes the headline font.`);
     }
-    if (input.logo && !brand.logo) throw new Refusal("This brand has no saved logo. Save one with brand_save, or send logo false and tell the owner the ad has no logo yet.");
+    if (input.logo && !brand.logo) throw new Refusal("This brand has no saved logo. Use brand_logo_save to add one from its brand_extract candidates, or send logo false and tell the owner the ad has no logo yet.");
     return {
       ...(concept ? lockupLayout(concept.lockup, concept.ideaId, input.layout) : input.layout),
       fontKey: font.key,
