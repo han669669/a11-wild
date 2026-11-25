@@ -74,6 +74,7 @@ function fullSizeShopifyLogo(url: string): string | null {
     const isShopify = u.hostname === "cdn.shopify.com" || /\/cdn\/shop\//i.test(u.pathname);
     if (!isShopify) return null;
     if (/\.svg$/i.test(u.pathname)) {
+      u.searchParams.delete("height");
       u.searchParams.set("width", "1000");
       u.searchParams.set("format", "png");
       return u.href;
