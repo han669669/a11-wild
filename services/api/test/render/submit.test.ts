@@ -239,6 +239,12 @@ describe("render_submit", () => {
     const redo = await draft({ redo: initial[0]!.renderId });
     if (!redo.ok) throw new Error(redo.error);
     await callTool(studio, "checks_save", { rulesVersion: RULES_VERSION, batchId, imageId: initial.at(-1)!.imageId, items: [] });
+    await rankDrafts(studio, batchId);
+
+    const held = await studio.services.board.progress(await studio.services.batches.get(batchId));
+    expect(held.batch.state).toBe("drafting");
+    expect(held.missing).toContain("a queued draft redo to finish");
+
     expect(await state()).toBe("drafting");
     const done = await callTool(studio, "render_status", { batchId, renderId: redo.value.id });
     expect(done.value.status).toBe("done");
