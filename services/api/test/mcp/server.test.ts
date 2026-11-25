@@ -106,10 +106,13 @@ describe("MCP server", () => {
     expect(text.indexOf("which brand")).toBeLessThan(text.indexOf("Step 1."));
     expect(text.indexOf("which product")).toBeLessThan(text.indexOf("Step 1."));
     expect(text).toContain(
+      "measure them again and save each final's D and F checks with checks_save using the final's id, run photo_finish,",
+    );
+    expect(text).toContain(
       "Look at each stamped final and save its D and F checks with checks_save using the stamped picture's id.",
     );
     expect(text).toContain(
-      "A batch that batch_get marks logoFree: true skips logo_set and this stamped check; its final's own checks stand.",
+      "A batch that batch_get marks logoFree: true skips logo_set and the stamped check; the final's own checks stand.",
     );
     expect(text).toContain("A draft whose checks reject it (a D item, or two F items) may be made again once now with render_submit redo; check the new draft, then rank.");
 

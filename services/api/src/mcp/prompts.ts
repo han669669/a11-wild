@@ -28,7 +28,7 @@ Step 6. Spend gate. Send one draft first to read the real price. Under US$1 for 
 
 Step 7. Show. Show the logo-stamped drafts with no words, numbered 1 to 3 with no rank, each beside its truth sheet. Give the result first.
 
-Step 8. Stop. The owner picks. Then make the finals under the same spend gate, measure them again, run photo_finish, and set the logo with logo_set (the studio repeats the picked draft's exact placement). Look at each stamped final and save its D and F checks with checks_save using the stamped picture's id. A batch that batch_get marks logoFree: true skips logo_set and this stamped check; its final's own checks stand. Call batch_done: it says which of his conditions hold, and lists what remains for the stranger test. He runs that test himself.
+Step 8. Stop. The owner picks. Then make the finals under the same spend gate, measure them again and save each final's D and F checks with checks_save using the final's id, run photo_finish, and set the logo with logo_set (the studio repeats the picked draft's exact placement). Look at each stamped final and save its D and F checks with checks_save using the stamped picture's id. A batch that batch_get marks logoFree: true skips logo_set and the stamped check; the final's own checks stand. Call batch_done: it says which of his conditions hold, and lists what remains for the stranger test. He runs that test himself.
 
 Last step. Learn. Write down what the batch taught you (learn). Save what the owner chose for this brand in his words (brand_note). If a rule should change, propose it (canon_propose) and show him; it is not in use until his yes.
 
