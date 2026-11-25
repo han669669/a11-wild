@@ -77,6 +77,41 @@ describe("brandExtract", () => {
     expect(result.warnings.join(" ")).toMatch(/did not answer with an image/);
   });
 
+  it("offers a live Shopify PNG rendition of an SVG logo", async () => {
+    const page = `<!doctype html><html><head><title>Shop</title></head><body><header><img src="//example-shop.com/cdn/shop/files/logo.svg?v=1" alt="Brand logo"></header></body></html>`;
+    const pngUrl = "https://example-shop.com/cdn/shop/files/logo.svg?v=1&width=1000&format=png";
+    const net = fakeNet({
+      "https://example-shop.com/": html(page),
+      [pngUrl]: { body: "x", headers: { "content-type": "image/png" } },
+      "https://example-shop.com/cdn/shop/files/logo.svg?v=1": { body: "<svg/>", headers: { "content-type": "image/svg+xml" } },
+    });
+    const result = await brandExtract({ url: "https://example-shop.com/" }, net);
+    expect(result.logoCandidates).toEqual([{ url: pngUrl, kind: "header" }]);
+    expect(result.warnings.join(" ")).not.toMatch(/The logo the site names is an SVG file/);
+  });
+
+  it("keeps the SVG warning when a Shopify PNG rendition still answers as SVG", async () => {
+    const page = `<!doctype html><html><head><title>Shop</title></head><body><header><img src="//example-shop.com/cdn/shop/files/logo.svg?v=1" alt="Brand logo"></header></body></html>`;
+    const net = fakeNet({
+      "https://example-shop.com/": html(page),
+      "https://example-shop.com/cdn/shop/files/logo.svg?v=1&width=1000&format=png": { body: "<svg/>", headers: { "content-type": "image/svg+xml" } },
+      "https://example-shop.com/cdn/shop/files/logo.svg?v=1": { body: "<svg/>", headers: { "content-type": "image/svg+xml" } },
+    });
+    const result = await brandExtract({ url: "https://example-shop.com/" }, net);
+    expect(result.logoCandidates).toEqual([]);
+    expect(result.warnings.join(" ")).toMatch(/The logo the site names is an SVG file/);
+  });
+
+  it("does not offer a non-Shopify SVG logo", async () => {
+    const page = `<!doctype html><html><head><title>Brand</title></head><body><header><img src="/assets/logo.svg" alt="Brand logo"></header></body></html>`;
+    const net = fakeNet({
+      "https://example-brand.com/": html(page),
+      "https://example-brand.com/assets/logo.svg": { body: "<svg/>", headers: { "content-type": "image/svg+xml" } },
+    });
+    const result = await brandExtract({ url: "https://example-brand.com/" }, net);
+    expect(result.logoCandidates).toEqual([]);
+  });
+
   it("upgrades Shopify CDN thumbnail logos to the full-size original when live, and falls back when not", async () => {
     const shopPage = `<!doctype html><html><head><title>Brand</title></head><body><header><a href="/"><img src="//shop.example/cdn/shop/files/logo.png?v=1&amp;width=105" srcset="//shop.example/cdn/shop/files/logo.png?v=1&amp;width=105 105w, //shop.example/cdn/shop/files/logo.png?v=1&amp;width=300 300w" alt="Brand"></a></header></body></html>`;
     const liveFull = fakeNet({

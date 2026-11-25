@@ -64,15 +64,20 @@ const PRODUCT_PAGES_MAX = 30;
 
 /** Raster MIME types (including legacy PNG/JPEG aliases and APNG) that copyPicture accepts. */
 const SAVABLE_RASTER_MIME = new Set(["image/png", "image/x-png", "image/apng", "image/jpeg", "image/jpg", "image/pjpeg", "image/webp"]);
-/** Extensions that copyPicture cannot store; deprioritised behind likely-savable URLs when probing fallbacks. */
+/** Extensions that are usually not savable; deprioritised behind likely-savable URLs when probing fallbacks. */
 const UNSAVABLE_EXT = /\.(?:svg|avif|gif)(?:[?#]|$)/i;
 
-/** Strip Shopify CDN thumbnail resize params (`width`, `height`) to get the full-size raster logo when live. */
+/** Get the full-size Shopify raster logo, or request a 1000px PNG rendition for an SVG. */
 function fullSizeShopifyLogo(url: string): string | null {
   try {
     const u = new URL(url);
     const isShopify = u.hostname === "cdn.shopify.com" || /\/cdn\/shop\//i.test(u.pathname);
-    if (!isShopify || /\.svg$/i.test(u.pathname)) return null;
+    if (!isShopify) return null;
+    if (/\.svg$/i.test(u.pathname)) {
+      u.searchParams.set("width", "1000");
+      u.searchParams.set("format", "png");
+      return u.href;
+    }
     if (!u.searchParams.has("width") && !u.searchParams.has("height")) return null;
     u.searchParams.delete("width");
     u.searchParams.delete("height");
@@ -215,7 +220,7 @@ export async function brandExtract(input: { url: string }, net: Net) {
     else inlineSvgLogo = true;
   }
   addLogo(organizationLogo(html, base), "organization");
-  // Each logo file must still answer with a raster image. A dead file is left out; an SVG file is left out and counted (brand_save refuses SVG); a timeout keeps it.
+  // Each logo must answer with a raster image. Shopify SVGs are probed as PNG renditions first; SVG answers are left out and counted.
   const probeSignal = AbortSignal.timeout(10_000);
   let deadLogos = 0;
   let svgLogos = 0;
