@@ -50,6 +50,15 @@ export function labelNumbers(label: string | undefined): string[] {
   return [...found];
 }
 
+export function labelContactNumbers(label: string | undefined): string[] {
+  return labelNumbers(label).filter((candidate) => {
+    const digits = candidate.replace(/\D/g, "");
+    const international = candidate.startsWith("+") && digits.length >= 10 && digits.length <= 15;
+    const local = !candidate.includes("+") && /^[689]\d{7}$/.test(digits);
+    return international || local;
+  });
+}
+
 /** Parses the list's best-route label. A value that is not understood is not a route. */
 export function routeOf(value: string | undefined): ProspectRoute | undefined {
   const label = value?.trim();

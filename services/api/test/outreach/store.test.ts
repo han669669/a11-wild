@@ -83,7 +83,7 @@ describe("the outreach store", () => {
 
   it("registers numbers inside ambiguous route labels for opt-outs", async () => {
     const label = "WhatsApp +6580000001 (9-5)";
-    await loadRows(store, [row(1, { secondRoute: label })], now);
+    await loadRows(store, [row(1, { whatsapp: undefined, secondRoute: label })], now);
     const profile = await store.get("00001");
     expect(profile.second).toBeUndefined();
     expect(contactKeys(profile)).toContain("W#6580000001");
@@ -91,6 +91,37 @@ describe("the outreach store", () => {
     await store.addEvent(profile.id, { type: "optout" }, "owner");
     await store.addOptOut(await store.get(profile.id));
     expect(await store.optOuts()).toContain("W#6580000001");
+  });
+
+  it("keeps parenthesised phone routes distinct when one opts out", async () => {
+    await loadRows(store, [
+      row(1, { whatsapp: undefined, secondRoute: "WhatsApp +65 (8123) 4567 (verified business)" }),
+      row(2, { whatsapp: undefined, secondRoute: "WhatsApp +65 (9123) 4567 (verified business)" }),
+    ], now);
+    const first = await store.get("00001");
+    const second = await store.get("00002");
+    expect(contactKeys(first)).toContain("W#6581234567");
+    expect(contactKeys(second)).toContain("W#6591234567");
+
+    await store.addEvent(first.id, { type: "optout" }, "owner");
+    await store.addOptOut(await store.get(first.id));
+    const optOuts = await store.optOuts();
+    expect(stageOf({ profile: second, ads: [], sends: [], events: [] }, optOuts)).toBe("new");
+  });
+
+  it("does not opt out different numbers because route labels share a date note", async () => {
+    await loadRows(store, [
+      row(1, { whatsapp: undefined, secondRoute: "WhatsApp +6580000001 (checked 26-11-2026)" }),
+      row(2, { whatsapp: undefined, secondRoute: "WhatsApp +6580000002 (checked 26-11-2026)" }),
+    ], now);
+    const first = await store.get("00001");
+    const second = await store.get("00002");
+    await store.addEvent(first.id, { type: "optout" }, "owner");
+    await store.addOptOut(await store.get(first.id));
+    const optOuts = await store.optOuts();
+
+    expect(optOuts).not.toContain("W#26112026");
+    expect(stageOf({ profile: second, ads: [], sends: [], events: [] }, optOuts)).toBe("new");
   });
 
   it("removes a test prospect with all its items, and refuses for a prospect of the list", async () => {

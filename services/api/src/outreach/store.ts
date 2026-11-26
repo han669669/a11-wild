@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { OutreachAd, OutreachEvent, OutreachEventBody, OutreachSend, OutreachStep, Prospect, ProspectFile } from "@a11-wild/shared";
 import { Refusal } from "../mcp/registry.js";
 import { type Item, record, type Table } from "../store/table.js";
-import { labelNumbers } from "./routes.js";
+import { labelContactNumbers } from "./routes.js";
 
 /**
  * Every outreach item sits in one partition, in order by prospect: the profile, then its ads, then its events, then its sends.
@@ -49,8 +49,8 @@ export const contactKeys = (profile: Prospect, sends: readonly Pick<OutreachSend
   email(profile.dmEmail);
   route(profile.route);
   route(profile.second);
-  labelNumbers(profile.bestRoute).forEach(number);
-  labelNumbers(profile.secondRoute).forEach(number);
+  labelContactNumbers(profile.bestRoute).forEach(number);
+  labelContactNumbers(profile.secondRoute).forEach(number);
   for (const send of sends) {
     if (send.channel === "email") email(send.to);
     else number(send.to);
