@@ -5,7 +5,6 @@ import { address, numbers } from "./load.js";
 const EMAIL_IN_NOTE = new RegExp(EMAIL_IN_TEXT.source, EMAIL_IN_TEXT.flags.replace("g", ""));
 const PHONE_IN_NOTE = /\+?\d[\d().\s-]{5,}\d/;
 const PHONE_CANDIDATE = /\+?\d(?:[\d\s.-]|\([\d\s.-]*\d\))*(?:\d|\([\d\s.-]*\d\))/g;
-const PLAIN_PHONE_CANDIDATE = /\+?\d[\d\s.-]*\d/g;
 const PHONE_ROUTE_LABEL = /^(DM phone|Phone|WhatsApp)\s+(.+)$/i;
 
 export const trailingBracketGroup = (value: string): { prefix: string; content: string } | undefined => {
@@ -79,13 +78,21 @@ const numberFrom = (value: string): string | undefined => {
 
 const candidateKeysFrom = (text: string): string[] => {
   const keys = new Set<string>();
-  for (const pattern of [PHONE_CANDIDATE, PLAIN_PHONE_CANDIDATE]) {
-    for (const match of text.match(pattern) ?? []) {
-      const parts = /^\d{8}\s+\d{8}$/.test(match) ? match.split(/\s+/) : [match];
-      for (const part of parts) {
-        const key = numberKey(part);
-        if (key.length >= 10 && key.length <= 15) keys.add(`W#${key}`);
-      }
+  const add = (value: string) => {
+    const parts = /^\d{8}\s+\d{8}$/.test(value) ? value.split(/\s+/) : [value];
+    for (const part of parts) {
+      const key = numberKey(part);
+      if (key.length >= 10 && key.length <= 15) keys.add(`W#${key}`);
+    }
+  };
+  for (const match of text.match(PHONE_CANDIDATE) ?? []) {
+    add(match);
+    let current = match;
+    while (current.endsWith(")")) {
+      const stripped = current.replace(/\s*\([^)]*\)$/, "").trimEnd();
+      if (stripped === current || !stripped) break;
+      add(stripped);
+      current = stripped;
     }
   }
   return [...keys];
