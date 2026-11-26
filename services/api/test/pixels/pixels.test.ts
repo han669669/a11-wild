@@ -93,19 +93,21 @@ describe("skeleton_make", () => {
       },
     });
     expect(made.value.image).toMatchObject({ kind: "skeleton", pack: "pack-2" });
-    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key });
+    expect(studio.pixels.events.at(-1)!.input).not.toHaveProperty("packKey");
 
     const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
     const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
     await run("pack_check", { imageId, at: [512, 900], bg: "E83C28" });
-    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, cutout: { darkMax: 45, edges: "left" } });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, cutout: { darkMax: 45, edges: "left" }, pack: 1 });
+    await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", pack: 1 });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, cutout: { darkMax: 45, edges: "left" }, pack: 1 });
     await run("product_swap", { imageId, old: [400, 620, 500, 1100] });
-    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, cutout: { darkMax: 45, edges: "left" } });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, cutout: { darkMax: 45, edges: "left" }, pack: 1 });
     await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", photo: "pack-2" });
-    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, cutout: { darkMax: 45, edges: "left" } });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, cutout: { darkMax: 45, edges: "left" }, pack: 1 });
   });
 
-  it("keeps the default pack for a plan made only from food photos", async () => {
+  it("refuses a pack check or swap when a plan has only food photos", async () => {
     await start();
     const made = await skeleton("idea-1", {
       plan: {
@@ -119,13 +121,15 @@ describe("skeleton_make", () => {
     const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
     const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
 
-    await run("pack_check", { imageId, at: [512, 900], bg: "E83C28" });
-    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK });
-    await expect(studio.services.pixels.packCheck({ batchId, imageId, at: [512, 900], bg: "E83C28", sideways: false, photo: "food-1" })).rejects.toThrow(
-      /This picture's skeleton did not use pack photo food-1/,
+    expect(await run("pack_check", { imageId, at: [512, 900], bg: "E83C28" })).toEqual(
+      refused(/This picture's plan has no pack 1/),
     );
-    await run("product_swap", { imageId, old: [400, 620, 500, 1100] });
-    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK });
+    expect(await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", photo: "pack-1" })).toEqual(
+      refused(/This picture did not use pack photo pack-1/),
+    );
+    expect(await run("product_swap", { imageId, old: [400, 620, 500, 1100] })).toEqual(
+      refused(/This picture's plan has no pack 1/),
+    );
   });
 
   it("uses the numbered plan item's pack and box", async () => {
@@ -196,6 +200,10 @@ describe("skeleton_make", () => {
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box: jarBox, cutout: { darkMax: 35 }, pack: 1 });
     await run("pack_check", { imageId, at: [700, 900], bg: "E83C28", pack: 2, photo: "pack-2" });
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, box: boxBox, cutout: { darkMax: 65 }, pack: 2 });
+    await run("pack_check", { imageId, at: [700, 900], bg: "E83C28", photo: "pack-2" });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, box: boxBox, cutout: { darkMax: 65 }, pack: 2 });
+    await run("product_swap", { imageId, old: [600, 620, 700, 1100], pack: 2 });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, box: boxBox, cutout: { darkMax: 65 }, pack: 2 });
     expect(await run("pack_check", { imageId, at: [900, 900], bg: "E83C28", pack: 3 })).toEqual(
       refused(/This picture's plan has no pack 3\./),
     );
@@ -261,10 +269,10 @@ describe("skeleton_make", () => {
     const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
     const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
     expect(await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", photo: "pack-3" })).toEqual(
-      refused(/This picture's skeleton did not use pack photo pack-3/),
+      refused(/This picture did not use pack photo pack-3/),
     );
     expect(await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", photo: "pack-1" })).toEqual(
-      refused(/This picture's skeleton did not use pack photo pack-1/),
+      refused(/This picture did not use pack photo pack-1/),
     );
   });
 
@@ -291,6 +299,36 @@ describe("skeleton_make", () => {
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key });
   });
 
+  it("keeps render pack references when it reaches a skeleton", async () => {
+    await start(undefined, fakeNet({ [PACK_TWO_URL]: { body: PNG, headers: { "content-type": "image/png" } } }));
+    const packTwo = await appendPackTwo();
+    const made = await skeleton("idea-1", {
+      pack: "pack-1",
+      box: [40, 50, 640, 750],
+      cutout: { darkMax: 25, edges: "right" },
+      plan: {
+        bg: "E83C28",
+        products: [{ cx: 0.5, base: 0.9, height: 0.45 }],
+      },
+    });
+    const sent = await callTool(studio, "render_submit", {
+      ...rules,
+      batchId,
+      ideaId: "idea-1",
+      kind: "draft",
+      prompt: SCENE,
+      fromId: made.value.image.id,
+      references: ["pack-2"],
+    });
+    const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
+
+    await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", photo: "pack-2" });
+    const input = studio.pixels.events.at(-1)!.input;
+    expect(input).toMatchObject({ packKey: packTwo.key, pack: 1 });
+    expect(input).not.toHaveProperty("cutout");
+    expect(input).not.toHaveProperty("box");
+  });
+
   it("checks any pack photo named by a skeleton-free render", async () => {
     await start(undefined, fakeNet({ [PACK_TWO_URL]: { body: PNG, headers: { "content-type": "image/png" } } }));
     const packTwo = await appendPackTwo();
@@ -307,7 +345,7 @@ describe("skeleton_make", () => {
     await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", photo: "pack-2" });
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key });
     expect(await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", photo: "pack-3" })).toEqual(
-      refused(/This picture's render did not use pack photo pack-3/),
+      refused(/This picture did not use pack photo pack-3/),
     );
   });
 
@@ -379,7 +417,16 @@ describe("pack_check and cap_check", () => {
     // Found live (22-11-2026): three pouches in one picture, the middle one 10% too wide, and a pass on its neighbour cleared it.
     let pass = false;
     await start((event) => (event.tool === "pack_check" ? { ok: true, passed: pass, line: pass ? "PASS at 2%" : "difference -10.2%; FAIL at 2%" } : { ok: true }));
-    const imageId = await draft();
+    const imageId = await draft("idea-1", {
+      plan: {
+        bg: "E83C28",
+        products: [
+          { cx: 0.2, base: 0.9, height: 0.5 },
+          { cx: 0.5, base: 0.9, height: 0.5 },
+          { cx: 0.8, base: 0.9, height: 0.5 },
+        ],
+      },
+    });
     await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", pack: 2 });
     pass = true;
     await run("pack_check", { imageId, at: [200, 900], bg: "E83C28" });

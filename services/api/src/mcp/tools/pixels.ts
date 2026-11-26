@@ -144,6 +144,8 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
         batchId: id,
         imageId,
         old: box.describe("x0,x1,top,base of the drawn pack in the picture, in pixels."),
+        photo: z.string().regex(/^pack-\d{1,2}$/).optional().describe("The pack photo to measure, for a picture whose skeleton plan names different pack photos."),
+        pack: packNumber.optional().describe("With a skeleton plan, pack n is the nth pack from the left; food and props are not counted."),
         scale: z.number().positive().max(20).optional().describe("Paste at this scale instead of fitting the old pack."),
         cx: px.optional().describe("The centre x of the pasted pack. Default: the centre of the old one."),
         lowerOnly: z.boolean().default(false).describe("Keep the scene above the label: for an open jar."),
@@ -151,8 +153,15 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
       },
       writes: true,
       needsRules: true,
-      handler: ({ scale, cx, bandTop, ...input }) =>
-        pixels.swap({ ...input, ...(scale !== undefined ? { scale } : {}), ...(cx !== undefined ? { cx } : {}), ...(bandTop !== undefined ? { bandTop } : {}) }),
+      handler: ({ scale, cx, bandTop, photo, pack, ...input }) =>
+        pixels.swap({
+          ...input,
+          ...(photo !== undefined ? { photo } : {}),
+          ...(pack !== undefined ? { pack } : {}),
+          ...(scale !== undefined ? { scale } : {}),
+          ...(cx !== undefined ? { cx } : {}),
+          ...(bandTop !== undefined ? { bandTop } : {}),
+        }),
     }),
     defineTool({
       name: "photo_finish",

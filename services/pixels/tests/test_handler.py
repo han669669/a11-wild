@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -389,7 +390,7 @@ class Repairs(unittest.TestCase):
         self.assertEqual(calls, cutouts)
         self.assertNotEqual(planned[0]["alpha"], planned[1]["alpha"])
 
-    def test_a_plan_of_real_photos_needs_no_pack_and_keeps_their_pixels(self):
+    def test_an_all_photo_key_plan_never_calls_job_pack_and_keeps_its_pixels(self):
         slice_ = np.full((300, 300, 3), 255, np.uint8)
         slice_[60:240, 100:200] = (200, 150, 40)
         self.store.add("products/p/food.png", Image.fromarray(slice_))
@@ -400,7 +401,9 @@ class Repairs(unittest.TestCase):
             {"cx": 0.3, "base": 0.8, "height": 0.3, "photoKey": "products/p/food.png"},
             {"cx": 0.7, "base": 0.8, "height": 0.2, "photoKey": "products/p/tart.png"},
         ]}
-        answer = self.job("skeleton", plan=plan)
+        with patch.object(handler.Job, "pack") as pack:
+            answer = self.job("skeleton", plan=plan)
+            pack.assert_not_called()
         self.assertTrue(answer["ok"], answer)
         picture = np.asarray(self.store.picture(answer["imageKey"]).convert("RGB")).astype(int)
         yellow = (picture[..., 0] > 170) & (picture[..., 1] > 120) & (picture[..., 2] < 90)
