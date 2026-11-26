@@ -148,6 +148,9 @@ describe("the list's ways to reach a brand", () => {
     expect(labelShowsClosed("Phone 8000 0001 (front desk)", closed)).toBe(true);
     expect(labelShowsClosed("WhatsApp +6580000002 (backup +6580000001)", closed)).toBe(true);
     expect(labelShowsClosed("Call +65 8000 (0001)", closed)).toBe(true);
+    expect(labelShowsClosed("Call +65 (8000 0001)", closed)).toBe(true);
+    expect(labelShowsClosed("Call +65.8000.0001", closed)).toBe(true);
+    expect(labelShowsClosed("Call +65 8000 0001 (123) daily", closed)).toBe(true);
     expect(labelShowsClosed("WhatsApp +44 20 8000 0001 (verified business)", closed)).toBe(false);
     expect(labelShowsClosed("WhatsApp +65 8111 2222; +65 3333 4444", new Set(["W#6522223333"]))).toBe(false);
     expect(labelShowsClosed(`Phone +65${" ".repeat(31)}(6123 4567) (front desk)`, closed)).toBe(false);
