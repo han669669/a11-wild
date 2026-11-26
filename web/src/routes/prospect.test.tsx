@@ -43,6 +43,7 @@ describe("Prospect page", () => {
             sendTo: { channel: "whatsapp", to: "6580000001", direct: false, note: "verified business" },
             others: {
               second: { channel: "whatsapp", to: "6580000002", direct: false, label: "WhatsApp +6580000002 (direct line)", note: "direct line" },
+              secondHref: "https://wa.me/6580000002",
             },
           },
         }),
@@ -62,6 +63,36 @@ describe("Prospect page", () => {
     expect(secondLink).toHaveTextContent("WhatsApp · +6580000002");
     expect(within(secondRow).getByText(/direct line/)).toHaveClass("text-muted-foreground");
     expect(secondLink).toHaveAttribute("href", screen.getByRole("link", { name: "+6580000002" }).getAttribute("href"));
+  });
+
+  it("links the second WhatsApp route when it is the only WhatsApp contact", async () => {
+    stubApi({
+      [GET]: () => ({
+        body: prospectPage({
+          contact: {
+            whatsapp: [],
+            others: {
+              second: { channel: "whatsapp", to: "6580000002", direct: false, label: "WhatsApp +6580000002 (direct line)" },
+              secondHref: "https://wa.me/6580000002",
+            },
+          },
+        }),
+      }),
+    });
+    open();
+
+    const anotherWay = (await screen.findByText("Another way")).nextElementSibling as HTMLElement;
+    expect(anotherWay).toHaveTextContent("WhatsApp · +6580000002");
+    expect(within(anotherWay).getByRole("link", { name: "WhatsApp · +6580000002" })).toHaveAttribute("href", "https://wa.me/6580000002");
+  });
+
+  it("shows a call-route note beside the open phone", async () => {
+    stubApi({ [GET]: () => ({ body: prospectPage({ contact: { whatsapp: [], phone: "+65 6123 4567", phoneNote: "front desk" } }) }) });
+    open();
+
+    const phone = (await screen.findByText("Phone")).nextElementSibling as HTMLElement;
+    expect(phone).toHaveTextContent("+65 6123 4567 · front desk");
+    expect(within(phone).getByText(/front desk/)).toHaveClass("text-muted-foreground");
   });
 
   it("starts contact and owner controls expanded, and lets each fold collapse", async () => {

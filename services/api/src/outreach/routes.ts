@@ -1,5 +1,9 @@
 import type { ProspectRoute } from "@a11-wild/shared";
+import { EMAIL_IN_TEXT } from "./blocked.js";
 import { address, numbers } from "./load.js";
+
+const EMAIL_IN_NOTE = new RegExp(EMAIL_IN_TEXT.source, EMAIL_IN_TEXT.flags.replace("g", ""));
+const PHONE_IN_NOTE = /\+?\d[\d().\s-]{5,}\d/;
 
 const numberFrom = (value: string): string | undefined => {
   try {
@@ -16,11 +20,18 @@ export function routeOf(value: string | undefined): ProspectRoute | undefined {
   const phone = label.match(/^(DM phone|Phone|WhatsApp)\s+(.+)$/i);
   if (phone) {
     try {
-      const bracket = phone[2]!.match(/^(.*?)\s+\((.*)\)$/);
+      const bracket = phone[2]!.match(/^(.*)\s+\(([^()]*)\)$/);
       const notedNumber = bracket ? numberFrom(bracket[1]!.trim()) : undefined;
       const numberText = notedNumber ? bracket![1]!.trim() : phone[2]!;
       const noteText = notedNumber ? bracket![2]!.trim() : undefined;
-      const note = noteText && Array.from(noteText).length <= 40 ? noteText : undefined;
+      const note =
+        noteText &&
+        Array.from(noteText).length <= 40 &&
+        /\p{L}/u.test(noteText) &&
+        !PHONE_IN_NOTE.test(noteText) &&
+        !EMAIL_IN_NOTE.test(noteText)
+          ? noteText
+          : undefined;
       const to = notedNumber ?? numbers(numberText)[0];
       if (!to) return undefined;
       const direct = phone[1]!.toLowerCase() === "dm phone";

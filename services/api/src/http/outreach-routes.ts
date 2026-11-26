@@ -102,6 +102,20 @@ export function outreachRoutes(
     const sendTo = target && !sendTargetUnavailable(file, target, optOuts) && routeOpen(target, closed) ? target : undefined;
     const noteForNumber = (number: string) =>
       [profile.route, profile.second].find((route) => route?.note && routeOpen(route, closed) && route.to.replace(/\D/g, "") === number.replace(/\D/g, ""))?.note;
+    const phoneDigits = profile.phone?.replace(/\D/g, "");
+    const phoneNote =
+      phoneDigits && openNumber(profile.phone)
+        ? [profile.route, profile.second].find(
+            (route) =>
+              route?.channel === "call" &&
+              route.note &&
+              routeOpen(route, closed) &&
+              route.to.replace(/\D/g, "") === phoneDigits,
+          )?.note
+        : undefined;
+    const second = routeOpen(profile.second, closed) ? profile.second : undefined;
+    const secondHref =
+      second?.channel === "whatsapp" && /^\d{10,15}$/.test(second.to) ? link(`https://wa.me/${second.to}`).href : undefined;
     const dmCheck = { valid: "checked", risky: "risky", invalid: "invalid", unknown: "not checked" } as const;
     return {
       whatsapp: profile.whatsapp.filter(openNumber).map((number) => {
@@ -109,7 +123,7 @@ export function outreachRoutes(
         return { number, ...link(/^\d{10,15}$/.test(number) ? `https://wa.me/${number}` : undefined), ...(note ? { note } : {}) };
       }),
       ...(openEmail(profile.email) && profile.email ? { email: { address: profile.email, ...link(mailLink(profile.email, "", "")?.split("?")[0]) } } : {}),
-      ...(openNumber(profile.phone) && profile.phone ? { phone: profile.phone } : {}),
+      ...(openNumber(profile.phone) && profile.phone ? { phone: profile.phone, ...(phoneNote ? { phoneNote } : {}) } : {}),
       ...(profile.instagram ? { instagram: { name: profile.instagram, ...link(profileLink("instagram", profile.instagram)) } } : {}),
       ...(profile.decisionMaker ? { decisionMaker: profile.decisionMaker } : {}),
       ...(profile.dmTitle ? { dmTitle: profile.dmTitle } : {}),
@@ -118,7 +132,8 @@ export function outreachRoutes(
       ...(profile.secondRoute && openRouteLabel(profile.secondRoute) ? { secondRoute: profile.secondRoute } : {}),
       ...(sendTo ? { sendTo } : {}),
       others: {
-        ...(routeOpen(profile.second, closed) ? { second: profile.second } : {}),
+        ...(second ? { second } : {}),
+        ...(secondHref ? { secondHref } : {}),
         ...(openEmail(profile.dmEmail) && profile.dmEmail ? { dmEmail: { address: profile.dmEmail, check: dmCheck[profile.dmVerify ?? "unknown"] } } : {}),
         ...(openNumber(profile.dmPhone) && profile.dmPhone ? { dmPhone: profile.dmPhone } : {}),
         ...(profile.instagram ? { instagram: { name: profile.instagram, ...link(profileLink("instagram", profile.instagram)) } } : {}),

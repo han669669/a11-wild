@@ -430,6 +430,22 @@ describe("the owner's day", () => {
     expect(page.contact.others.second).toMatchObject({ channel: "whatsapp", to: "6580000002", note: "direct line" });
   });
 
+  it.each(["bestRoute", "secondRoute"] as const)("keeps an open call-route note from %s beside the matching phone", async (field) => {
+    await loadProspects(studio, [row(1, { phone: "+65 6123 4567", [field]: "Phone +65 6123 4567 (front desk)" })]);
+    const page = await json(await get("/api/outreach/prospects/00001"));
+    expect(page.contact).toMatchObject({ phone: "+65 6123 4567", phoneNote: "front desk" });
+  });
+
+  it("provides a checked link for an open second WhatsApp route absent from the WhatsApp list", async () => {
+    await loadProspects(studio, [row(1, { whatsapp: "", secondRoute: "WhatsApp +6580000002 (direct line)" })]);
+    const page = await json(await get("/api/outreach/prospects/00001"));
+    expect(page.contact.whatsapp).toEqual([]);
+    expect(page.contact.others).toMatchObject({
+      second: { channel: "whatsapp", to: "6580000002" },
+      secondHref: "https://wa.me/6580000002",
+    });
+  });
+
   it("gives the owner the contact, each link only from a checked value", async () => {
     await loadProspects(studio, [row(1, { phone: "+65 6123 4567", instagram: "@brand.one", decisionMaker: "A Person", dmTitle: "Founder", linkedin: "www.linkedin.com/in/a-person", bestRoute: "WhatsApp" }), row(2, { instagram: "javascript:alert(1)", linkedin: "https://evil.example/in/x" })]);
     expect((await json(await get("/api/outreach/prospects/00001"))).contact).toEqual({

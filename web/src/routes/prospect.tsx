@@ -54,8 +54,7 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
   const second = contact.others?.second;
   const secondNumber =
     second && (second.channel === "whatsapp" || second.channel === "call") && /^\d+$/.test(second.to) ? `+${second.to}` : second?.to;
-  const secondHref =
-    second && (second.channel === "whatsapp" || second.channel === "call") ? contact.whatsapp.find((entry) => entry.number === second.to)?.href : undefined;
+  const secondHref = contact.others?.secondHref;
   const checkTarget = () => {
     const target = contact.sendTo;
     if (!target) return "the brand";
@@ -195,7 +194,7 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
               <Line key={entry.number} name="WhatsApp" text={`+${entry.number}`} href={entry.href} note={entry.note} />
             ))}
             {contact.email ? <Line name="Email" text={contact.email.address} href={contact.email.href} /> : null}
-            {contact.phone ? <Line name="Phone" text={contact.phone} /> : null}
+            {contact.phone ? <Line name="Phone" text={contact.phone} note={contact.phoneNote} /> : null}
             {contact.sendTo ? <Line name="Current choice" text={`${contact.sendTo.person ?? "The brand"}${contact.sendTo.title ? `, ${contact.sendTo.title}` : ""} · ${CHANNELS[contact.sendTo.channel]}`} note={contact.sendTo.note} /> : null}
             {contact.decisionMaker ? <Line name="Person" text={`${contact.decisionMaker}${contact.dmTitle ? `, ${contact.dmTitle}` : ""}`} /> : null}
             {second ? <Line name="Another way" text={`${routeName(second.channel)}${secondNumber ? ` · ${secondNumber}` : ""}`} href={secondHref} note={second.note} /> : null}

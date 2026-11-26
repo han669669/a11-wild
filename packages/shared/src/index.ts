@@ -1401,6 +1401,7 @@ export interface ProspectContact {
   whatsapp: { number: string; href?: string; note?: string }[];
   email?: { address: string; href?: string };
   phone?: string;
+  phoneNote?: string;
   instagram?: { name: string; href?: string };
   decisionMaker?: string;
   dmTitle?: string;
@@ -1410,6 +1411,7 @@ export interface ProspectContact {
   sendTo?: ProspectSendTarget;
   others?: {
     second?: ProspectRoute;
+    secondHref?: string;
     dmEmail?: { address: string; check: "checked" | "risky" | "not checked" | "invalid" };
     dmPhone?: string;
     instagram?: { name: string; href?: string };

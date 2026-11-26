@@ -41,6 +41,32 @@ describe("the list's ways to reach a brand", () => {
     expect(routeOf("WhatsApp +6580000001 ( verified business )")?.note).toBe("verified business");
   });
 
+  it("uses the last bracket group after a number with parentheses", () => {
+    const label = "WhatsApp +65 (8123) 4567 (verified business)";
+    expect(routeOf(label)).toEqual({
+      channel: "whatsapp",
+      to: "6581234567",
+      direct: false,
+      label,
+      note: "verified business",
+    });
+  });
+
+  it("drops phone numbers and email addresses from notes without losing the route", () => {
+    const withPhone = "WhatsApp +6580000001 (+6580000003)";
+    expect(routeOf(withPhone)).toMatchObject({ channel: "whatsapp", to: "6580000001", label: withPhone });
+    expect(routeOf(withPhone)).not.toHaveProperty("note");
+
+    const withEmail = "Phone +65 6123 4567 (verified contact person@example.com)";
+    expect(routeOf(withEmail)).toMatchObject({ channel: "call", to: "6561234567", label: withEmail });
+    expect(routeOf(withEmail)).not.toHaveProperty("note");
+  });
+
+  it("treats a digits-only bracket as part of the phone number", () => {
+    const label = "Phone +65 6123 (4567)";
+    expect(routeOf(label)).toEqual({ channel: "call", to: "6561234567", direct: false, label });
+  });
+
   it("omits a missing or overlong note without losing the number", () => {
     expect(routeOf("WhatsApp +6580000001")).toEqual({
       channel: "whatsapp",
