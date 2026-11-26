@@ -180,6 +180,13 @@ function removeBlocked(profile: Prospect): Prospect {
     }
     return stripSegment(value) || undefined;
   };
+  const cleanRoute = (route: ProspectRoute | undefined): ProspectRoute | undefined => {
+    if (!route || isRouteBlocked(route)) return undefined;
+    const label = stripRoute(route.label) ?? route.label;
+    const note = route.note ? stripSegment(route.note) || undefined : undefined;
+    const { note: _oldNote, ...rest } = route;
+    return { ...rest, label, ...(note ? { note } : {}) };
+  };
   const saved: Prospect = {
     ...profile,
     whatsapp: profile.whatsapp.filter((number) => !isNumberBlocked(number)),
@@ -189,8 +196,12 @@ function removeBlocked(profile: Prospect): Prospect {
   if (isNumberBlocked(saved.phone)) delete saved.phone;
   if (isNumberBlocked(saved.dmPhone)) delete saved.dmPhone;
   if (isInstagramBlocked(saved.instagram)) delete saved.instagram;
-  if (isRouteBlocked(saved.route)) delete saved.route;
-  if (isRouteBlocked(saved.second)) delete saved.second;
+  const cleanedRoute = cleanRoute(saved.route);
+  if (cleanedRoute) saved.route = cleanedRoute;
+  else delete saved.route;
+  const cleanedSecond = cleanRoute(saved.second);
+  if (cleanedSecond) saved.second = cleanedSecond;
+  else delete saved.second;
   const bestRoute = stripRoute(saved.bestRoute);
   const secondRoute = stripRoute(saved.secondRoute);
   if (bestRoute) saved.bestRoute = bestRoute;

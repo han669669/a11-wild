@@ -574,13 +574,14 @@ describe("the owner's day", () => {
     const urlBrand = await json(await get("/api/outreach/prospects/00005"));
     expect(urlBrand.contact.sendTo).toMatchObject({ channel: "instagram", to: "@url.brand" });
     expect(urlBrand.message.messages[0].href).toBe("https://www.instagram.com/url.brand/");
-    // Quarantined Instagram handle is stripped at load and hidden from both the prospect page and agent contacts.
+    // Quarantined Instagram handle is stripped at load, preserving a cleaned phone fallback note, and also hidden at read time for already-stored profiles.
     await ready([
       row(6, {
         whatsapp: undefined,
         email: "ok@example.com",
         instagram: "@sample.brand",
-        bestRoute: "Instagram DM @sample.brand",
+        bestRoute: "Email (valid) ok@example.com",
+        secondRoute: "Phone 60000001 (ask for sales @sample.brand)",
         notes: "AUDIT-FLAG: Instagram @sample.brand — do not send",
       }),
     ]);
@@ -588,8 +589,14 @@ describe("the owner's day", () => {
     expect(quarantined.contact.instagram).toBeUndefined();
     expect(quarantined.contact.others?.instagram).toBeUndefined();
     expect(quarantined.contact.sendTo).toMatchObject({ channel: "email", to: "ok@example.com" });
+    expect(quarantined.contact.others?.second).toMatchObject({ channel: "call", to: "6560000001", note: "ask for sales" });
     const agentContacts = await outreach().desk.contacts({ prospectId: "00006", after: 0, limit: 10 });
     expect(agentContacts.prospects[0]?.instagram).toBeUndefined();
+    // Simulate a pre-existing stored profile that still carries a quarantined Instagram handle.
+    const existing = (await outreach().store.all()).find((entry) => entry.profile.id === "00006")!;
+    await outreach().store.saveProfile({ ...existing.profile, instagram: "@sample.brand" });
+    expect((await json(await get("/api/outreach/prospects/00006"))).contact.instagram).toBeUndefined();
+    expect((await outreach().desk.contacts({ prospectId: "00006", after: 0, limit: 10 })).prospects[0]?.instagram).toBeUndefined();
   });
 });
 
