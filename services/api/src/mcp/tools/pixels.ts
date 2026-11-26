@@ -106,9 +106,10 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
         tilted: z.boolean().default(false).describe("The pack is turned in the plane, for example it lies on the stage at 20 degrees. The tool turns it upright before the measure."),
         box: box.optional().describe("X0,Y0,X1,Y1 in pixels, for a pack that stands on something: a box round the pack with plain stage on its other sides, ending at the pack's base. The measure then stops at the base, so set it within a few pixels."),
         pack: packNumber.optional().describe(packNumberDescription),
+        item: packNumber.optional().describe("The place of this pack in the skeleton plan's products, 1 for the first; needed only when two packs of the plan use the same pack photo with different crops."),
       },
       writes: true,
-      handler: ({ box: around, photo, pack, ...input }) => pixels.packCheck({ ...input, ...(pack !== undefined ? { pack } : {}), ...(around ? { box: around } : {}), ...(photo !== undefined ? { photo } : {}) }),
+      handler: ({ box: around, photo, pack, item, ...input }) => pixels.packCheck({ ...input, ...(pack !== undefined ? { pack } : {}), ...(around ? { box: around } : {}), ...(photo !== undefined ? { photo } : {}), ...(item !== undefined ? { item } : {}) }),
     }),
     defineTool({
       name: "cap_check",
@@ -147,6 +148,7 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
         old: box.describe("x0,x1,top,base of the drawn pack in the picture, in pixels."),
         photo: z.string().regex(/^pack-\d{1,2}$/).optional().describe("The pack photo of the pack you measure, when the picture shows more than one pack photo."),
         pack: packNumber.optional().describe(packNumberDescription),
+        item: packNumber.optional().describe("The place of this pack in the skeleton plan's products, 1 for the first; needed only when two packs of the plan use the same pack photo with different crops."),
         scale: z.number().positive().max(20).optional().describe("Paste at this scale instead of fitting the old pack."),
         cx: px.optional().describe("The centre x of the pasted pack. Default: the centre of the old one."),
         lowerOnly: z.boolean().default(false).describe("Keep the scene above the label: for an open jar."),
@@ -154,11 +156,12 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
       },
       writes: true,
       needsRules: true,
-      handler: ({ scale, cx, bandTop, photo, pack, ...input }) =>
+      handler: ({ scale, cx, bandTop, photo, pack, item, ...input }) =>
         pixels.swap({
           ...input,
           ...(photo !== undefined ? { photo } : {}),
           ...(pack !== undefined ? { pack } : {}),
+          ...(item !== undefined ? { item } : {}),
           ...(scale !== undefined ? { scale } : {}),
           ...(cx !== undefined ? { cx } : {}),
           ...(bandTop !== undefined ? { bandTop } : {}),
