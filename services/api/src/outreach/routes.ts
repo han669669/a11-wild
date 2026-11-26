@@ -31,9 +31,9 @@ const numberFrom = (value: string): string | undefined => {
   }
 };
 
-export function labelNumbers(label: string | undefined): string[] {
+const labelNumberCandidates = (label: string | undefined, includeLabel: boolean): string[] => {
   if (!label) return [];
-  const texts = [label];
+  const texts = includeLabel ? [label] : [];
   const bracketContents: string[] = [];
   let withoutBrackets = label;
   while (true) {
@@ -50,8 +50,12 @@ export function labelNumbers(label: string | undefined): string[] {
   return [...found];
 }
 
+export function labelNumbers(label: string | undefined): string[] {
+  return labelNumberCandidates(label, true);
+}
+
 export function labelContactNumbers(label: string | undefined): string[] {
-  return labelNumbers(label).filter((candidate) => {
+  return labelNumberCandidates(label, false).filter((candidate) => {
     const digits = candidate.replace(/\D/g, "");
     const countryCode = digits.length >= 10 && digits.length <= 15 && (candidate.startsWith("+") || !candidate.includes("+"));
     const local = !candidate.includes("+") && /^[689]\d{7}$/.test(digits);

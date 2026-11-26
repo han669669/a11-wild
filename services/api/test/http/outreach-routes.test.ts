@@ -344,6 +344,7 @@ describe("the owner's day", () => {
     await outreach().sequence.optOut("00001");
 
     const page = await json(await get("/api/outreach/prospects/00002"));
+    expect(page.prospect).toMatchObject({ stage: "opted_out" });
     expect(page.contact).not.toHaveProperty("secondRoute");
   });
 
@@ -353,6 +354,7 @@ describe("the owner's day", () => {
     await outreach().sequence.optOut("00001");
 
     const page = await json(await get("/api/outreach/prospects/00002"));
+    expect(page.prospect).toMatchObject({ stage: "opted_out" });
     expect(page.contact).not.toHaveProperty("secondRoute");
   });
 
@@ -362,6 +364,7 @@ describe("the owner's day", () => {
     await outreach().sequence.optOut("00001");
 
     const page = await json(await get("/api/outreach/prospects/00002"));
+    expect(page.prospect).toMatchObject({ stage: "opted_out" });
     expect(page.contact).not.toHaveProperty("secondRoute");
   });
 

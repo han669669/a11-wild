@@ -105,6 +105,21 @@ describe("the outreach store", () => {
     expect(await store.optOuts()).toContain("W#6580000001");
   });
 
+  it("does not join a number to its numeric note when building opt-out keys", async () => {
+    await loadRows(store, [
+      row(1, { whatsapp: undefined, secondRoute: "Phone 8000 0001 (9-5)" }),
+      row(2, { whatsapp: undefined, phone: "8000000195" }),
+    ], now);
+    const first = await store.get("00001");
+    const second = await store.get("00002");
+    expect(first.second).toBeUndefined();
+    expect(contactKeys(first)).not.toContain("W#8000000195");
+
+    await store.addEvent(first.id, { type: "optout" }, "owner");
+    await store.addOptOut(await store.get(first.id));
+    expect(stageOf({ profile: second, ads: [], sends: [], events: [] }, await store.optOuts())).not.toBe("opted_out");
+  });
+
   it("keeps parenthesised phone routes distinct when one opts out", async () => {
     await loadRows(store, [
       row(1, { whatsapp: undefined, secondRoute: "WhatsApp +65 (8123) 4567 (verified business)" }),
