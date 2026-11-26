@@ -240,6 +240,36 @@ describe("skeleton_make", () => {
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box: lowerBox, cutout: { darkMax: 60 } });
   });
 
+  it("uses a final's height instead of the skeleton canvas for pack selection", async () => {
+    await start();
+    const upperBox = [10, 20, 110, 220];
+    const lowerBox = [30, 40, 330, 440];
+    const made = await skeleton("idea-1", {
+      plan: {
+        bg: "E83C28",
+        products: [
+          { cx: 0.5, base: 0.65, height: 0.3, photo: "pack-1", box: upperBox, cutout: { darkMax: 30 } },
+          { cx: 0.5, base: 0.95, height: 0.3, photo: "pack-1", box: lowerBox, cutout: { darkMax: 60 } },
+        ],
+      },
+    });
+    const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
+    const draft = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image;
+    const final = await studio.services.images.add({
+      batchId,
+      kind: "final",
+      key: `batches/${batchId}/finals/height.jpg`,
+      ideaId: "idea-1",
+      fromId: draft.id,
+    });
+    await studio.pictures.put(final.key, JPEG_WIDTH_1536, "image/jpeg");
+
+    await run("pack_check", { imageId: final.id, at: [768, 960], bg: "E83C28" });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box: upperBox, cutout: { darkMax: 30 } });
+    await run("product_swap", { imageId: final.id, old: [600, 936, 760, 1160] });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box: upperBox, cutout: { darkMax: 30 } });
+  });
+
   it("uses a final's width instead of the skeleton canvas for pack selection", async () => {
     await start();
     const leftBox = [10, 20, 110, 220];
