@@ -1,4 +1,4 @@
-import type { AdResult, PackSummary } from "@a11-wild/shared";
+import type { AdResult, CreativeTag, PackSummary } from "@a11-wild/shared";
 import { Link } from "react-router";
 import { Loading, OutLink } from "@/components/loading";
 import { Card, Empty, Fold, PageHeader, Section, Step } from "@/components/page";
@@ -9,9 +9,24 @@ import { when } from "@/lib/when";
 import { Zoom } from "@/components/viewer";
 
 const percent = (share: number) => `${(share * 100).toFixed(2)}%`;
+const money = (value: number | undefined, currency: string | undefined) => (value === undefined ? "not given" : `${value.toFixed(2)}${currency ? ` ${currency}` : ""}`);
+const decimal = (value: number | undefined) => (value === undefined ? "not given" : value.toFixed(2));
 const size = (bytes: number) => (bytes < 1_000_000 ? `${Math.max(1, Math.round(bytes / 1000))} KB` : `${(bytes / 1_000_000).toFixed(1)} MB`);
 
 /** Every client pack: its versions, the files its client sent back, and the numbers typed in from them. */
+const TAG_LABELS: [keyof CreativeTag, string][] = [
+  ["person", "Person"],
+  ["problem", "Problem"],
+  ["promise", "Promise"],
+  ["proof", "Proof"],
+  ["hook", "Hook"],
+  ["format", "Format"],
+  ["production", "Look"],
+  ["awareness", "Knows"],
+  ["objection", "Objection"],
+  ["visualDevice", "Picture device"],
+];
+
 const UPLOAD_STATE = {
   arriving: "still arriving",
   refused: "deleted: it was not the type it was sent as",
@@ -108,6 +123,10 @@ function PackCard({ pack }: { pack: PackSummary }) {
           <p className="mt-2 text-caption text-muted-foreground">The studio reads each file before you can open it, and deletes one that is not the picture or the CSV it was sent as. A CSV is shown as a table of text; it never opens in a spreadsheet program.</p>
         </div>
         <div>
+          <h3 className="mb-2 text-body font-medium">What the ads test</h3>
+          {pack.creativeTags.length === 0 ? <p className="text-caption text-muted-foreground">No creative tags yet. Your agent saves them before results are judged.</p> : <CreativeTags tags={pack.creativeTags} />}
+        </div>
+        <div>
           <h3 className="mb-2 text-body font-medium">Results</h3>
           {pack.results.length === 0 ? <p className="text-caption text-muted-foreground">None yet. Your agent types them in from the client's file.</p> : <ResultsTable results={pack.results} />}
         </div>
@@ -118,9 +137,9 @@ function PackCard({ pack }: { pack: PackSummary }) {
 
 function ResultsTable({ results }: { results: AdResult[] }) {
   return (
-    // Seven columns do not fit a phone: the table keeps its width and scrolls sideways inside the card.
+    // Many columns do not fit a phone: the table keeps its width and scrolls sideways inside the card.
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[44rem] text-left text-caption">
+      <table className="w-full min-w-[78rem] text-left text-caption">
         <thead className="text-muted-foreground">
           <tr>
             <th className="py-1 pr-4 font-medium">Ad</th>
@@ -129,6 +148,11 @@ function ResultsTable({ results }: { results: AdResult[] }) {
             <th className="py-1 pr-4 font-medium">Clicks</th>
             <th className="py-1 pr-4 font-medium">CTR</th>
             <th className="py-1 pr-4 font-medium">Usual CTR</th>
+            <th className="py-1 pr-4 font-medium">Frequency</th>
+            <th className="py-1 pr-4 font-medium">Spend</th>
+            <th className="py-1 pr-4 font-medium">Conversions</th>
+            <th className="py-1 pr-4 font-medium">CPA</th>
+            <th className="py-1 pr-4 font-medium">ROAS</th>
             <th className="py-1 font-medium">Campaign</th>
           </tr>
         </thead>
@@ -143,11 +167,32 @@ function ResultsTable({ results }: { results: AdResult[] }) {
               <td className="py-2 pr-4">{result.clicks.toLocaleString("en-GB")}</td>
               <td className="py-2 pr-4">{percent(result.ctr)}</td>
               <td className="py-2 pr-4">{result.baselineCtr === undefined ? "not given" : percent(result.baselineCtr)}</td>
+              <td className="py-2 pr-4">{decimal(result.frequency)}</td>
+              <td className="py-2 pr-4">{money(result.spend, result.currency)}</td>
+              <td className="py-2 pr-4">{result.conversions === undefined ? "not given" : `${result.conversions.toLocaleString("en-GB")} ${result.conversionEvent ?? ""}`}</td>
+              <td className="py-2 pr-4">{money(result.cpa, result.currency)}</td>
+              <td className="py-2 pr-4">{decimal(result.roas)}</td>
               <td className="py-2">{result.context}</td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function CreativeTags({ tags }: { tags: CreativeTag[] }) {
+  return (
+    <ul className="space-y-3">
+      {tags.map((tag) => {
+        const parts = TAG_LABELS.filter(([field]) => typeof tag[field] === "string").map(([field, label]) => `${label}: ${tag[field]}`);
+        return (
+          <li key={tag.adName} className="rounded-lg border border-border p-3 text-caption">
+            <p className="break-all font-mono">{tag.adName}</p>
+            <p className="mt-1 text-muted-foreground">{parts.length > 0 ? parts.join(" · ") : "No fields saved."}</p>
+          </li>
+        );
+      })}
+    </ul>
   );
 }

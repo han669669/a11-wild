@@ -31,6 +31,7 @@ import type { PixelRunner } from "../../pixels/runner.js";
 import { PixelService } from "../../pixels/service.js";
 import { JobStore } from "../../pixels/store.js";
 import { ResultStore } from "../../results/store.js";
+import { CreativeTagStore } from "../../results/tags.js";
 import { MadeCount } from "../../made/count.js";
 import { RenderService } from "../../render/service.js";
 import { RenderStore } from "../../render/store.js";
@@ -135,6 +136,7 @@ export function studioTools(parts: StudioParts) {
   const pixels = new PixelService({ batches, brands, images, checks, picks, board, renders, jobs, pictures, copy, directions, runner: parts.pixelRunner, now });
   const packs = new PackStore(table);
   const results = new ResultStore(table, now);
+  const creativeTags = new CreativeTagStore(table, now);
   const commentStore = new CommentStore(table, now);
   const notices = new ActivityNotices(table, now, parts.notifier);
   // A file's brand is asked for when a client sends one, long after the pack service below exists.
@@ -146,7 +148,7 @@ export function studioTools(parts: StudioParts) {
       if (!found) throw new Error("no pack");
       return brands.brand(await pack.brandOf(found));
     }, notify: (activity) => notices.tell(activity), now });
-  const pack = new PackService({ batches, brands, facts, board, copy, meta, packs, results, comments: commentStore, uploads, pictures, publicOrigin: config.publicOrigin, now });
+  const pack = new PackService({ batches, brands, facts, board, copy, meta, packs, results, creativeTags, comments: commentStore, uploads, pictures, publicOrigin: config.publicOrigin, now });
   const clients = new ClientService({ brands, packs, pack, publicOrigin: config.publicOrigin, now });
   const comments = new CommentService({ comments: commentStore, brandOf: async (of) => brands.brand(await pack.brandOf(of)), notify: (activity) => notices.tell(activity) });
   const outreachStore = new OutreachStore(table, now);
@@ -154,7 +156,7 @@ export function studioTools(parts: StudioParts) {
   const desk = new OutreachDesk({ store: outreachStore, batches, board, ledger });
   const ownPicture = new OwnPicture({ store: outreachStore, pictures });
   const outreachPicks = new OutreachPicks({ store: outreachStore, batches, board });
-  const services = { outreach: { store: outreachStore, sequence, desk, picture: ownPicture, picks: outreachPicks }, learning, proposals, brandNotes, ledger, gate, parallel, brands, facts, canon, tasteLog, swipe, reads, importer, batches, truth, images, renders, render, checks, picks, board, jobs, pixels, calibration, critic, conceptPicks, conceptBoard, directions, done, copy, meta, packs, pack, clients, comments, notices, uploads, results, made };
+  const services = { outreach: { store: outreachStore, sequence, desk, picture: ownPicture, picks: outreachPicks }, learning, proposals, brandNotes, ledger, gate, parallel, brands, facts, canon, tasteLog, swipe, reads, importer, batches, truth, images, renders, render, checks, picks, board, jobs, pixels, calibration, critic, conceptPicks, conceptBoard, directions, done, copy, meta, packs, pack, clients, comments, notices, uploads, results, creativeTags, made };
   const tools: ToolDefinition[] = [
     ...coreTools(config),
     ...spendTools({ ledger, gate }),
@@ -170,7 +172,7 @@ export function studioTools(parts: StudioParts) {
     ...metaTools({ batches, brands, facts, copy, picks, meta }),
     ...packTools({ batches, pack, packs }),
     ...clientTools({ pack, packs, clients, comments, uploads, brands }),
-    ...resultTools({ batches, packs, results, uploads }),
+    ...resultTools({ batches, packs, results, creative: creativeTags, uploads }),
     ...criticTools({ critic, calibration }),
     ...renderTools({ render }),
     ...pixelTools({ pixels }),

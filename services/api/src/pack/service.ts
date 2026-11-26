@@ -30,6 +30,7 @@ import { adName } from "../meta/names.js";
 import type { MetaStore } from "../meta/store.js";
 import { MAX_PICTURE_BYTES, type Pictures, pictureType } from "../pictures/store.js";
 import type { ResultStore } from "../results/store.js";
+import type { CreativeTagStore } from "../results/tags.js";
 import type { UploadService } from "../results/uploads.js";
 import { type CommentStore, exampleComment, onCurrentAds } from "./comments.js";
 import { CARRIED, type PackStore } from "./store.js";
@@ -49,6 +50,7 @@ interface Deps {
   meta: MetaStore;
   packs: PackStore;
   results: ResultStore;
+  creativeTags: CreativeTagStore;
   comments: CommentStore;
   uploads: UploadService;
   pictures: Pictures;
@@ -399,10 +401,10 @@ export class PackService {
 
   /** Every pack as the dashboard lists it, newest first. No link: the studio does not keep it. */
   async summaries(): Promise<PackSummary[]> {
-    const { packs, pictures, results, uploads: files } = this.deps;
+    const { packs, pictures, results, creativeTags, uploads: files } = this.deps;
     const list = await Promise.all(
       (await packs.all()).map(async ({ tokenHash: _tokenHash, ...pack }): Promise<PackSummary> => {
-        const [{ brand, product }, versions, uploads, typed] = await Promise.all([this.names(pack), packs.versions(pack.id), files.list(pack.id), results.results(pack.id)]);
+        const [{ brand, product }, versions, uploads, typed, tags] = await Promise.all([this.names(pack), packs.versions(pack.id), files.list(pack.id), results.results(pack.id), creativeTags.current(pack.id)]);
         return {
           pack,
           brand,
@@ -410,6 +412,7 @@ export class PackService {
           versions: await Promise.all(versions.map(async (version) => ({ ...version, ads: await Promise.all(version.ads.map(async (ad) => ({ ...ad, viewUrl: await pictures.viewUrl(ad.key) }))) }))),
           uploads: await Promise.all(uploads.map(async ({ key, ...upload }) => ({ ...upload, ...(upload.state === "checked" && upload.type !== "text/csv" ? { openUrl: await pictures.viewUrl(key) } : {}) }))),
           results: typed,
+          creativeTags: tags,
         };
       }),
     );

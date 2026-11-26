@@ -117,4 +117,43 @@ describe("results_save", () => {
     const { packs } = await json(await studio.app.request("/api/packs", { headers: { cookie: await sessionCookie(studio) } }));
     expect(packs[0]).toMatchObject({ uploads: [{ name: "week-1.png", state: "checked", openUrl: expect.stringContaining("?signed=1") }], results: [{ adName: AD, ctr: 0.015 }] });
   });
+
+  it("saves outcome numbers exactly and counts CPM, CPA and ROAS itself", async () => {
+    const saved = (await callTool(studio, "results_save", numbers({ reach: 8000, frequency: 1.5, conversionEvent: "Purchase", conversions: 4, conversionValue: 300, currency: "SGD", spend: 100 }))).value.result;
+    expect(saved).toMatchObject({ reach: 8000, frequency: 1.5, conversionEvent: "Purchase", conversions: 4, conversionValue: 300, currency: "SGD", spend: 100 });
+    expect(saved.cpm).toBeCloseTo(8.3333);
+    expect(saved.cpa).toBe(25);
+    expect(saved.roas).toBe(3);
+    expect(await callTool(studio, "results_save", numbers({ reach: 12001 }))).toMatchObject({ ok: false, error: expect.stringMatching(/more people than its impressions/) });
+    expect(await callTool(studio, "results_save", numbers({ conversions: 1 }))).toMatchObject({ ok: false, error: expect.stringMatching(/needs the conversion event/) });
+    expect(await callTool(studio, "results_save", numbers({ conversionEvent: "Purchase" }))).toMatchObject({ ok: false, error: expect.stringMatching(/needs its count/) });
+  });
+});
+
+describe("creative tags and the performance review", () => {
+  it("versions what each ad tests and reads outcomes without calling clicks a win", async () => {
+    const tagged = (await callTool(studio, "creative_tag_save", { ...rules, batchId, ads: [{ adName: AD, person: "busy parents in Singapore", problem: "wants a snack that feels special", promise: "a crisp treat without cooking", proof: "real fish skin", hook: "the curled skin close up", format: "static image", production: "polished studio" }] })).value;
+    expect(tagged.saved[0]).toMatchObject({ adName: AD, version: 1, person: "busy parents in Singapore" });
+    const again = (await callTool(studio, "creative_tag_save", { ...rules, batchId, ads: [{ adName: AD, objection: "is it worth the price" }] })).value;
+    expect(again.saved[0]).toMatchObject({ version: 2, objection: "is it worth the price" });
+    const tags = (await callTool(studio, "creative_tags_get", { batchId })).value;
+    expect(tags.versions).toHaveLength(2);
+    expect(tags.current[0]).toMatchObject({ version: 2 });
+    expect((await callTool(studio, "creative_tag_save", { ...rules, batchId, ads: [{ adName: "a11_W47_wongi_b01_tof_c1_v9", person: "nobody" }] }))).toMatchObject({ ok: false, error: expect.stringMatching(/No version of this pack/) });
+
+    await callTool(studio, "results_save", numbers({ spend: 100, conversionEvent: "Purchase", conversions: 5, conversionValue: 400, baselineCtr: 0.01 }));
+    const review = (await callTool(studio, "performance_review", { batchId, targetCpa: 20, minimumConversions: 3 })).value.review;
+    expect(review.ads[0]).toMatchObject({ adName: AD, signal: "scale_candidate", attention: "strong" });
+    expect(review.ads[0].totals).toMatchObject({ impressions: 12000, clicks: 180, conversions: 5, conversionValue: 400, cpa: 20, roas: 4 });
+    expect(review.ads[0].tag).toMatchObject({ version: 2 });
+    expect(review.tagReads).toEqual(expect.arrayContaining([expect.objectContaining({ field: "format", value: "static image", ads: 1 })]));
+  });
+
+  it("marks clicks without complete conversion rows as attention only, and reads simple fatigue", async () => {
+    await callTool(studio, "results_save", numbers({ from: "2026-11-01", to: "2026-11-03", impressions: 10000, clicks: 200, frequency: 1.4, conversionEvent: "Purchase", conversions: 2 }));
+    await callTool(studio, "results_save", numbers({ from: "2026-11-05", to: "2026-11-07", impressions: 10000, clicks: 100, frequency: 3.4 }));
+    const review = (await callTool(studio, "performance_review", { batchId })).value.review;
+    expect(review.ads[0]).toMatchObject({ signal: "traffic_only", fatigue: "warning" });
+    expect(review.notes.join(" ")).toMatch(/clicks but no complete conversion outcome/);
+  });
 });

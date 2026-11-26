@@ -717,6 +717,8 @@ export interface PackSummary {
   /** The files the client sent. Only a picture the studio checked has an address to open; a checked CSV is read as a table. */
   uploads: (Omit<PackUpload, "key"> & { openUrl?: string })[];
   results: AdResult[];
+  /** What each ad is testing, as the studio newest reading. */
+  creativeTags: CreativeTag[];
 }
 
 /** The files a client can send through a pack link, by type, with the ending each is kept under. */
@@ -776,7 +778,25 @@ export interface AdResult {
   clicks: number;
   /** Clicks over impressions, counted by the studio. */
   ctr: number;
+  /** The people reached, when the report gives it. It is never more than the impressions. */
+  reach?: number | undefined;
+  /** The report's frequency: impressions divided by reach, before rounding. */
+  frequency?: number | undefined;
+  /** The outcome the campaign optimised for, in the report's words: Purchase, Lead, Trial and so on. */
+  conversionEvent?: string | undefined;
+  /** The count of that outcome in the period. */
+  conversions?: number | undefined;
+  /** The money value of those outcomes in the account's currency. */
+  conversionValue?: number | undefined;
+  /** The account's currency as three letters, when the report gives it. */
+  currency?: string | undefined;
   spend?: number;
+  /** Spend per thousand impressions, counted by the studio. */
+  cpm?: number | undefined;
+  /** Spend per conversion, counted by the studio. */
+  cpa?: number | undefined;
+  /** Conversion value over spend, counted by the studio. */
+  roas?: number | undefined;
   /** The client's usual CTR before these ads, for the same kind of campaign. */
   baselineCtr?: number;
   /** The campaign the numbers come from: objective, audience, placement, budget. Numbers are not compared without it. */
@@ -785,6 +805,53 @@ export interface AdResult {
   uploadId?: string;
   at: string;
   by: string;
+}
+
+/** The creative dimensions a result can teach. Each is short plain text, never a hidden id. */
+export const CREATIVE_TAG_FIELDS = ["person", "problem", "promise", "proof", "hook", "format", "production", "awareness", "objection", "visualDevice"] as const;
+export type CreativeTagField = (typeof CREATIVE_TAG_FIELDS)[number];
+export type CreativeTagInput = Partial<Record<CreativeTagField, string | undefined>>;
+
+/** What one ad is testing. A correction is a new version; the old reading stays. */
+export interface CreativeTag extends CreativeTagInput {
+  adName: string;
+  version: number;
+  at: string;
+  by: string;
+}
+
+/** The summed delivery and outcome numbers of one ad. Undefined means the report did not hold the number. */
+export interface PerformanceTotals {
+  impressions: number;
+  clicks: number;
+  ctr: number;
+  spend?: number;
+  reach?: number | undefined;
+  frequency?: number | undefined;
+  conversions?: number | undefined;
+  conversionValue?: number | undefined;
+  cpm?: number | undefined;
+  cpa?: number | undefined;
+  roas?: number | undefined;
+}
+
+/** The studio's deterministic read of one ad. It is evidence for the agent, never an automatic action. */
+export interface AdPerformanceRead {
+  adName: string;
+  totals: PerformanceTotals;
+  signal: "no_data" | "traffic_only" | "not_enough_data" | "watch" | "scale_candidate" | "stop_or_fix";
+  attention?: "strong" | "weak" | "mixed";
+  fatigue?: "warning" | "severe";
+  reasons: string[];
+  tag?: CreativeTag;
+}
+
+/** A group of ads that share one creative tag, summed for a first read only. */
+export interface TagPerformanceRead {
+  field: CreativeTagField;
+  value: string;
+  ads: number;
+  totals: PerformanceTotals;
 }
 
 /** The words the owner approved for one idea. They are set on its pictures and reused word for word. */
@@ -1519,7 +1586,7 @@ export interface AttentionLine {
 /** What waits for the owner on each part of the dashboard. A member gets the studio's number only, and it is zero. */
 export interface AttentionCounts {
   studio: number;
-  outreach?: number;
+  outreach?: number | undefined;
   clients?: number;
   taste?: number;
   connections?: number;

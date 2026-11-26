@@ -27,6 +27,7 @@ const pack: PackSummary = {
     { id: "u2", name: "invoice.png", type: "image/png", bytes: 900, packVersion: 2, at: "2026-11-25T12:01:00.000Z", state: "refused" },
   ],
   results: [{ id: "r1", adName: "a11_W47_wongi_b01_tof_c1_v2", packVersion: 2, from: "2026-11-23", to: "2026-11-25", impressions: 12000, clicks: 180, ctr: 0.015, baselineCtr: 0.011, context: "Sales, Singapore 25 to 44.", at: "2026-11-26T12:00:00.000Z", by: "owner@example.com" }],
+  creativeTags: [{ adName: "a11_W47_wongi_b01_tof_c1_v2", version: 1, person: "busy parents", problem: "wants a snack that feels special", format: "static image", at: "2026-11-22T12:00:00.000Z", by: "owner@example.com" }],
 };
 
 describe("Packs page", () => {
@@ -49,6 +50,7 @@ describe("Packs page", () => {
     expect(screen.getByRole("cell", { name: "1.50%" })).toBeInTheDocument();
     expect(screen.getByRole("cell", { name: "1.10%" })).toBeInTheDocument();
     expect(screen.getByRole("cell", { name: "12,000" })).toBeInTheDocument();
+    expect(screen.getByText(/Person: busy parents/)).toBeInTheDocument();
   });
 
   it("says what makes a pack when there is none", async () => {

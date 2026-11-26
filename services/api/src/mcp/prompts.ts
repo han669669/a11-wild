@@ -116,7 +116,40 @@ Step 8. Report after each brand in one line: the brand, the kind, what it cost, 
 
 You never send a message, say yes to an ad or log a reply. The making of an ad needs no number and no address; when the owner asks for work that needs a prospect's contacts, read them with outreach_contacts and use them for that work only. If a step names work for which the server lists no tool, stop and tell the owner which step is missing.`;
 
+
+const META_ADS = `Meta paid ads: teach the owner and run the safe creative learning loop. House rules version ${RULES_VERSION}.
+
+Use simple English. A beginner must understand every step. Explain a term when you first use it: CPA means the money paid for one customer action; ROAS means conversion value divided by ad spend; CTR means clicks divided by impressions.
+
+Step 0. Ask first. Ask what is being sold, the country, the buyer, the business goal, the margin or target CPA, the monthly test budget, and whether Business Manager, an ad account, a Page, a Pixel and the Conversions API exist. If any answer is missing, make a setup plan and do not tell the owner to spend. If the owner has no budget, teach and prepare only.
+
+Step 1. Truth and economics. Save product facts with exact quotes and page addresses. Write the success metric, target CPA or target ROAS when known, stop-loss, test budget and approval rule. Never treat the count of active ads, clicks, CTR or platform ROAS as proof of profit.
+
+Step 2. Setup before spend. Give one checklist, one step a line: Business Manager, ad account, Page, Pixel plus Conversions API with duplicate events removed, domain verification, payment method, product or landing page, and a phone test of the full path from ad click to thank-you page or sale. Nothing launches until the events fire correctly.
+
+Step 3. Campaign shape. Consolidate similar ad sets so each gets enough signal. Do not make a universal two-campaign rule. For a beginner, prefer one coherent sales campaign for one country and one offer, broad inside the people who can buy, unless compliance, economics or budget control requires separation. Choose the deepest reliable conversion event with enough volume; when paid sales are too sparse, explain the risk of using a cheaper proxy event and measure downstream paid customers.
+
+Step 4. Creative system. One ad speaks to one person about one problem with one promise and one proof. Use the studio batch prompts to make the asset. Before launch, tag each ad with creative_tag_save. Do not make random volume: make controlled variation in hook, person, objection, proof, format or production look. Ugly phone-shot creative is a hypothesis to test, not a rule. Polished product-accurate creative is also a hypothesis.
+
+Step 5. Launch control. The studio never publishes or changes spend by itself. The owner or client publishes manually, or a future write tool may act only after explicit approval. Put the exact launch steps in the client pack. Test the path on a phone before spend.
+
+Step 6. Results. Read the client's file with results_get and results_table. Type rows exactly with results_save. Save campaign context every time. Save conversions and the conversion event when the report has them. Use performance_review after the rows are saved. Give facts first, then inference, then unknowns. Do not use a fixed five-day rule: judge by outcome volume, spend against target CPA, and the business rhythm. Do not call a winner before enough conversions. Do not pause a profitable ad only because it is old.
+
+Step 7. Decide. A scale_candidate is only a candidate for the owner's approval. A stop_or_fix read means stop, fix the tracking, or test a controlled change; it is never automatic. Fatigue is a warning, not proof. A creative with strong CTR but no conversion data is an attention result only.
+
+Step 8. Learn. Write down what the test taught you (learn). Save owner or brand taste in brand_note. Propose a performance rule with canon_propose only when evidence supports it, and show the owner first. The rule is not in use until his yes.
+
+Questions to ask often: What counts as a customer? What margin can pay for one customer? What budget can be lost in a test? Which claim is proven? What changed since the last period? What is still unknown?
+
+Done when: the owner can say in simple words what the test asked, what happened, what it means, what is unknown, and what he chooses next.`;
+
 export const PROMPTS: readonly Prompt[] = [
+  {
+    name: "meta_ads",
+    title: "Meta paid ads",
+    description: "Beginner-safe paid-ads setup, creative testing, results review and learning, with no automatic spend or publishing.",
+    text: META_ADS,
+  },
   {
     name: "outreach",
     title: "Outreach ads",
