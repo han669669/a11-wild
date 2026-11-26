@@ -364,11 +364,11 @@ describe("the owner's day", () => {
     await outreach().sequence.optOut("00001");
 
     const page = await json(await get("/api/outreach/prospects/00002"));
-    expect(page.prospect.stage).not.toBe("opted_out");
+    expect(page.prospect).toMatchObject({ stage: "opted_out" });
     expect(page.contact).not.toHaveProperty("secondRoute");
 
     const contacts = await outreach().desk.contacts({ prospectId: "00002", after: 0, limit: 1 });
-    expect(contacts.prospects[0]).toMatchObject({ stage: "ready" });
+    expect(contacts.prospects[0]).toMatchObject({ stage: "opted_out" });
     expect(contacts.prospects[0]).not.toHaveProperty("secondRoute");
     expect(contacts.prospects[0]).not.toHaveProperty("second");
   });
@@ -400,9 +400,12 @@ describe("the owner's day", () => {
 
     const page = await json(await get("/api/outreach/prospects/00002"));
     expect(page.prospect).toMatchObject({ stage: "opted_out" });
+    expect(page.contact).toEqual({ whatsapp: [] });
+    expect(JSON.stringify(page)).not.toContain("6580000001");
 
     const contacts = await outreach().desk.contacts({ prospectId: "00002", after: 0, limit: 1 });
     expect(contacts.prospects[0]).toMatchObject({ stage: "opted_out" });
+    expect(contacts.prospects[0]).not.toHaveProperty("phone");
   });
 
   it("does not expose a structured route whose label contains an opted-out number", async () => {

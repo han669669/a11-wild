@@ -81,67 +81,87 @@ describe("the outreach store", () => {
     expect(stageOf((await store.all())[1]!, optOuts)).toBe("opted_out");
   });
 
-  it("registers numbers inside ambiguous route labels for opt-outs", async () => {
+  it("registers the digit stream of an ambiguous route label for opt-outs", async () => {
     const label = "WhatsApp +6580000001 (9-5)";
     await loadRows(store, [row(1, { whatsapp: undefined, secondRoute: label })], now);
     const profile = await store.get("00001");
     expect(profile.second).toBeUndefined();
-    expect(contactKeys(profile)).toContain("W#6580000001");
+    expect(contactKeys(profile)).toContain("L#658000000195");
 
     await store.addEvent(profile.id, { type: "optout" }, "owner");
     await store.addOptOut(await store.get(profile.id));
-    expect(await store.optOuts()).toContain("W#6580000001");
+    expect(await store.optOuts()).toContain("L#658000000195");
   });
 
-  it("registers numbers before nested numeric notes in route labels", async () => {
+  it("registers all label digits without parsing nested numeric notes", async () => {
     const label = "WhatsApp +6580000002 (backup +6580000001 (12))";
     await loadRows(store, [row(1, { whatsapp: undefined, secondRoute: label })], now);
     const profile = await store.get("00001");
-    expect(contactKeys(profile)).toContain("W#6580000001");
-    expect(contactKeys(profile)).not.toContain("W#658000000112");
+    expect(contactKeys(profile)).toContain("L#6580000002658000000112");
   });
 
-  it("registers backup numbers written with digit-only brackets", async () => {
+  it("registers the digit stream of backup numbers written with digit-only brackets", async () => {
     const label = "WhatsApp +6580000002 (backup +65 (8000) 0001)";
     await loadRows(store, [row(1, { whatsapp: undefined, secondRoute: label })], now);
     const profile = await store.get("00001");
     expect(contactKeys(profile)).toContain("W#6580000002");
-    expect(contactKeys(profile)).toContain("W#6580000001");
+    expect(contactKeys(profile)).toContain("L#65800000026580000001");
   });
 
-  it("registers bracketed phone routes after splitting route-label segments", async () => {
+  it("registers the digit stream of route labels with multiple segments", async () => {
     const label = "+6580000002; +65 (8000) 0001 (backup)";
     await loadRows(store, [row(1, { whatsapp: undefined, secondRoute: label })], now);
     const profile = await store.get("00001");
-    expect(contactKeys(profile)).toContain("W#6580000002");
-    expect(contactKeys(profile)).toContain("W#6580000001");
+    expect(contactKeys(profile)).toContain("L#65800000026580000001");
   });
 
-  it("registers country-code numbers without a plus from route labels", async () => {
+  it("registers country-code digits without parsing a route label", async () => {
     const label = "WhatsApp 6580000001 (9-5)";
     await loadRows(store, [row(1, { whatsapp: undefined, secondRoute: label })], now);
     const profile = await store.get("00001");
     expect(profile.second).toBeUndefined();
-    expect(contactKeys(profile)).toContain("W#6580000001");
+    expect(contactKeys(profile)).toContain("L#658000000195");
 
     await store.addEvent(profile.id, { type: "optout" }, "owner");
     await store.addOptOut(await store.get(profile.id));
-    expect(await store.optOuts()).toContain("W#6580000001");
+    expect(await store.optOuts()).toContain("L#658000000195");
   });
 
-  it("does not join a number to its numeric note when building opt-out keys", async () => {
+  it.each([
+    {
+      label: "WhatsApp +6580000002 (backup +65 (8000) 0001 (9-5))",
+      number: "+6580000001",
+      optedOut: true,
+    },
+    {
+      label: "WhatsApp +6580000002 (backup (+6580000001))",
+      number: "+6580000001",
+      optedOut: true,
+    },
+    {
+      label: "WhatsApp +6580000002 (backup 8000 0001 (9-5; weekdays))",
+      number: "8000 0001",
+      optedOut: true,
+    },
+    {
+      label: "Phone 6561 2345 (9-5)",
+      number: "+6580000003",
+      optedOut: false,
+    },
+  ])("matches opt-outs against number substrings in route labels: $label", async ({ label, number, optedOut }) => {
     await loadRows(store, [
-      row(1, { whatsapp: undefined, secondRoute: "Phone 8000 0001 (9-5)" }),
-      row(2, { whatsapp: undefined, phone: "8000000195" }),
+      row(1, { whatsapp: undefined, secondRoute: label }),
+      row(2, { whatsapp: undefined, phone: number }),
     ], now);
     const first = await store.get("00001");
     const second = await store.get("00002");
-    expect(first.second).toBeUndefined();
-    expect(contactKeys(first)).not.toContain("W#8000000195");
+    expect(contactKeys(first)).toContain(`L#${label.replace(/\D/g, "")}`);
 
     await store.addEvent(first.id, { type: "optout" }, "owner");
     await store.addOptOut(await store.get(first.id));
-    expect(stageOf({ profile: second, ads: [], sends: [], events: [] }, await store.optOuts())).not.toBe("opted_out");
+
+    const stage = stageOf({ profile: second, ads: [], sends: [], events: [] }, await store.optOuts());
+    expect(stage === "opted_out").toBe(optedOut);
   });
 
   it("keeps parenthesised phone routes distinct when one opts out", async () => {

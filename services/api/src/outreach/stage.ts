@@ -1,7 +1,7 @@
 import type { OutreachAd, OutreachChannel, OutreachEvent, OutreachStage, Prospect, ProspectFile, ProspectRoute, ProspectSendTarget, ProspectSells } from "@a11-wild/shared";
 import { blockedValues, isBlockedTarget, numberKey, type BlockedValues } from "./blocked.js";
 import { EMAIL } from "./messages.js";
-import { contactKeys } from "./store.js";
+import { inRegister } from "./store.js";
 
 /** Two tries at an ad the owner says yes to. After the second no the brand is parked. */
 export const AD_TRIES = 2;
@@ -187,7 +187,7 @@ export function channelOf(file: ProspectFile): OutreachChannel | undefined {
 export function optedOut(file: ProspectFile, optOuts: ReadonlySet<string>): boolean {
   if (file.events.some((event) => event.type === "optout")) return true;
   // A test prospect's opt-out never enters the register, and the register never reaches a test prospect.
-  return !file.profile.test && contactKeys(file.profile).some((key) => optOuts.has(key));
+  return !file.profile.test && inRegister(file.profile, optOuts);
 }
 
 /**
