@@ -13,7 +13,7 @@ import { planShowsPack } from "../pixels/plan.js";
 import type { JobStore } from "../pixels/store.js";
 import type { PickStore } from "../picks/store.js";
 import type { Pictures } from "../pictures/store.js";
-import { draftsPerIdea, type FinalRule } from "../render/service.js";
+import { draftsPerIdea, photoNamed, type FinalRule } from "../render/service.js";
 import type { RenderStore } from "../render/store.js";
 import type { TasteLog } from "../taste/log.js";
 import type { TruthStore } from "../truth/store.js";
@@ -185,14 +185,13 @@ export class BoardService implements FinalRule {
     const product = await brands.product(batch.productId);
     const packPhotos = product.photos.filter((photo) => photo.kind === "pack");
     const packKeys = new Set(packPhotos.map((photo) => photo.key));
-    const packNames = new Set(packPhotos.map((_, index) => `pack-${index + 1}`));
     const all = await renders.list(batch.id);
     let at: BatchImage | undefined = image.rootId ? await images.get(batch.id, image.rootId) : image;
     // A final is made from its draft, and a repair from its picture: a render reference or its skeleton plan can show the pack.
     for (let step = 0; at && step < 6; step += 1) {
       const render = all.find((other) => other.id === at!.id);
       if (!render) return true;
-      if ([...(render.packPhotos ?? []), ...(render.pack ? [render.pack] : [])].some((name) => packNames.has(name))) return true;
+      if ([...(render.packPhotos ?? []), ...(render.pack ? [render.pack] : [])].some((name) => photoNamed(product, name)?.kind === "pack")) return true;
       if (!render.fromId) return false;
       at = await images.get(batch.id, render.fromId);
       if (at.kind === "skeleton") return planShowsPack((await jobs.get(batch.id, at.id)).input.plan, packKeys);

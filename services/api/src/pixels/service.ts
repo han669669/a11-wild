@@ -328,8 +328,11 @@ export class PixelService {
       throw new Refusal(`This picture did not use pack photo ${options.photo}.`);
     }
 
-    if (!planShowsPack(plan, productPackKeys) && lineagePackNames.length === 0) {
-      throw new Refusal("This picture's plan has no pack 1.");
+    const hasPackItem = planShowsPack(plan, productPackKeys);
+    const firstLineagePack = lineagePackNames[0] ? photoNamed(product, lineagePackNames[0]) : undefined;
+    if (!hasPackItem) {
+      if (lineagePackNames.length === 0) throw new Refusal("This picture's plan has no pack 1.");
+      if (firstLineagePack?.kind === "pack") return { packKey: firstLineagePack.key, number: numberFor() };
     }
     if (skeleton && defaultPhoto) {
       return {
@@ -339,7 +342,6 @@ export class PixelService {
         number: numberFor(),
       };
     }
-    const firstLineagePack = lineagePackNames[0] ? photoNamed(product, lineagePackNames[0]) : undefined;
     const fallback = firstLineagePack?.kind === "pack" ? firstLineagePack : firstProductPack;
     if (!fallback) throw new Refusal("This product has no pack photo. Save one with product_photos_save first: the tool needs the real pack.");
     return { packKey: fallback.key, number: numberFor() };

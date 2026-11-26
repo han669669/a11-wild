@@ -416,6 +416,38 @@ describe("skeleton_make", () => {
     ]);
   });
 
+  it("uses a render pack reference instead of an unused skeleton default", async () => {
+    await start(undefined, fakeNet({ [PACK_TWO_URL]: { body: PNG, headers: { "content-type": "image/png" } } }));
+    const packTwo = await appendPackTwo();
+    const made = await skeleton("idea-1", {
+      plan: { bg: "E83C28", products: [{ cx: 0.5, base: 0.9, height: 0.4, photo: "food-1" }] },
+      box: [10, 20, 110, 220],
+      cutout: { darkMax: 60 },
+    });
+    const sent = await callTool(studio, "render_submit", {
+      ...rules,
+      batchId,
+      ideaId: "idea-1",
+      kind: "draft",
+      prompt: SCENE,
+      fromId: made.value.image.id,
+      references: ["pack-2"],
+    });
+    const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
+
+    await run("pack_check", { imageId, at: [512, 900], bg: "E83C28" });
+    const checkInput = studio.pixels.events.at(-1)!.input;
+    expect(checkInput).toMatchObject({ packKey: packTwo.key, pack: 1 });
+    expect(checkInput).not.toHaveProperty("box");
+    expect(checkInput).not.toHaveProperty("cutout");
+
+    await run("product_swap", { imageId, old: [400, 620, 500, 1100] });
+    const swapInput = studio.pixels.events.at(-1)!.input;
+    expect(swapInput).toMatchObject({ packKey: packTwo.key, pack: 1 });
+    expect(swapInput).not.toHaveProperty("box");
+    expect(swapInput).not.toHaveProperty("cutout");
+  });
+
   it("uses skeleton-wide pack settings for an explicitly selected default item", async () => {
     await start(undefined, fakeNet({ [PACK_TWO_URL]: { body: PNG, headers: { "content-type": "image/png" } } }));
     await appendPackTwo();

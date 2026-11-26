@@ -19,8 +19,8 @@ let batchId: string;
 /** The picture ids of the drafts, by idea, in the order they were sent. */
 let drafts: Record<string, string[]>;
 
-async function render(ideaId: string, kind: "draft" | "final", fromId?: string) {
-  const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId, kind, prompt: SCENE, ...(fromId ? { fromId } : {}) });
+async function render(ideaId: string, kind: "draft" | "final", fromId?: string, references?: string[]) {
+  const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId, kind, prompt: SCENE, ...(fromId ? { fromId } : {}), ...(references ? { references } : {}) });
   if (!sent.ok) return sent;
   return callTool(studio, "render_status", { batchId, renderId: sent.value.id });
 }
@@ -91,7 +91,7 @@ describe("checks", () => {
     expect((await studio.services.checks.measure(batchId, first!, PACK_CHECK, null)).items).toEqual([]);
   });
 
-  it("does not require pack_check for a food-only skeleton draft", async () => {
+  it("tracks food-only skeletons and zero-padded pack references correctly", async () => {
     const made = await batchAtTruth(studio);
     batchId = made.batchId;
     const product = await studio.services.brands.product(made.product.id);
@@ -107,18 +107,23 @@ describe("checks", () => {
     const skeleton = await callTool(studio, "pixel_status", { batchId, jobId: skeletonJob.value.id });
     const imageIds: string[] = [];
     let foodOnlyDraft: string | undefined;
+    let zeroPaddedPackDraft: string | undefined;
     for (const ideaId of IDEA_IDS) {
       for (let n = 0; n < draftsPerIdea("v1"); n += 1) {
         studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
         const fromId = ideaId === "idea-1" && n === 0 ? skeleton.value.image.id : undefined;
-        const rendered = await render(ideaId, "draft", fromId);
+        const references = ideaId === "idea-1" && n === 1 ? ["pack-01"] : undefined;
+        const rendered = await render(ideaId, "draft", fromId, references);
         const imageId = rendered.value.image.id as string;
         imageIds.push(imageId);
         if (fromId) foodOnlyDraft = imageId;
+        if (references) zeroPaddedPackDraft = imageId;
       }
     }
     const firstCheck = await check(foodOnlyDraft!);
     expect(firstCheck.value.stillMissing).not.toContain(`pack_check for picture ${foodOnlyDraft}`);
+    expect(firstCheck.value.stillMissing).toContain(`pack_check for picture ${zeroPaddedPackDraft}`);
+    await studio.services.checks.measure(batchId, zeroPaddedPackDraft!, PACK_CHECK, null);
     for (const imageId of imageIds.filter((id) => id !== foodOnlyDraft)) await check(imageId);
     await rankDrafts(studio, batchId);
     expect(await state()).toBe("checked");

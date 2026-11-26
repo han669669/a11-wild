@@ -128,7 +128,7 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
     defineTool({
       name: "product_reprint",
       description:
-        "Puts the real print of the pack photo back on each pack of a picture that was built round a plan skeleton. Free. Use it when the model smeared small print (D9) but kept the pack's place and shape. It makes a new picture that stands for the old one: check it again with checks_save and pack_check. The reply is a job: pixel_status gives the picture.",
+        "Puts the real print of the pack photo back on each pack of a picture that was built round a plan skeleton. Free. Use it when the model smeared small print (D9) but kept the pack's place and shape. It only works on a plan built round the default pack photo; repair a picture whose plan items name photos with product_swap. It makes a new picture that stands for the old one: check it again with checks_save and pack_check. The reply is a job: pixel_status gives the picture.",
       input: {
         batchId: id,
         imageId,
