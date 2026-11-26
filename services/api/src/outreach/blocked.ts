@@ -151,12 +151,18 @@ export function blockedValues(flags: ProspectFlag[]): BlockedValues {
       if (key.length >= 8) numbers.add(key);
     }
     for (const match of flag.text.matchAll(IG_URL_IN_TEXT)) {
-      const handle = instagramHandle(trimUrlPunctuation(match[1] ?? ""));
-      if (handle) instagram.add(`I#@${handle.toLowerCase()}`);
+      const rawUrl = match[1] ?? "";
+      for (const candidate of [rawUrl, trimUrlPunctuation(rawUrl)]) {
+        const handle = instagramHandle(candidate);
+        if (handle) instagram.add(`I#@${handle.toLowerCase()}`);
+      }
     }
     for (const match of flag.text.matchAll(IG_HANDLE_IN_TEXT)) {
-      const handle = instagramHandle(trimHandleDots(match[1] ?? ""));
-      if (handle) instagram.add(`I#@${handle.toLowerCase()}`);
+      const raw = match[1] ?? "";
+      for (const candidate of [raw, trimHandleDots(raw)]) {
+        const handle = instagramHandle(candidate);
+        if (handle) instagram.add(`I#@${handle.toLowerCase()}`);
+      }
     }
   }
   return { emails, numbers, instagram };
