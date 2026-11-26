@@ -69,7 +69,7 @@ export type PixelView = PixelJob & { image?: BatchImage & { viewUrl: string }; n
 const hashed = (colour: unknown) => `#${String(colour).replace("#", "")}`;
 const JPEG_FRAME_MARKERS = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
 
-function jpegWidth(bytes: Uint8Array): number | undefined {
+function jpegDimensions(bytes: Uint8Array): { width: number; height: number } | undefined {
   if (bytes[0] !== 0xff || bytes[1] !== 0xd8) return undefined;
   let offset = 2;
   while (offset + 3 < bytes.length) {
@@ -87,8 +87,9 @@ function jpegWidth(bytes: Uint8Array): number | undefined {
     if (length < 2 || offset + length > bytes.length) return undefined;
     if (JPEG_FRAME_MARKERS.has(marker)) {
       if (length < 7) return undefined;
+      const height = (bytes[offset + 3]! << 8) | bytes[offset + 4]!;
       const width = (bytes[offset + 5]! << 8) | bytes[offset + 6]!;
-      return width > 0 ? width : undefined;
+      return width > 0 && height > 0 ? { width, height } : undefined;
     }
     offset += length;
   }
@@ -214,7 +215,7 @@ export class PixelService {
     const { number, ...reference } = await this.packRef(input.batchId, image, {
       ...(photo !== undefined ? { photo } : {}),
       pack: pack ?? 1,
-      x: input.at[0],
+      point: input.at,
     });
     return this.start("pack_check", input.batchId, { ...rest, pack: number, ...(around ? { around } : {}), ...reference, renderKey: image.key }, { imageId: image.id });
   }
@@ -253,21 +254,31 @@ export class PixelService {
     return { ...(skeleton ? { skeleton } : {}), input, lineagePacks };
   }
 
-  private async imageWidth(image: BatchImage, context: SkeletonContext): Promise<number> {
+  private async imageSize(image: BatchImage, context: SkeletonContext): Promise<{ width: number; height: number }> {
     const bytes = await this.deps.pictures.read(image.key, MAX_PICTURE_BYTES);
-    const width = bytes && jpegWidth(bytes);
-    if (width) return width;
+    const dimensions = bytes && jpegDimensions(bytes);
+    if (dimensions) return dimensions;
     const plan = context.input.plan as { size?: unknown } | undefined;
     for (const size of [context.input.size, plan?.size]) {
-      if (Array.isArray(size) && typeof size[0] === "number" && Number.isFinite(size[0]) && size[0] > 0) return size[0];
+      if (
+        Array.isArray(size)
+        && typeof size[0] === "number"
+        && Number.isFinite(size[0])
+        && size[0] > 0
+        && typeof size[1] === "number"
+        && Number.isFinite(size[1])
+        && size[1] > 0
+      ) {
+        return { width: size[0], height: size[1] };
+      }
     }
-    return 1024;
+    return { width: 1024, height: 1280 };
   }
 
   private async packRef(
     batchId: string,
     image: BatchImage,
-    options: { photo?: string; pack?: number; x?: number } = {},
+    options: { photo?: string; pack?: number; point?: [number, number] } = {},
     context?: SkeletonContext,
   ): Promise<PackReference> {
     const { batches, brands } = this.deps;
@@ -286,7 +297,7 @@ export class PixelService {
     const defaultPhoto = namedDefault?.kind === "pack" ? namedDefault : undefined;
     const firstProductPack = productPacks[0];
     const lineagePackNames = lineagePacks.filter((name) => photoNamed(product, name)?.kind === "pack");
-    const plan = input.plan as { size?: number[]; products?: { cx: number; photoKey?: string; cutout?: Record<string, unknown>; box?: number[] }[] } | undefined;
+    const plan = input.plan as { size?: number[]; products?: { cx: number; base?: number; height?: number; photoKey?: string; cutout?: Record<string, unknown>; box?: number[] }[] } | undefined;
     const packItems = (plan?.products ?? [])
       .map((item, index) => ({ item, index }))
       .filter(({ item }) => !item.photoKey || productPacks.some((entry) => entry.key === item.photoKey))
@@ -311,12 +322,24 @@ export class PixelService {
         })
       : options.photo === undefined ? packItems : [];
     let selectedItem = candidates[0];
-    if (selectedItem && options.x !== undefined && candidates.length > 1) {
-      const x = options.x / (await this.imageWidth(image, skeletonContext));
+    if (selectedItem && options.point !== undefined && candidates.length > 1) {
+      const size = await this.imageSize(image, skeletonContext);
+      const x = options.point[0] / size.width;
+      const y = options.point[1] / size.height;
+      const useY = candidates.every(({ item }) =>
+        typeof item.base === "number" && Number.isFinite(item.base)
+        && typeof item.height === "number" && Number.isFinite(item.height),
+      );
+      const distance = ({ item }: typeof candidates[number]) => {
+        const dx = item.cx - x;
+        if (!useY) return Math.abs(dx);
+        const dy = item.base! - item.height! / 2 - y;
+        return Math.hypot(dx, dy);
+      };
       selectedItem = candidates.slice(1).reduce((nearest, candidate) => {
-        const distance = Math.abs(candidate.item.cx - x);
-        const nearestDistance = Math.abs(nearest.item.cx - x);
-        return distance < nearestDistance - 1e-12 || (Math.abs(distance - nearestDistance) <= 1e-12 && candidate.index < nearest.index) ? candidate : nearest;
+        const candidateDistance = distance(candidate);
+        const nearestDistance = distance(nearest);
+        return candidateDistance < nearestDistance - 1e-12 || (Math.abs(candidateDistance - nearestDistance) <= 1e-12 && candidate.index < nearest.index) ? candidate : nearest;
       }, selectedItem);
     }
     if (selectedItem) return itemRef(selectedItem);
@@ -366,7 +389,7 @@ export class PixelService {
     const { number, ...reference } = await this.packRef(input.batchId, image, {
       ...(photo !== undefined ? { photo } : {}),
       pack: pack ?? 1,
-      x: (input.old[0]! + input.old[1]!) / 2,
+      point: [(input.old[0]! + input.old[1]!) / 2, (input.old[2]! + input.old[3]!) / 2],
     });
     return this.start(
       "swap",
