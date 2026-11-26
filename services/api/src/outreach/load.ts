@@ -181,7 +181,8 @@ function removeBlocked(profile: Prospect): Prospect {
     return stripSegment(value) || undefined;
   };
   const cleanRoute = (route: ProspectRoute | undefined): ProspectRoute | undefined => {
-    if (!route || isRouteBlocked(route) || textShowsClosedInstagram(route.to, blocked.instagram)) return undefined;
+    if (!route || isRouteBlocked(route)) return undefined;
+    if ((route.channel === "facebook" || route.channel === "instagram") && textShowsClosedInstagram(route.to, blocked.instagram)) return undefined;
     const label = stripRoute(route.label) ?? route.label;
     const note = route.note ? stripSegment(route.note) || undefined : undefined;
     const { note: _oldNote, ...rest } = route;
