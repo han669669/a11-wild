@@ -38,8 +38,8 @@ const IG_RESERVED = new Set([
   "challenge",
   "session",
 ]);
-const IG_URL_IN_TEXT = /https?:\/\/(?:www\.)?instagram\.com\/[^\s<>()[\]"',;]+/gi;
-const IG_HANDLE_IN_TEXT = /(?:^|[^A-Za-z0-9._%+-])@([A-Za-z0-9._]{1,30})(?=$|[^A-Za-z0-9._])/g;
+export const IG_URL_IN_TEXT = /https?:\/\/(?:www\.)?instagram\.com\/[^\s<>()[\]"',;]+/gi;
+export const IG_HANDLE_IN_TEXT = /(?:^|[^A-Za-z0-9._%+-])@([A-Za-z0-9._]{1,30})(?=$|[^A-Za-z0-9._])/g;
 
 /** Extracts a canonical Instagram handle (without leading `@`) from a bare handle or single-profile URL. Rejects post/reel/multi-segment links. */
 export const instagramHandle = (value: string | undefined): string | undefined => {

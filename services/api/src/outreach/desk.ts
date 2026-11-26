@@ -4,7 +4,7 @@ import type { IdeaFinal } from "../board/service.js";
 import { Refusal } from "../mcp/registry.js";
 import { noteText } from "./candidates.js";
 import type { SpendLedger } from "../spend/ledger.js";
-import { isInstagramClosed, textShowsClosedInstagram } from "./blocked.js";
+import { blockedValues, isInstagramClosed, textShowsClosedInstagram } from "./blocked.js";
 import { labelShowsClosed } from "./routes.js";
 import { chosen, sameContact } from "./sequence.js";
 import { adWaits, candidatesWait, kindOf, optedOut, owedNow, stageOf, standingAd, TAKES_NO_AD, wantsAd } from "./stage.js";
@@ -240,16 +240,18 @@ export class OutreachDesk {
       const { instagram: _instagram, ...named } = briefOf(file);
       if (stage === "opted_out") return { ...named, stage };
       const { profile } = file;
+      const blocked = blockedValues(profile.flags ?? []);
+      const hidden = blocked.instagram.size > 0 ? new Set([...closed, ...blocked.instagram]) : closed;
       const openNumber = (number: string | undefined): boolean => Boolean(number && !closed.has(`W#${digitsOf(number)}`));
       const openEmail = (address: string | undefined): boolean => Boolean(address && !closed.has(`E#${address.toLowerCase()}`));
-      const openInstagram = (handle: string | undefined): boolean => Boolean(handle && !isInstagramClosed(handle, closed));
+      const openInstagram = (handle: string | undefined): boolean => Boolean(handle && !isInstagramClosed(handle, hidden));
       const openRouteLabel = (value: string | undefined): boolean => {
         const emails = value?.match(/[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}/gi) ?? [];
-        return emails.every(openEmail) && !labelShowsClosed(value, closed) && (!value || !textShowsClosedInstagram(value, closed));
+        return emails.every(openEmail) && !labelShowsClosed(value, closed) && (!value || !textShowsClosedInstagram(value, hidden));
       };
       const routeOpen = (route: ProspectRoute | undefined): boolean => {
         if (!route) return false;
-        if (route.channel === "instagram") return !isInstagramClosed(route.to, closed) && openRouteLabel(route.label);
+        if (route.channel === "instagram") return !isInstagramClosed(route.to, hidden) && openRouteLabel(route.label);
         const key =
           route.channel === "email"
             ? `E#${route.to.toLowerCase()}`

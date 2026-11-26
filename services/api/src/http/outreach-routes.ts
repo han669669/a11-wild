@@ -9,7 +9,7 @@ import { makeTestProspect } from "../outreach/load.js";
 import { BRAND, mailLink, messagesFor, profileLink } from "../outreach/messages.js";
 import { filtered, filterOf, numbersOf } from "../outreach/numbers.js";
 import { DAILY, nextStep, sameContact } from "../outreach/sequence.js";
-import { instagramHandle, isInstagramClosed, textShowsClosedInstagram } from "../outreach/blocked.js";
+import { blockedValues, instagramHandle, isInstagramClosed, textShowsClosedInstagram } from "../outreach/blocked.js";
 import { approvedAd, owedAnswer, optedOut, routeCheckUnresolved, sendTarget, sendTargetUnavailable, sellsOf, stageOf, targetForChannel } from "../outreach/stage.js";
 import { adView, rowOf, todayPage } from "../outreach/today.js";
 import { labelShowsClosed, routeOf } from "../outreach/routes.js";
@@ -90,17 +90,19 @@ export function outreachRoutes(
 
   const contactOf = (file: ProspectFile, optOuts: ReadonlySet<string>, closed: ReadonlySet<string>): ProspectContact => {
     const { profile } = file;
+    const blocked = blockedValues(profile.flags ?? []);
+    const hidden = blocked.instagram.size > 0 ? new Set([...closed, ...blocked.instagram]) : closed;
     const link = (href: string | undefined) => (href ? { href } : {});
     const openNumber = (value: string | undefined) => Boolean(value && !closed.has(numberKey(value)));
     const openEmail = (value: string | undefined) => Boolean(value && !closed.has(`E#${value.toLowerCase()}`));
-    const openInstagram = (value: string | undefined) => Boolean(value && !isInstagramClosed(value, closed));
+    const openInstagram = (value: string | undefined) => Boolean(value && !isInstagramClosed(value, hidden));
     const openRouteLabel = (value: string | undefined) => {
       const route = routeOf(value);
       const emails = value?.match(/[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}/gi) ?? [];
-      return (!route || routeOpen(route, closed)) && emails.every(openEmail) && !labelShowsClosed(value, closed) && (!value || !textShowsClosedInstagram(value, closed));
+      return (!route || routeOpen(route, hidden)) && emails.every(openEmail) && !labelShowsClosed(value, closed) && (!value || !textShowsClosedInstagram(value, hidden));
     };
     const openRouteObject = (route: ProspectRoute | undefined) =>
-      Boolean(route && routeOpen(route, closed) && openRouteLabel(route.label));
+      Boolean(route && routeOpen(route, hidden) && openRouteLabel(route.label));
     if (optedOut(file, optOuts)) return { whatsapp: [] };
     const target = sendTarget(file, optOuts);
     const sendTo = target && !sendTargetUnavailable(file, target, optOuts) && routeOpen(target, closed) ? target : undefined;

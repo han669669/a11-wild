@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { OUTREACH_TIERS, type OutreachTier, type Prospect, type ProspectFlag, type ProspectRoute, type ProspectSells } from "@a11-wild/shared";
 import { Refusal } from "../mcp/registry.js";
-import { blockedValues, EMAIL_IN_TEXT, isBlockedTarget, numberKey } from "./blocked.js";
+import { blockedValues, EMAIL_IN_TEXT, IG_HANDLE_IN_TEXT, IG_URL_IN_TEXT, instagramKey, isBlockedTarget, numberKey } from "./blocked.js";
 import { EMAIL } from "./messages.js";
 import { hasUnbalancedBrackets, hasUnsafePhoneRouteNote, routeOf, trailingBracketGroup } from "./routes.js";
 import { sendTarget, stageOf } from "./stage.js";
@@ -158,12 +158,15 @@ function removeBlocked(profile: Prospect): Prospect {
   const blocked = blockedValues(profile.flags ?? []);
   const isEmailBlocked = (value: string | undefined) => value !== undefined && blocked.emails.has(value.toLowerCase());
   const isNumberBlocked = (value: string | undefined) => value !== undefined && blocked.numbers.has(numberKey(value));
+  const isInstagramBlocked = (value: string | undefined) => value !== undefined && blocked.instagram.has(instagramKey(value));
   const isRouteBlocked = (value: ProspectRoute | undefined) =>
     value !== undefined && isBlockedTarget(blocked, value);
   const stripSegment = (segment: string): string =>
     segment
       .replace(EMAIL_IN_TEXT, (email) => (blocked.emails.has(email.toLowerCase()) ? "" : email))
       .replace(/\+?\d[\d().\s-]{5,}\d/g, (number) => (blocked.numbers.has(numberKey(number)) ? "" : number))
+      .replace(IG_URL_IN_TEXT, (url) => (blocked.instagram.has(instagramKey(url)) ? "" : url))
+      .replace(IG_HANDLE_IN_TEXT, (match, handle: string) => (blocked.instagram.has(instagramKey(handle)) ? match.slice(0, match.indexOf("@")) : match))
       .replace(/\s{2,}/g, " ")
       .trim();
   const stripRoute = (value: string | undefined): string | undefined => {
@@ -185,6 +188,7 @@ function removeBlocked(profile: Prospect): Prospect {
   if (isEmailBlocked(saved.dmEmail)) delete saved.dmEmail;
   if (isNumberBlocked(saved.phone)) delete saved.phone;
   if (isNumberBlocked(saved.dmPhone)) delete saved.dmPhone;
+  if (isInstagramBlocked(saved.instagram)) delete saved.instagram;
   if (isRouteBlocked(saved.route)) delete saved.route;
   if (isRouteBlocked(saved.second)) delete saved.second;
   const bestRoute = stripRoute(saved.bestRoute);
