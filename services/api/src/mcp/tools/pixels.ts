@@ -8,9 +8,10 @@ const fraction = z.number().min(0).max(1);
 const colour = z.string().regex(/^#?[0-9a-fA-F]{6}$/, "A colour as RRGGBB.");
 const box = z.tuple([px, px, px, px]);
 const packNumber = z.number().int().min(1).max(12);
+const packNumberDescription = "Number the packs of a picture from the left, 1 to 12; each pack keeps its own result.";
 const defaultPackNumber = packNumber
   .default(1)
-  .describe("Which pack this is when the picture shows more than one: 1 for the first from the left, 2 for the next. Measure every pack. Each pack keeps its own result, so a pass on one never clears a fail on another.");
+  .describe(packNumberDescription);
 const imageId = id.describe("A draft, a final, or a reprint or swap of one, of this batch.");
 
 const cutout = z
@@ -98,13 +99,13 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
       input: {
         batchId: id,
         imageId,
-        photo: z.string().regex(/^pack-\d{1,2}$/).optional().describe("The pack photo to measure, for a picture whose skeleton plan names different pack photos."),
+        photo: z.string().regex(/^pack-\d{1,2}$/).optional().describe("The pack photo of the pack you measure, when the picture shows more than one pack photo."),
         at: z.tuple([px, px]).describe("X,Y of a point inside the pack, in pixels of the picture."),
         bg: colour.describe("The stage colour as RRGGBB."),
         sideways: z.boolean().default(false).describe("The pack lies on its side."),
         tilted: z.boolean().default(false).describe("The pack is turned in the plane, for example it lies on the stage at 20 degrees. The tool turns it upright before the measure."),
         box: box.optional().describe("X0,Y0,X1,Y1 in pixels, for a pack that stands on something: a box round the pack with plain stage on its other sides, ending at the pack's base. The measure then stops at the base, so set it within a few pixels."),
-        pack: packNumber.optional().describe("With a skeleton plan, pack n is the nth pack from the left; food and props are not counted."),
+        pack: packNumber.optional().describe(packNumberDescription),
       },
       writes: true,
       handler: ({ box: around, photo, pack, ...input }) => pixels.packCheck({ ...input, ...(pack !== undefined ? { pack } : {}), ...(around ? { box: around } : {}), ...(photo !== undefined ? { photo } : {}) }),
@@ -144,8 +145,8 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
         batchId: id,
         imageId,
         old: box.describe("x0,x1,top,base of the drawn pack in the picture, in pixels."),
-        photo: z.string().regex(/^pack-\d{1,2}$/).optional().describe("The pack photo to measure, for a picture whose skeleton plan names different pack photos."),
-        pack: packNumber.optional().describe("With a skeleton plan, pack n is the nth pack from the left; food and props are not counted."),
+        photo: z.string().regex(/^pack-\d{1,2}$/).optional().describe("The pack photo of the pack you measure, when the picture shows more than one pack photo."),
+        pack: packNumber.optional().describe(packNumberDescription),
         scale: z.number().positive().max(20).optional().describe("Paste at this scale instead of fitting the old pack."),
         cx: px.optional().describe("The centre x of the pasted pack. Default: the centre of the old one."),
         lowerOnly: z.boolean().default(false).describe("Keep the scene above the label: for an open jar."),
