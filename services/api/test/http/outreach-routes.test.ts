@@ -368,6 +368,40 @@ describe("the owner's day", () => {
     expect(page.contact).not.toHaveProperty("secondRoute");
   });
 
+  it("closes a route whose nested note contains an opted-out number", async () => {
+    const label = "WhatsApp +6580000002 (backup +65 (8000) 0001)";
+    await ready([row(1, { whatsapp: "+65 8000 0001" }), row(2, { secondRoute: label })]);
+    expect(await outreach().store.get("00002")).toMatchObject({ second: { channel: "whatsapp", to: "6580000002" } });
+    await outreach().sequence.optOut("00001");
+
+    const page = await json(await get("/api/outreach/prospects/00002"));
+    expect(page.prospect).toMatchObject({ stage: "opted_out" });
+    expect(page.contact).not.toHaveProperty("secondRoute");
+    expect(page.contact).not.toHaveProperty("others.second");
+
+    const contacts = await outreach().desk.contacts({ prospectId: "00002", after: 0, limit: 1 });
+    expect(contacts.prospects[0]).toMatchObject({ stage: "opted_out" });
+    expect(contacts.prospects[0]).not.toHaveProperty("secondRoute");
+    expect(contacts.prospects[0]).not.toHaveProperty("second");
+  });
+
+  it("does not expose a structured route whose label contains an opted-out number", async () => {
+    await ready([row(1, { whatsapp: "+65 8000 0001" }), row(2, { secondRoute: "WhatsApp +6580000002 (direct line)" })]);
+    const profile = await outreach().store.get("00002");
+    await outreach().store.saveProfile({
+      ...profile,
+      second: { ...profile.second!, label: "WhatsApp +6580000002 (backup +65 (8000) 0001)" },
+    });
+    await outreach().sequence.optOut("00001");
+
+    const page = await json(await get("/api/outreach/prospects/00002"));
+    expect(page.prospect.stage).not.toBe("opted_out");
+    expect(page.contact.others).not.toHaveProperty("second");
+
+    const contacts = await outreach().desk.contacts({ prospectId: "00002", after: 0, limit: 1 });
+    expect(contacts.prospects[0]).not.toHaveProperty("second");
+  });
+
   it("does not expose a test prospect's contact when its number belongs to an opted-out brand", async () => {
     await loadProspects(studio, [row(1, { whatsapp: "+65 8000 0001" })]);
     await outreach().sequence.optOut("00001");

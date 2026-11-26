@@ -97,11 +97,13 @@ export function outreachRoutes(
       const numbers = labelNumbers(value);
       return (!route || routeOpen(route, closed)) && emails.every(openEmail) && numbers.every(openNumber);
     };
+    const openRouteObject = (route: ProspectRoute | undefined) =>
+      Boolean(route && routeOpen(route, closed) && openRouteLabel(route.label));
     if (optedOut(file, optOuts)) return { whatsapp: [] };
     const target = sendTarget(file, optOuts);
     const sendTo = target && !sendTargetUnavailable(file, target, optOuts) && routeOpen(target, closed) ? target : undefined;
     const noteForNumber = (number: string) =>
-      [profile.route, profile.second].find((route) => route?.note && routeOpen(route, closed) && numberKey(route.to) === numberKey(number))?.note;
+      [profile.route, profile.second].find((route) => route?.note && openRouteObject(route) && numberKey(route.to) === numberKey(number))?.note;
     const phoneKey = profile.phone ? numberKey(profile.phone) : undefined;
     const phoneNote =
       phoneKey && openNumber(profile.phone)
@@ -109,11 +111,11 @@ export function outreachRoutes(
             (route) =>
               route?.channel === "call" &&
               route.note &&
-              routeOpen(route, closed) &&
+              openRouteObject(route) &&
               numberKey(route.to) === phoneKey,
           )?.note
         : undefined;
-    const second = routeOpen(profile.second, closed) ? profile.second : undefined;
+    const second = openRouteObject(profile.second) ? profile.second : undefined;
     const secondHref =
       second?.channel === "whatsapp" && /^\d{10,15}$/.test(second.to) ? link(`https://wa.me/${second.to}`).href : undefined;
     const dmCheck = { valid: "checked", risky: "risky", invalid: "invalid", unknown: "not checked" } as const;

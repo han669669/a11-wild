@@ -33,16 +33,22 @@ const numberFrom = (value: string): string | undefined => {
 
 const labelNumberCandidates = (label: string | undefined, includeLabel: boolean): string[] => {
   if (!label) return [];
-  const texts = includeLabel ? [label] : [];
   const bracketContents: string[] = [];
+  const openings: number[] = [];
+  for (let i = 0; i < label.length; i += 1) {
+    if (label[i] === "(") openings.push(i);
+    else if (label[i] === ")" && openings.length > 0) {
+      const opening = openings.pop()!;
+      bracketContents.push(label.slice(opening + 1, i).replace(/[()]/g, " "));
+    }
+  }
   let withoutBrackets = label;
   while (true) {
-    for (const match of withoutBrackets.matchAll(/\(([^()]*)\)/g)) bracketContents.push(match[1]!);
     const next = withoutBrackets.replace(/\([^()]*\)/g, " ");
     if (next === withoutBrackets) break;
     withoutBrackets = next;
   }
-  texts.push(withoutBrackets, ...bracketContents);
+  const texts = includeLabel ? [label, label.replace(/[()]/g, " "), withoutBrackets, ...bracketContents] : [withoutBrackets, ...bracketContents];
   const found = new Set<string>();
   for (const text of texts) {
     for (const match of text.matchAll(/\+?\d[\d().\s-]{5,}\d/g)) found.add(match[0]);
