@@ -233,6 +233,19 @@ describe("checks", () => {
     expect((await check(repaired.value.image.id)).ok).toBe(true);
     expect(pickedStamp(legacyPick, await studio.services.images.list(batchId))?.id).toBe(pickedStampId);
 
+    const final = await render("idea-1", "final", pickedDraft);
+    expect(final.ok).toBe(true);
+    expect((await check(final.value.image.id)).ok).toBe(true);
+    const job = await callTool(studio, "photo_finish", { ...rules, batchId, imageId: final.value.image.id });
+    expect(job.ok).toBe(true);
+    const finished = await callTool(studio, "pixel_status", { batchId, jobId: job.value.id });
+    expect(finished.ok).toBe(true);
+
+    const beforeStamp = (await studio.services.board.finals(await studio.services.batches.get(batchId))).find((entry) => entry.ideaId === "idea-1");
+    expect(beforeStamp?.missing).toContain(
+      `logo_set for picture ${final.value.image.id}: the brand's real logo on the finished final`,
+    );
+
     const repairStampJob = await callTool(studio, "logo_set", {
       ...rules,
       batchId,
@@ -247,19 +260,6 @@ describe("checks", () => {
       logoKey: `brands/${brand.id}/logo.png`,
       ...repairPlacement,
     });
-
-    const final = await render("idea-1", "final", pickedDraft);
-    expect(final.ok).toBe(true);
-    expect((await check(final.value.image.id)).ok).toBe(true);
-    const job = await callTool(studio, "photo_finish", { ...rules, batchId, imageId: final.value.image.id });
-    expect(job.ok).toBe(true);
-    const finished = await callTool(studio, "pixel_status", { batchId, jobId: job.value.id });
-    expect(finished.ok).toBe(true);
-
-    const beforeStamp = (await studio.services.board.finals(await studio.services.batches.get(batchId))).find((entry) => entry.ideaId === "idea-1");
-    expect(beforeStamp?.missing).toContain(
-      `logo_set for picture ${final.value.image.id}: the brand's real logo on the finished final`,
-    );
 
     const stampedFinalJob = await callTool(studio, "logo_set", {
       ...rules,
