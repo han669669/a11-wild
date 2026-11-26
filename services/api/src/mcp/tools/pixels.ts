@@ -45,6 +45,7 @@ const plan = z
             rot: z.number().min(-15).max(15).default(0),
             photo: z.string().regex(/^(pack|food|prop)-\d{1,2}$/).optional(),
             cutout: cutout.optional(),
+            box: box.optional(),
             blur: z.number().min(0).max(12).optional(),
           })
           .strict(),
@@ -96,10 +97,11 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
     defineTool({
       name: "pack_check",
       description:
-        "Measures whether the pack in a picture is as tall and as wide as the real pack, within 2%. Free. Run it on every draft and every final that shows the pack of a product with a pack photo: the batch does not move on without it. A concept ad (v3) that shows the food alone, and whose render named no pack photo, needs none. For a skeleton-based picture, the real pack is the photo named in skeleton_make; an older skeleton without a name uses the first pack photo. Without a skeleton, it is the pack photo the render named, or the first pack photo. The pack needs a plain stage of one colour round it, apart from every other pack and thing, and seen from the front: a pack that touches another, or lies in steep perspective, cannot be measured. When it stands on something, give a box that ends at its base. When it is turned in the plane (it lies on the stage at an angle), send tilted. A fail is saved on the picture as D11, and only a later pass of this tool on the same pack of the same picture clears it. A picture with more than one pack: measure each, with its pack number. The reply is a job: pixel_status gives the measure.",
+        "Measures whether the pack in a picture is as tall and as wide as the real pack, within 2%. Free. Run it on every draft and every final that shows the pack of a product with a pack photo: the batch does not move on without it. A concept ad (v3) that shows the food alone, and whose render named no pack photo, needs none. For a skeleton-based picture, the real pack is the photo named in skeleton_make; an older skeleton without a name uses the first pack photo. Without a skeleton, it is the pack photo the render named, or the first pack photo. In a picture with two different packs, name the pack photo of the pack you measure. The pack needs a plain stage of one colour round it, apart from every other pack and thing, and seen from the front: a pack that touches another, or lies in steep perspective, cannot be measured. When it stands on something, give a box that ends at its base. When it is turned in the plane (it lies on the stage at an angle), send tilted. A fail is saved on the picture as D11, and only a later pass of this tool on the same pack of the same picture clears it. A picture with more than one pack: measure each, with its pack number. The reply is a job: pixel_status gives the measure.",
       input: {
         batchId: id,
         imageId,
+        photo: z.string().regex(/^pack-\d{1,2}$/).optional().describe("The pack photo to measure, for a picture whose skeleton plan names different pack photos."),
         at: z.tuple([px, px]).describe("X,Y of a point inside the pack, in pixels of the picture."),
         bg: colour.describe("The stage colour as RRGGBB."),
         sideways: z.boolean().default(false).describe("The pack lies on its side."),
@@ -107,7 +109,7 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
         box: box.optional().describe("X0,Y0,X1,Y1 in pixels, for a pack that stands on something: a box round the pack with plain stage on its other sides, ending at the pack's base. The measure then stops at the base, so set it within a few pixels."),        pack: packNumber,
       },
       writes: true,
-      handler: ({ box: around, ...input }) => pixels.packCheck({ ...input, ...(around ? { box: around } : {}) }),
+      handler: ({ box: around, photo, ...input }) => pixels.packCheck({ ...input, ...(around ? { box: around } : {}), ...(photo !== undefined ? { photo } : {}) }),
     }),
     defineTool({
       name: "cap_check",

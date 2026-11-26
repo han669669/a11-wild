@@ -3,6 +3,7 @@ import { PALETTE_ROLES, type ProductPhoto } from "@a11-wild/shared";
 import { brandExtract, fetchText } from "../../brand/extract.js";
 import { copyFont } from "../../brand/fonts.js";
 import { PHOTOS_MAX, type BrandStore } from "../../brand/store.js";
+import type { BatchStore } from "../../batch/store.js";
 import type { ParallelClient } from "../../parallel/client.js";
 import { copyPicture, type Pictures } from "../../pictures/store.js";
 import { asPageData, isPublicHttpsUrl, type Net, UnsafeUrlError } from "../../urlsafety.js";
@@ -10,6 +11,7 @@ import { defineTool, Refusal, type ToolDefinition } from "../registry.js";
 import { productPictures } from "../../brand/product-pictures.js";
 
 export interface BrandToolDeps {
+  batches: BatchStore;
   brands: BrandStore;
   parallel: ParallelClient;
   pictures: Pictures;
@@ -38,7 +40,7 @@ function pictureLinks(text: string): string[] {
   return [...new Set(found)].filter(isPublicHttpsUrl).slice(0, 40);
 }
 
-export function brandTools({ brands, parallel, pictures, net }: BrandToolDeps): ToolDefinition[] {
+export function brandTools({ batches, brands, parallel, pictures, net }: BrandToolDeps): ToolDefinition[] {
   return [
     defineTool({
       name: "font_save",
@@ -231,8 +233,12 @@ export function brandTools({ brands, parallel, pictures, net }: BrandToolDeps): 
         if (new Set(photos.map((photo) => photo.url)).size !== photos.length) {
           throw new Refusal("A picture is repeated in this call.");
         }
-        if (!product.photos.some((photo) => photo.kind === "pack") && photos.some((photo) => photo.kind === "pack")) {
-          throw new Refusal("This product has no pack photo, so adding one would change what its batches must measure. Save the product again with product_save and its pack photo.");
+        if (
+          !product.photos.some((photo) => photo.kind === "pack") &&
+          photos.some((photo) => photo.kind === "pack") &&
+          (await batches.list()).some((batch) => batch.productId === productId)
+        ) {
+          throw new Refusal("This product is used by a batch and has no pack photo, so adding one would change what that batch must measure. Save a new product with product_save and its pack photo.");
         }
         if (photos.some((photo) => product.photos.some((existing) => existing.sourceUrl === photo.url))) {
           throw new Refusal("A picture is already on this product.");

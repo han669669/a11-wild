@@ -313,7 +313,7 @@ describe("brand tools", () => {
     expect(appended.value.product.photos[0].key).toBe(before[0].key);
   });
 
-  it("refuses to add the first pack photo to a saved product", async () => {
+  it("adds the first pack photo to an unused product", async () => {
     const brand = await savedBrand();
     const extract = await callTool(studio, "product_extract", { brandId: brand.id, url: PRODUCT_PAGE });
     const saved = await callTool(studio, "product_save", {
@@ -321,6 +321,33 @@ describe("brand tools", () => {
       extractId: extract.value.extractId,
       name: "Seaweed crisps",
       photos: [{ url: EXTRA_ONE, kind: "food" }],
+    });
+    const appended = await callTool(studio, "product_photos_add", {
+      productId: saved.value.product.id,
+      extractId: extract.value.extractId,
+      photos: [{ url: PACK, kind: "pack" }],
+    });
+    expect(appended.value.product.photos).toMatchObject([
+      { sourceUrl: EXTRA_ONE, kind: "food" },
+      { sourceUrl: PACK, kind: "pack" },
+    ]);
+  });
+
+  it("refuses the first pack photo when a batch already uses the product", async () => {
+    const brand = await savedBrand();
+    const extract = await callTool(studio, "product_extract", { brandId: brand.id, url: PRODUCT_PAGE });
+    const saved = await callTool(studio, "product_save", {
+      brandId: brand.id,
+      extractId: extract.value.extractId,
+      name: "Seaweed crisps",
+      photos: [{ url: EXTRA_ONE, kind: "food" }],
+    });
+    await studio.services.batches.create({
+      kind: "v1",
+      brandId: brand.id,
+      productId: saved.value.product.id,
+      format: "static_4x5",
+      createdBy: "owner@example.com",
     });
     const before = studio.pictures.files.size;
 
@@ -330,7 +357,7 @@ describe("brand tools", () => {
       photos: [{ url: PACK, kind: "pack" }],
     })).toEqual({
       ok: false,
-      error: "This product has no pack photo, so adding one would change what its batches must measure. Save the product again with product_save and its pack photo.",
+      error: "This product is used by a batch and has no pack photo, so adding one would change what that batch must measure. Save a new product with product_save and its pack photo.",
     });
     expect(studio.pictures.files.size).toBe(before);
   });

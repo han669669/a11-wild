@@ -120,7 +120,16 @@ export class PixelService {
     const placement = input.placement.plan ? { ...input.placement, plan: await this.planPhotos(batch.productId, planColours(input.placement.plan)) } : input.placement;
     const product = await this.deps.brands.product(batch.productId);
     const firstPack = product.photos.find((photo) => photo.kind === "pack");
-    const packName = input.pack ?? (firstPack ? "pack-1" : undefined);
+    const planProducts = (input.placement.plan as { products?: { photo?: string }[] } | undefined)?.products ?? [];
+    const firstPlanPhoto = planProducts[0]?.photo;
+    const planPack =
+      firstPlanPhoto &&
+      /^pack-\d{1,2}$/.test(firstPlanPhoto) &&
+      planProducts.every((entry) => entry.photo === firstPlanPhoto) &&
+      photoNamed(product, firstPlanPhoto)?.kind === "pack"
+        ? firstPlanPhoto
+        : undefined;
+    const packName = input.pack ?? planPack ?? (firstPack ? "pack-1" : undefined);
     const pack = packName ? photoNamed(product, packName) : undefined;
     if (input.pack && pack?.kind !== "pack") throw new Refusal(`This product has no pack photo named ${input.pack}.`);
     // A product with no pack (a cake, a dish) is still built from real photos: each item of the plan names one.
@@ -152,11 +161,11 @@ export class PixelService {
     };
   }
 
-  async packCheck(input: { batchId: string; imageId: string; at: [number, number]; bg: string; sideways: boolean; tilted?: boolean; box?: number[]; pack?: number }): Promise<PixelView> {
+  async packCheck(input: { batchId: string; imageId: string; at: [number, number]; bg: string; sideways: boolean; tilted?: boolean; box?: number[]; pack?: number; photo?: string }): Promise<PixelView> {
     const image = await this.rendered(input.batchId, input.imageId);
-    const { batchId: _batchId, imageId: _imageId, box: around, ...rest } = input;
+    const { batchId: _batchId, imageId: _imageId, box: around, photo, ...rest } = input;
     // `box` in a job is the pack's box in the pack photo, so the box round the drawn pack goes as `around`.
-    return this.start("pack_check", input.batchId, { ...rest, ...(around ? { around } : {}), ...(await this.packOf(input.batchId, image)), renderKey: image.key }, { imageId: image.id });
+    return this.start("pack_check", input.batchId, { ...rest, ...(around ? { around } : {}), ...(await this.packOf(input.batchId, image, photo)), renderKey: image.key }, { imageId: image.id });
   }
 
   async capCheck(input: { batchId: string; imageId: string; box: number[]; split: number; pack?: number }): Promise<PixelView> {
@@ -165,22 +174,52 @@ export class PixelService {
   }
 
   /** What the skeleton of a picture was made with, through its draft when the picture is a final or a repair. */
-  private async skeletonOf(batchId: string, image: BatchImage): Promise<Record<string, unknown>> {
+  private async skeletonContext(batchId: string, image: BatchImage): Promise<{ skeleton?: BatchImage; input: Record<string, unknown> }> {
     const { images, jobs } = this.deps;
     let at: BatchImage | undefined = image;
     for (let step = 0; at && at.kind !== "skeleton" && step < 6; step += 1) at = at.fromId ? await images.get(batchId, at.fromId) : undefined;
-    return at ? { ...(await jobs.get(batchId, at.id)).input, ...(at.pack ? { pack: at.pack } : {}) } : {};
+    return at
+      ? { skeleton: at, input: { ...(await jobs.get(batchId, at.id)).input, ...(at.pack ? { pack: at.pack } : {}) } }
+      : { input: {} };
+  }
+
+  private async skeletonOf(batchId: string, image: BatchImage): Promise<Record<string, unknown>> {
+    return (await this.skeletonContext(batchId, image)).input;
   }
 
   /** The pack photo, cut out the same way as for the picture's skeleton: its tuning and its box are carried to each later tool. */
-  private async packOf(batchId: string, image: BatchImage): Promise<Record<string, unknown>> {
-    const { cutout, box, pack } = await this.skeletonOf(batchId, image);
-    const packKey = typeof pack === "string" ? await this.packKey(batchId, pack) : (await this.drawnFrom(batchId, image)) ?? (await this.packKey(batchId));
+  private async packOf(batchId: string, image: BatchImage, photo?: string): Promise<Record<string, unknown>> {
+    const { batches, brands } = this.deps;
+    const { skeleton, input } = await this.skeletonContext(batchId, image);
+    const { cutout, box, pack } = input;
+    if (photo) {
+      if (!skeleton) {
+        const drawn = await this.drawnPack(batchId, image);
+        if (!drawn || drawn.name !== photo) throw new Refusal(`This picture's render did not use pack photo ${photo}.`);
+        return { packKey: drawn.key };
+      }
+      const product = await brands.product((await batches.get(batchId)).productId);
+      const chosen = photoNamed(product, photo);
+      const plan = input.plan as { products?: { photoKey?: string; cutout?: Record<string, unknown>; box?: number[] }[] } | undefined;
+      const planProducts = plan?.products ?? [];
+      const planItem = chosen ? planProducts.find((entry) => entry.photoKey === chosen.key) : undefined;
+      if (photo !== pack && !planItem) throw new Refusal(`This picture's skeleton did not use pack photo ${photo}.`);
+      const settings = photo === pack ? { cutout, box } : planItem;
+      return {
+        packKey: await this.packKey(batchId, photo),
+        ...(settings?.cutout ? { cutout: settings.cutout } : {}),
+        ...(settings?.box ? { box: settings.box } : {}),
+      };
+    }
+    const packKey =
+      typeof pack === "string"
+        ? await this.packKey(batchId, pack)
+        : (await this.drawnPack(batchId, image))?.key ?? (await this.packKey(batchId));
     return { packKey, ...(cutout ? { cutout } : {}), ...(box ? { box } : {}) };
   }
 
   /** The pack photo the model drew a picture from, when the picture has no skeleton: the pack its render named. */
-  private async drawnFrom(batchId: string, image: BatchImage): Promise<string | undefined> {
+  private async drawnPack(batchId: string, image: BatchImage): Promise<{ name: string; key: string } | undefined> {
     const { batches, brands, images, renders } = this.deps;
     const all = await renders.list(batchId);
     let at: BatchImage | undefined = image.rootId ? await images.get(batchId, image.rootId) : image;
@@ -191,7 +230,9 @@ export class PixelService {
       if (!render) return undefined;
       if (!named && render.pack) named = render.pack;
       if (!render.fromId) {
-        return named ? photoNamed(await brands.product((await batches.get(batchId)).productId), named)?.key : undefined;
+        if (!named) return undefined;
+        const photo = photoNamed(await brands.product((await batches.get(batchId)).productId), named);
+        return photo ? { name: named, key: photo.key } : undefined;
       }
       at = await images.get(batchId, render.fromId);
       if (at.kind === "skeleton") return undefined;
