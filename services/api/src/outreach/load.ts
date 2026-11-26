@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { OUTREACH_TIERS, type OutreachTier, type Prospect, type ProspectFlag, type ProspectRoute, type ProspectSells } from "@a11-wild/shared";
 import { Refusal } from "../mcp/registry.js";
-import { blockedValues, EMAIL_IN_TEXT, IG_HANDLE_IN_TEXT, IG_URL_IN_TEXT, instagramKey, isBlockedTarget, numberKey } from "./blocked.js";
+import { blockedValues, EMAIL_IN_TEXT, IG_HANDLE_IN_TEXT, IG_URL_IN_TEXT, instagramKey, isBlockedTarget, numberKey, textShowsClosedInstagram } from "./blocked.js";
 import { EMAIL } from "./messages.js";
 import { hasUnbalancedBrackets, hasUnsafePhoneRouteNote, routeOf, trailingBracketGroup } from "./routes.js";
 import { sendTarget, stageOf } from "./stage.js";
@@ -181,7 +181,7 @@ function removeBlocked(profile: Prospect): Prospect {
     return stripSegment(value) || undefined;
   };
   const cleanRoute = (route: ProspectRoute | undefined): ProspectRoute | undefined => {
-    if (!route || isRouteBlocked(route)) return undefined;
+    if (!route || isRouteBlocked(route) || textShowsClosedInstagram(route.to, blocked.instagram)) return undefined;
     const label = stripRoute(route.label) ?? route.label;
     const note = route.note ? stripSegment(route.note) || undefined : undefined;
     const { note: _oldNote, ...rest } = route;

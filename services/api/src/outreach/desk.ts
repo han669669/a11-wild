@@ -252,12 +252,11 @@ export class OutreachDesk {
       const routeOpen = (route: ProspectRoute | undefined): boolean => {
         if (!route) return false;
         if (route.channel === "instagram") return !isInstagramClosed(route.to, hidden) && openRouteLabel(route.label);
+        if (route.channel === "facebook") return !closed.has(`F#${route.to.toLowerCase()}`) && !textShowsClosedInstagram(route.to, hidden) && openRouteLabel(route.label);
         const key =
           route.channel === "email"
             ? `E#${route.to.toLowerCase()}`
-            : route.channel === "whatsapp" || route.channel === "call"
-              ? `W#${digitsOf(route.to)}`
-              : `F#${route.to.toLowerCase()}`;
+            : `W#${digitsOf(route.to)}`;
         return !closed.has(key) && openRouteLabel(route.label);
       };
       const whatsapp = profile.whatsapp.filter(openNumber);

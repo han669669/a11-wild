@@ -75,12 +75,11 @@ export function outreachRoutes(
   const routeOpen = (route: Pick<ProspectRoute, "channel" | "to"> | undefined, closed: ReadonlySet<string>) => {
     if (!route) return false;
     if (route.channel === "instagram") return !isInstagramClosed(route.to, closed);
+    if (route.channel === "facebook") return !closed.has(`F#${route.to.toLowerCase()}`) && !textShowsClosedInstagram(route.to, closed);
     const key =
       route.channel === "email"
         ? `E#${route.to.toLowerCase()}`
-        : route.channel === "whatsapp" || route.channel === "call"
-          ? numberKey(route.to)
-          : `F#${route.to.toLowerCase()}`;
+        : numberKey(route.to);
     return !closed.has(key);
   };
   const refused = (error: unknown) => {

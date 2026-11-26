@@ -597,6 +597,17 @@ describe("the owner's day", () => {
     await outreach().store.saveProfile({ ...existing.profile, instagram: "@sample.brand" });
     expect((await json(await get("/api/outreach/prospects/00006"))).contact.instagram).toBeUndefined();
     expect((await outreach().desk.contacts({ prospectId: "00006", after: 0, limit: 10 })).prospects[0]?.instagram).toBeUndefined();
+    // A social route whose destination is a quarantined handle is dropped instead of leaking in `to`.
+    await ready([
+      row(7, {
+        whatsapp: undefined,
+        email: "ok7@example.com",
+        bestRoute: "Email (valid) ok7@example.com",
+        secondRoute: "Facebook DM @sample.brand",
+        notes: "AUDIT-FLAG: Instagram @sample.brand — do not send",
+      }),
+    ]);
+    expect((await json(await get("/api/outreach/prospects/00007"))).contact.others?.second).toBeUndefined();
   });
 });
 
