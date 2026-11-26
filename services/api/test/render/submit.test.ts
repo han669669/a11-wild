@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import type { BatchImage, Render } from "@a11-wild/shared";
 import { rankable } from "../../src/critic/packet.js";
 import { CriticStore } from "../../src/critic/store.js";
 import { RenderStore } from "../../src/render/store.js";
-import { draftsPerIdea } from "../../src/render/service.js";
+import { draftsPerIdea, roughPackReferences } from "../../src/render/service.js";
 import { RULES_VERSION } from "../../src/houserules.js";
 import { MADE_BEFORE } from "../../src/made/count.js";
 import { batchAtTruth, idea, judgeIdeas, rankDrafts, readTaste, savedProduct, sheet, v1Ideas } from "../helpers/batch.js";
@@ -67,6 +68,55 @@ async function readyBoard(leaveLastMissing = false, rank = true) {
 }
 
 beforeEach(() => batchAtIdeas());
+
+describe("roughPackReferences", () => {
+  it("uses the latest rough image before a legacy draft, not rough submission order", () => {
+    const roughA: Render = {
+      id: "rough-a",
+      batchId: "batch",
+      ideaId: "idea-1",
+      kind: "rough",
+      status: "done",
+      prompt: "",
+      pack: "pack-1",
+      imageId: "rough-a",
+      usd: 0,
+      createdAt: "2026-11-26T10:00:00.000Z",
+      updatedAt: "2026-11-26T10:00:04.000Z",
+    };
+    const roughB: Render = {
+      ...roughA,
+      id: "rough-b",
+      pack: "pack-2",
+      imageId: "rough-b",
+      createdAt: "2026-11-26T10:00:01.000Z",
+      updatedAt: "2026-11-26T10:00:03.000Z",
+    };
+    const draft: Render = {
+      id: "draft",
+      batchId: "batch",
+      ideaId: "idea-1",
+      kind: "draft",
+      status: "queued",
+      prompt: "",
+      usd: 0,
+      createdAt: "2026-11-26T10:00:05.000Z",
+      updatedAt: "2026-11-26T10:00:05.000Z",
+    };
+    const roughImages: BatchImage[] = [
+      { id: "rough-b", batchId: "batch", kind: "rough", key: "rough-b.jpg", ideaId: "idea-1", createdAt: "2026-11-26T10:00:02.000Z" },
+      { id: "rough-a", batchId: "batch", kind: "rough", key: "rough-a.jpg", ideaId: "idea-1", createdAt: "2026-11-26T10:00:04.000Z" },
+    ];
+    const product = {
+      photos: [
+        { key: "pack-a.jpg", kind: "pack" },
+        { key: "pack-b.jpg", kind: "pack" },
+      ],
+    };
+
+    expect(roughPackReferences(draft, [roughA, roughB], roughImages, "v3", product)).toEqual(["pack-1"]);
+  });
+});
 
 describe("render_submit", () => {
   it("covers AE3: refuses a prompt that asks for a headline, names R16, and sends nothing", async () => {

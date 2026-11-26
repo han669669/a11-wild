@@ -218,7 +218,8 @@ export class PixelService {
     const { batches, brands, images, jobs, renders } = this.deps;
     const batch = await batches.get(batchId);
     const product = await brands.product(batch.productId);
-    const imageById = new Map((await images.list(batchId)).map((entry) => [entry.id, entry] as const));
+    const allImages = await images.list(batchId);
+    const imageById = new Map(allImages.map((entry) => [entry.id, entry] as const));
     imageById.set(image.id, image);
     const allRenders = await renders.list(batchId);
     const renderById = new Map(allRenders.map((entry) => [entry.id, entry] as const));
@@ -237,7 +238,7 @@ export class PixelService {
         if (!lineagePacks.includes(name)) lineagePacks.push(name);
       }
       if (render) {
-        for (const name of roughPackReferences(render, allRenders, batch.kind, product)) {
+        for (const name of roughPackReferences(render, allRenders, allImages, batch.kind, product)) {
           if (!lineagePacks.includes(name)) lineagePacks.push(name);
         }
       }

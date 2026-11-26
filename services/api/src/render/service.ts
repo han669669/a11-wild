@@ -39,20 +39,19 @@ export function photoNamed(product: { photos: { kind: string; key: string }[] },
 export function roughPackReferences(
   draft: Render,
   renders: readonly Render[],
+  images: readonly BatchImage[],
   batchKind: BatchKind,
   product: { photos: { kind: string; key: string }[] },
 ): string[] {
   if (batchKind !== "v3" || draft.kind !== "draft") return [];
-  const rough = draft.roughId
-    ? renders.find((render) => render.id === draft.roughId && render.kind === "rough")
-    : [...renders]
-      .filter((render) => render.kind === "rough"
-        && render.ideaId === draft.ideaId
-        && render.status === "done"
-        && render.imageId !== undefined
-        && render.createdAt < draft.createdAt)
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
-      .at(-1);
+  const roughImage = draft.roughId ? undefined : [...images]
+    .filter((image) => image.kind === "rough"
+      && image.ideaId === draft.ideaId
+      && image.createdAt < draft.createdAt)
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+    .at(-1);
+  const roughId = draft.roughId ?? roughImage?.id;
+  const rough = roughId ? renders.find((render) => render.id === roughId && render.kind === "rough") : undefined;
   if (!rough) return [];
 
   const packs = product.photos.filter((photo) => photo.kind === "pack");

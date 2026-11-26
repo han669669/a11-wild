@@ -186,13 +186,17 @@ export class BoardService implements FinalRule {
     const packPhotos = product.photos.filter((photo) => photo.kind === "pack");
     const packKeys = new Set(packPhotos.map((photo) => photo.key));
     const all = await renders.list(batch.id);
+    let roughImages: BatchImage[] | undefined;
     let at: BatchImage | undefined = image.rootId ? await images.get(batch.id, image.rootId) : image;
     // A final is made from its draft, and a repair from its picture: a render reference or its skeleton plan can show the pack.
     for (let step = 0; at && step < 6; step += 1) {
       const render = all.find((other) => other.id === at!.id);
       if (!render) return true;
       if ([...(render.packPhotos ?? []), ...(render.pack ? [render.pack] : [])].some((name) => photoNamed(product, name)?.kind === "pack")) return true;
-      if (roughPackReferences(render, all, batch.kind, product).length > 0) return true;
+      const roughImagesForDraft = batch.kind === "v3" && render.kind === "draft" && !render.roughId
+        ? (roughImages ??= await images.list(batch.id))
+        : [];
+      if (roughPackReferences(render, all, roughImagesForDraft, batch.kind, product).length > 0) return true;
       if (!render.fromId) return false;
       at = await images.get(batch.id, render.fromId);
       if (at.kind === "skeleton") return planShowsPack((await jobs.get(batch.id, at.id)).input.plan, packKeys);
