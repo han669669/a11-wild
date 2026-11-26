@@ -87,8 +87,8 @@ describe("skeleton_make", () => {
       plan: {
         bg: "E83C28",
         products: [
-          { cx: 0.35, base: 0.9, height: 0.45, photo: "pack-2" },
-          { cx: 0.65, base: 0.9, height: 0.45, photo: "pack-2" },
+          { cx: 0.35, base: 0.9, height: 0.45, photo: "pack-2", cutout: { darkMax: 45, edges: "left" } },
+          { cx: 0.65, base: 0.9, height: 0.45, photo: "pack-2", cutout: { darkMax: 60, edges: "right" } },
         ],
       },
     });
@@ -98,39 +98,59 @@ describe("skeleton_make", () => {
     const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
     const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
     await run("pack_check", { imageId, at: [512, 900], bg: "E83C28" });
-    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, cutout: { darkMax: 45, edges: "left" } });
     await run("product_swap", { imageId, old: [400, 620, 500, 1100] });
-    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, cutout: { darkMax: 45, edges: "left" } });
+    await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", photo: "pack-2" });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, cutout: { darkMax: 45, edges: "left" } });
   });
 
-  it("uses a named plan pack and its cutout and box for a mixed-pack check", async () => {
+  it("refuses a default pack that no plan item uses", async () => {
+    await start(undefined, fakeNet({ [PACK_TWO_URL]: { body: PNG, headers: { "content-type": "image/png" } } }));
+    await appendPackTwo();
+    const made = await skeleton("idea-1", {
+      pack: "pack-1",
+      plan: {
+        bg: "E83C28",
+        products: [{ cx: 0.5, base: 0.9, height: 0.5, photo: "pack-2" }],
+      },
+    });
+    expect(made.value.image.pack).toBe("pack-1");
+
+    const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
+    const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
+    expect(await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", photo: "pack-3" })).toEqual(
+      refused(/This picture's skeleton did not use pack photo pack-3/),
+    );
+    expect(await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", photo: "pack-1" })).toEqual(
+      refused(/This picture's skeleton did not use pack photo pack-1/),
+    );
+  });
+
+  it("uses item settings for an inherited default on a legacy mixed plan", async () => {
     await start(undefined, fakeNet({ [PACK_TWO_URL]: { body: PNG, headers: { "content-type": "image/png" } } }));
     const packTwo = await appendPackTwo();
-    const product = await studio.services.brands.product((await studio.services.batches.get(batchId)).productId);
-    const packOne = product.photos.find((photo) => photo.kind === "pack")!;
-    const cutout = { darkMax: 45, edges: "left" };
-    const box = [20, 30, 300, 800];
     const made = await skeleton("idea-1", {
       pack: "pack-2",
       plan: {
         bg: "E83C28",
-        products: [{ cx: 0.5, base: 0.9, height: 0.5, photo: "pack-1", cutout, box }],
+        products: [
+          { cx: 0.35, base: 0.9, height: 0.45 },
+          { cx: 0.65, base: 0.9, height: 0.45, photo: "pack-1" },
+        ],
       },
     });
-    expect(made.value.image.pack).toBe("pack-2");
-    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key });
+    const savedImage = await studio.table.get<{ pk: string; sk: string; pack?: string }>(`BATCH#${batchId}`, `IMAGE#${made.value.image.id}`);
+    const { pack: _pack, ...legacyImage } = savedImage!;
+    await studio.table.put(legacyImage);
 
     const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
     const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
-    await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", photo: "pack-1" });
-    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packOne.key, cutout, box });
-
-    expect(await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", photo: "pack-3" })).toEqual(
-      refused(/This picture's skeleton did not use pack photo pack-3/),
-    );
+    await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", photo: "pack-2" });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key });
   });
 
-  it("only measures a drawn render against the pack photo it named", async () => {
+  it("checks any pack photo named by a skeleton-free render", async () => {
     await start(undefined, fakeNet({ [PACK_TWO_URL]: { body: PNG, headers: { "content-type": "image/png" } } }));
     const packTwo = await appendPackTwo();
     const sent = await callTool(studio, "render_submit", {
@@ -139,13 +159,14 @@ describe("skeleton_make", () => {
       ideaId: "idea-1",
       kind: "draft",
       prompt: SCENE,
-      references: ["pack-2"],
+      references: ["pack-1", "pack-2"],
     });
+    expect(await studio.services.renders.get(batchId, sent.value.id)).toMatchObject({ pack: "pack-1", packPhotos: ["pack-1", "pack-2"] });
     const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
     await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", photo: "pack-2" });
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key });
-    expect(await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", photo: "pack-1" })).toEqual(
-      refused(/This picture's render did not use pack photo pack-1/),
+    expect(await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", photo: "pack-3" })).toEqual(
+      refused(/This picture's render did not use pack photo pack-3/),
     );
   });
 

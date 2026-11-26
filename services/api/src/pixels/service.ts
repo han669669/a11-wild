@@ -194,22 +194,50 @@ export class PixelService {
     const { cutout, box, pack } = input;
     if (photo) {
       if (!skeleton) {
-        const drawn = await this.drawnPack(batchId, image);
-        if (!drawn || drawn.name !== photo) throw new Refusal(`This picture's render did not use pack photo ${photo}.`);
+        const drawn = await this.drawnPack(batchId, image, photo);
+        if (!drawn) throw new Refusal(`This picture's render did not use pack photo ${photo}.`);
         return { packKey: drawn.key };
       }
       const product = await brands.product((await batches.get(batchId)).productId);
       const chosen = photoNamed(product, photo);
       const plan = input.plan as { products?: { photoKey?: string; cutout?: Record<string, unknown>; box?: number[] }[] } | undefined;
-      const planProducts = plan?.products ?? [];
-      const planItem = chosen ? planProducts.find((entry) => entry.photoKey === chosen.key) : undefined;
-      if (photo !== pack && !planItem) throw new Refusal(`This picture's skeleton did not use pack photo ${photo}.`);
-      const settings = photo === pack ? { cutout, box } : planItem;
+      const items = plan?.products ?? [];
+      const usesDefault = !plan || items.some((entry) => !entry.photoKey);
+      let defaultName = typeof pack === "string" ? pack : undefined;
+      if (!defaultName && typeof input.packKey === "string") {
+        const packPhotos = product.photos.filter((entry) => entry.kind === "pack");
+        const index = packPhotos.findIndex((entry) => entry.key === input.packKey);
+        if (index >= 0) defaultName = `pack-${index + 1}`;
+      }
+      const planItem = chosen ? items.find((entry) => entry.photoKey === chosen.key) : undefined;
+      const settings = planItem
+        ? planItem
+        : chosen && photo === defaultName && usesDefault
+          ? { cutout, box }
+          : undefined;
+      if (!chosen || !settings) throw new Refusal(`This picture's skeleton did not use pack photo ${photo}.`);
       return {
-        packKey: await this.packKey(batchId, photo),
+        packKey: chosen.key,
         ...(settings?.cutout ? { cutout: settings.cutout } : {}),
         ...(settings?.box ? { box: settings.box } : {}),
       };
+    }
+    if (skeleton) {
+      const product = await brands.product((await batches.get(batchId)).productId);
+      const plan = input.plan as { products?: { photoKey?: string; cutout?: Record<string, unknown>; box?: number[] }[] } | undefined;
+      const items = plan?.products ?? [];
+      const usesDefault = !plan || items.some((entry) => !entry.photoKey);
+      const first = items[0];
+      if (!usesDefault && first?.photoKey && items.every((entry) => entry.photoKey === first.photoKey)) {
+        const chosen = product.photos.find((entry) => entry.key === first.photoKey);
+        if (chosen) {
+          return {
+            packKey: chosen.key,
+            ...(first.cutout ? { cutout: first.cutout } : {}),
+            ...(first.box ? { box: first.box } : {}),
+          };
+        }
+      }
     }
     const packKey =
       typeof pack === "string"
@@ -218,21 +246,26 @@ export class PixelService {
     return { packKey, ...(cutout ? { cutout } : {}), ...(box ? { box } : {}) };
   }
 
-  /** The pack photo the model drew a picture from, when the picture has no skeleton: the pack its render named. */
-  private async drawnPack(batchId: string, image: BatchImage): Promise<{ name: string; key: string } | undefined> {
+  /** The pack photos the model drew a picture from, when the picture has no skeleton. */
+  private async drawnPack(batchId: string, image: BatchImage, photo?: string): Promise<{ name: string; key: string } | undefined> {
     const { batches, brands, images, renders } = this.deps;
     const all = await renders.list(batchId);
     let at: BatchImage | undefined = image.rootId ? await images.get(batchId, image.rootId) : image;
-    // A final is made from its draft, and a repair from its picture: the first one the model drew alone names the pack.
-    let named: string | undefined;
+    const named = new Set<string>();
+    let firstName: string | undefined;
     for (let step = 0; at && step < 6; step += 1) {
       const render = all.find((other) => other.id === at!.id);
       if (!render) return undefined;
-      if (!named && render.pack) named = render.pack;
+      const renderPacks = render.packPhotos?.length ? render.packPhotos : render.pack ? [render.pack] : [];
+      for (const name of renderPacks) {
+        firstName ??= name;
+        named.add(name);
+      }
       if (!render.fromId) {
-        if (!named) return undefined;
-        const photo = photoNamed(await brands.product((await batches.get(batchId)).productId), named);
-        return photo ? { name: named, key: photo.key } : undefined;
+        const selected = photo ?? firstName;
+        if (!selected || (photo && !named.has(photo))) return undefined;
+        const found = photoNamed(await brands.product((await batches.get(batchId)).productId), selected);
+        return found?.kind === "pack" ? { name: selected, key: found.key } : undefined;
       }
       at = await images.get(batchId, render.fromId);
       if (at.kind === "skeleton") return undefined;

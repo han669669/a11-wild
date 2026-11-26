@@ -274,6 +274,7 @@ export class RenderService {
     }
 
     const pack = input.references.find((name) => name.startsWith("pack-"));
+    const packPhotos = input.references.filter((name) => name.startsWith("pack-"));
     const named = input.references.map((name) => {
       const [kind, number] = name.split("-");
       const picture = kind === "logo" ? brand.logo : photoNamed(product, name);
@@ -320,6 +321,7 @@ export class RenderService {
       ...(directionVersion !== undefined && input.draft !== undefined ? { draft: input.draft, directionVersion } : {}),
       ...(redoOf ? { redoOf } : {}),
       ...(pack ? { pack } : {}),
+      ...(packPhotos.length > 0 ? { packPhotos } : {}),
       usd,
       fal: job,
       reservation,

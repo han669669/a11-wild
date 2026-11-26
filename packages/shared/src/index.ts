@@ -921,6 +921,8 @@ export interface Render {
   redoOf?: string;
   /** The pack photo the model was given, by its name ("pack-2"), when the render named one. The pack checks measure against it. */
   pack?: string;
+  /** Every pack photo named as a reference, when there was more than one. */
+  packPhotos?: string[];
   /** The price held for it in the ledger, in US dollars. */
   usd: number;
   /** The picture it made. */
