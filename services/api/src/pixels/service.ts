@@ -262,6 +262,7 @@ export class PixelService {
     const defaultPhoto = namedDefault?.kind === "pack" ? namedDefault : undefined;
     const firstProductPack = productPacks[0];
     const lineagePackNames = lineagePacks.filter((name) => photoNamed(product, name)?.kind === "pack");
+    const lineagePackKeys = new Set(lineagePackNames.map((name) => photoNamed(product, name)?.key));
     const plan = input.plan as { products?: { cx: number; photoKey?: string; cutout?: Record<string, unknown>; box?: number[] }[] } | undefined;
     const planItems = (plan?.products ?? [])
       .map((item, index) => ({ item, index }));
@@ -324,7 +325,7 @@ export class PixelService {
     }
 
     if (options.photo !== undefined) {
-      if (selectedPhoto?.kind === "pack" && lineagePackNames.includes(options.photo)) return { packKey: selectedPhoto.key, number: numberFor() };
+      if (selectedPhoto?.kind === "pack" && lineagePackKeys.has(selectedPhoto.key)) return { packKey: selectedPhoto.key, number: numberFor() };
       throw new Refusal(`This picture did not use pack photo ${options.photo}.`);
     }
 

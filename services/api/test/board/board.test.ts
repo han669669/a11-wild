@@ -123,7 +123,15 @@ describe("checks", () => {
     const firstCheck = await check(foodOnlyDraft!);
     expect(firstCheck.value.stillMissing).not.toContain(`pack_check for picture ${foodOnlyDraft}`);
     expect(firstCheck.value.stillMissing).toContain(`pack_check for picture ${zeroPaddedPackDraft}`);
-    await studio.services.checks.measure(batchId, zeroPaddedPackDraft!, PACK_CHECK, null);
+    const packMeasure = await callTool(studio, "pack_check", {
+      batchId,
+      imageId: zeroPaddedPackDraft!,
+      photo: "pack-1",
+      at: [512, 900],
+      bg: "E83C28",
+    });
+    expect(packMeasure.ok).toBe(true);
+    await callTool(studio, "pixel_status", { batchId, jobId: packMeasure.value.id });
     for (const imageId of imageIds.filter((id) => id !== foodOnlyDraft)) await check(imageId);
     await rankDrafts(studio, batchId);
     expect(await state()).toBe("checked");
