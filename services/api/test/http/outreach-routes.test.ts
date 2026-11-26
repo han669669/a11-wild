@@ -648,8 +648,8 @@ describe("the owner's day", () => {
         channel: "whatsapp",
         to: "6580000006",
         direct: false,
-        label: "WhatsApp 80000006 (founder line @sample.brand)",
-        note: "founder line @sample.brand",
+        label: "WhatsApp 80000006 (founder line https://instagram.com/sample.brand.)",
+        note: "founder line https://instagram.com/sample.brand.",
       },
       second: {
         channel: "call",
@@ -660,8 +660,8 @@ describe("the owner's day", () => {
       },
     });
     const savedPage = await json(await get("/api/outreach/prospects/00006"));
-    expect(savedPage.contact.sendTo).toMatchObject({ channel: "whatsapp", to: "6580000006", note: "founder line" });
-    expect(savedPage.contact.whatsapp[0]?.note).toBe("founder line");
+    expect(savedPage.contact.sendTo).toMatchObject({ channel: "whatsapp", to: "6580000006", note: "founder line ." });
+    expect(savedPage.contact.whatsapp[0]?.note).toBe("founder line .");
     expect(savedPage.contact.others?.second).toMatchObject({
       channel: "call",
       to: "6560000001",
