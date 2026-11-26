@@ -401,7 +401,7 @@ describe("brand tools", () => {
     expect([...studio.pictures.files.keys()].sort()).toEqual([...filesBefore].sort());
   });
 
-  it("keeps copied photos when an append fails with an unknown error", async () => {
+  it("keeps a committed photo when its append acknowledgement is lost", async () => {
     const brand = await savedBrand();
     const extract = await callTool(studio, "product_extract", { brandId: brand.id, url: PRODUCT_PAGE });
     const saved = await callTool(studio, "product_save", {
@@ -412,7 +412,11 @@ describe("brand tools", () => {
     });
     const filesBefore = new Set(studio.pictures.files.keys());
     const remove = vi.spyOn(studio.pictures, "remove");
-    vi.spyOn(studio.services.brands, "appendProductPhotos").mockRejectedValue(new Error("Unknown append outcome."));
+    const append = studio.services.brands.appendProductPhotos.bind(studio.services.brands);
+    vi.spyOn(studio.services.brands, "appendProductPhotos").mockImplementation(async (productId, photos) => {
+      await append(productId, photos);
+      throw new Error("Lost append acknowledgement.");
+    });
 
     await expect(callTool(studio, "product_photos_add", {
       productId: saved.value.product.id,
@@ -421,9 +425,14 @@ describe("brand tools", () => {
     })).rejects.toThrow();
 
     expect(remove).not.toHaveBeenCalled();
-    expect([...studio.pictures.files.keys()].filter((key) => !filesBefore.has(key))).toEqual([
+    const addedKeys = [...studio.pictures.files.keys()].filter((key) => !filesBefore.has(key));
+    expect(addedKeys).toEqual([
       expect.stringMatching(new RegExp(`^products/${saved.value.product.id}/`)),
     ]);
+    const product = await studio.services.brands.product(saved.value.product.id);
+    const photoKey = product.photos.find((photo) => photo.sourceUrl === EXTRA_ONE)?.key;
+    expect(photoKey).toBe(addedKeys[0]);
+    expect(studio.pictures.files.has(photoKey!)).toBe(true);
   });
 
   it("does not lose either photo when two additions arrive together", async () => {
