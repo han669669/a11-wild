@@ -98,6 +98,23 @@ describe("the outreach store", () => {
     await loadRows(store, [row(1, { whatsapp: undefined, secondRoute: label })], now);
     const profile = await store.get("00001");
     expect(contactKeys(profile)).toContain("W#6580000001");
+    expect(contactKeys(profile)).not.toContain("W#658000000112");
+  });
+
+  it("registers backup numbers written with digit-only brackets", async () => {
+    const label = "WhatsApp +6580000002 (backup +65 (8000) 0001)";
+    await loadRows(store, [row(1, { whatsapp: undefined, secondRoute: label })], now);
+    const profile = await store.get("00001");
+    expect(contactKeys(profile)).toContain("W#6580000002");
+    expect(contactKeys(profile)).toContain("W#6580000001");
+  });
+
+  it("registers bracketed phone routes after splitting route-label segments", async () => {
+    const label = "+6580000002; +65 (8000) 0001 (backup)";
+    await loadRows(store, [row(1, { whatsapp: undefined, secondRoute: label })], now);
+    const profile = await store.get("00001");
+    expect(contactKeys(profile)).toContain("W#6580000002");
+    expect(contactKeys(profile)).toContain("W#6580000001");
   });
 
   it("registers country-code numbers without a plus from route labels", async () => {

@@ -40,6 +40,44 @@ const withoutBracketGroups = (value: string): string => {
   }
 };
 
+type BracketGroup = { start: number; end: number; content: string };
+
+const topLevelBracketGroups = (value: string): BracketGroup[] => {
+  const groups: BracketGroup[] = [];
+  const openings: number[] = [];
+  for (let i = 0; i < value.length; i += 1) {
+    if (value[i] === "(") openings.push(i);
+    else if (value[i] === ")" && openings.length > 0) {
+      const opening = openings.pop()!;
+      if (openings.length === 0) groups.push({ start: opening, end: i + 1, content: value.slice(opening + 1, i) });
+    }
+  }
+  return groups;
+};
+
+const completeLabelNumbers = (text: string): string[] => {
+  const candidates = new Set<string>();
+  for (const match of text.matchAll(/\+?\d[\d().\s-]{5,}\d/g)) candidates.add(match[0]);
+  return [...candidates].filter((candidate) => {
+    const digits = candidate.replace(/\D/g, "");
+    const countryCode = digits.length >= 10 && digits.length <= 15 && (candidate.startsWith("+") || !candidate.includes("+"));
+    const local = !candidate.includes("+") && /^[689]\d{7}$/.test(digits);
+    return countryCode || local;
+  });
+};
+
+const digitGroupsUnwrapped = (value: string): string => {
+  const groups = topLevelBracketGroups(value);
+  let result = "";
+  let cursor = 0;
+  for (const group of groups) {
+    result += value.slice(cursor, group.start);
+    result += /^[\d\s.-]+$/.test(group.content) ? ` ${group.content} ` : " ";
+    cursor = group.end;
+  }
+  return result + value.slice(cursor);
+};
+
 export function labelShowsClosed(label: string | undefined, closed: ReadonlySet<string>): boolean {
   const digits = label?.replace(/\D/g, "") ?? "";
   for (const key of closed) {
@@ -52,26 +90,18 @@ export function labelShowsClosed(label: string | undefined, closed: ReadonlySet<
 
 export function labelContactNumbers(label: string | undefined): string[] {
   if (!label) return [];
-  const bracketContents: string[] = [];
-  const openings: number[] = [];
-  for (let i = 0; i < label.length; i += 1) {
-    if (label[i] === "(") openings.push(i);
-    else if (label[i] === ")" && openings.length > 0) {
-      const opening = openings.pop()!;
-      bracketContents.push(withoutBracketGroups(label.slice(opening + 1, i)));
+  const keysFrom = (text: string): string[] => {
+    const keys: string[] = [];
+    for (const segment of text.split(/[;,/]/)) {
+      const candidates = completeLabelNumbers(withoutBracketGroups(segment));
+      keys.push(...(candidates.length ? candidates : completeLabelNumbers(digitGroupsUnwrapped(segment))));
+      for (const group of topLevelBracketGroups(segment)) {
+        if (/\p{L}/u.test(group.content)) keys.push(...keysFrom(group.content));
+      }
     }
-  }
-  const texts = [withoutBracketGroups(label), ...bracketContents];
-  const found = new Set<string>();
-  for (const text of texts) {
-    for (const match of text.matchAll(/\+?\d[\d().\s-]{5,}\d/g)) found.add(match[0]);
-  }
-  return [...found].filter((candidate) => {
-    const digits = candidate.replace(/\D/g, "");
-    const countryCode = digits.length >= 10 && digits.length <= 15 && (candidate.startsWith("+") || !candidate.includes("+"));
-    const local = !candidate.includes("+") && /^[689]\d{7}$/.test(digits);
-    return countryCode || local;
-  });
+    return keys;
+  };
+  return [...new Set(keysFrom(label))];
 }
 
 /** Parses the list's best-route label. A value that is not understood is not a route. */
