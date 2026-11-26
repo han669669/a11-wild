@@ -12,6 +12,7 @@ const rules = { rulesVersion: RULES_VERSION };
 const PACK = "products/p/pack.png";
 const PACK_TWO_URL = "https://cdn.wongi.example/clean-pack.png";
 const JPEG_WIDTH_512 = new Uint8Array([0xff, 0xd8, 0xff, 0xc0, 0, 17, 8, 2, 128, 2, 0, 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0]);
+const JPEG_WIDTH_1000 = new Uint8Array([0xff, 0xd8, 0xff, 0xc0, 0, 17, 8, 4, 0xe2, 3, 0xe8, 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0]);
 const JPEG_WIDTH_1536 = new Uint8Array([0xff, 0xd8, 0xff, 0xc0, 0, 17, 8, 7, 128, 6, 0, 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0]);
 
 let studio: Studio;
@@ -238,6 +239,27 @@ describe("skeleton_make", () => {
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box: lowerBox, cutout: { darkMax: 60 } });
     await run("product_swap", { imageId, old: [400, 624, 800, 1056] });
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box: lowerBox, cutout: { darkMax: 60 } });
+  });
+
+  it("prefers a pack whose vertical bounds contain the check point", async () => {
+    await start();
+    const smallBox = [10, 20, 110, 220];
+    const tallBox = [30, 40, 330, 440];
+    const made = await skeleton("idea-1", {
+      plan: {
+        bg: "E83C28",
+        products: [
+          { cx: 0.52, base: 0.35, height: 0.1, photo: "pack-1", box: smallBox, cutout: { darkMax: 30 } },
+          { cx: 0.5, base: 0.95, height: 0.5, photo: "pack-1", box: tallBox, cutout: { darkMax: 60 } },
+        ],
+      },
+    });
+    const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
+    const image = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image;
+    await studio.pictures.put(image.key, JPEG_WIDTH_1000, "image/jpeg");
+
+    expect(await run("pack_check", { imageId: image.id, at: [500, 600], bg: "E83C28" })).toMatchObject({ ok: true });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box: tallBox, cutout: { darkMax: 60 } });
   });
 
   it("uses a final's height instead of the skeleton canvas for pack selection", async () => {

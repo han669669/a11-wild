@@ -330,17 +330,24 @@ export class PixelService {
         typeof item.base === "number" && Number.isFinite(item.base)
         && typeof item.height === "number" && Number.isFinite(item.height),
       );
+      const verticalCandidates = useY
+        ? candidates.filter(({ item }) => {
+            const top = item.base! - item.height!;
+            return y >= top && y <= item.base!;
+          })
+        : [];
+      const nearestCandidates = verticalCandidates.length > 0 ? verticalCandidates : candidates;
       const distance = ({ item }: typeof candidates[number]) => {
         const dx = item.cx - x;
-        if (!useY) return Math.abs(dx);
+        if (!useY || verticalCandidates.length > 0) return Math.abs(dx);
         const dy = item.base! - item.height! / 2 - y;
         return Math.hypot(dx, dy);
       };
-      selectedItem = candidates.slice(1).reduce((nearest, candidate) => {
+      selectedItem = nearestCandidates.slice(1).reduce((nearest, candidate) => {
         const candidateDistance = distance(candidate);
         const nearestDistance = distance(nearest);
         return candidateDistance < nearestDistance - 1e-12 || (Math.abs(candidateDistance - nearestDistance) <= 1e-12 && candidate.index < nearest.index) ? candidate : nearest;
-      }, selectedItem);
+      }, nearestCandidates[0]!);
     }
     if (selectedItem) return itemRef(selectedItem);
 
