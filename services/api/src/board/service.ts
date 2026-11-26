@@ -179,14 +179,13 @@ export class BoardService implements FinalRule {
   }
 
   /** Whether a picture shows a pack, based on its render references or skeleton plan. */
-  private async showsPack(batch: Batch, image: BatchImage): Promise<boolean> {
+  private async showsPack(batch: Batch, image: BatchImage, allImages: readonly BatchImage[]): Promise<boolean> {
     if (batch.kind !== "v3" && batch.kind !== "v1") return true;
     const { brands, images, jobs, renders } = this.deps;
     const product = await brands.product(batch.productId);
     const packPhotos = product.photos.filter((photo) => photo.kind === "pack");
     const packKeys = new Set(packPhotos.map((photo) => photo.key));
     const all = await renders.list(batch.id);
-    let roughImages: BatchImage[] | undefined;
     let at: BatchImage | undefined = image.rootId ? await images.get(batch.id, image.rootId) : image;
     // A final is made from its draft, and a repair from its picture: a render reference or its skeleton plan can show the pack.
     for (let step = 0; at && step < 6; step += 1) {
@@ -194,7 +193,7 @@ export class BoardService implements FinalRule {
       if (!render) return true;
       if ([...(render.packPhotos ?? []), ...(render.pack ? [render.pack] : [])].some((name) => photoNamed(product, name)?.kind === "pack")) return true;
       const roughImagesForDraft = batch.kind === "v3" && render.kind === "draft" && !render.roughId
-        ? (roughImages ??= await images.list(batch.id))
+        ? allImages
         : [];
       if (roughPackReferences(render, all, roughImagesForDraft, batch.kind, product).length > 0) return true;
       if (!render.fromId) return false;
@@ -205,10 +204,10 @@ export class BoardService implements FinalRule {
   }
 
   /** What one picture still needs before it counts as checked: the agent's look, and the pack measure when the product has a pack photo and the picture shows the pack. */
-  private async needs(batch: Batch, image: BatchImage, hasPack: boolean, found: Map<string, ImageChecks>): Promise<string[]> {
+  private async needs(batch: Batch, image: BatchImage, hasPack: boolean, found: Map<string, ImageChecks>, allImages: readonly BatchImage[]): Promise<string[]> {
     const missing: string[] = [];
     if (!found.get(image.id)?.looked) missing.push(`checks_save for picture ${image.id}`);
-    if (hasPack && (await this.showsPack(batch, image)) && !(await this.deps.checks.measuredBy(batch.id, image.id)).includes(PACK_CHECK)) missing.push(`${PACK_CHECK} for picture ${image.id}`);
+    if (hasPack && (await this.showsPack(batch, image, allImages)) && !(await this.deps.checks.measuredBy(batch.id, image.id)).includes(PACK_CHECK)) missing.push(`${PACK_CHECK} for picture ${image.id}`);
     return missing;
   }
 
@@ -272,7 +271,7 @@ export class BoardService implements FinalRule {
       }
       // A repair of a final stands for it, and is checked again as a new picture.
       const final = countedOf(newest, all);
-      missing.push(...(await this.needs(batch, final, hasPack, found)));
+      missing.push(...(await this.needs(batch, final, hasPack, found, all)));
       const judged = judgedIn(batch, found.get(final.id));
       const warns = notesIn(batch, found.get(final.id));
       if (warns.length > 0) entry.warns = warns;
@@ -329,7 +328,7 @@ export class BoardService implements FinalRule {
         if (mine.length < perIdea) missing.push(`${perIdea - mine.length} more finished draft(s) of ${idea.id}`);
         for (const image of mine) {
           const counted = countedOf(image, all);
-          missing.push(...(await this.needs(batch, counted, hasPack, found)));
+          missing.push(...(await this.needs(batch, counted, hasPack, found, all)));
           // The owner judges an ad, not a bare photo: each draft carries the approved words and/or real logo before he sees it.
           const out = rejected(judgedIn(batch, found.get(counted.id)));
           const logo = !hasWords(batch.kind) ? logoOf(counted, all) : undefined;
@@ -536,9 +535,10 @@ export class BoardService implements FinalRule {
       );
     }
     // A repaired draft stands for the picked one, with its own checks.
-    const source = countedOf(draft, await this.deps.images.list(batch.id));
+    const allImages = await this.deps.images.list(batch.id);
+    const source = countedOf(draft, allImages);
     const hasPack = (await this.deps.brands.product(batch.productId)).photos.some((photo) => photo.kind === "pack");
-    const unchecked = await this.needs(batch, source, hasPack, await this.deps.checks.all(batch.id));
+    const unchecked = await this.needs(batch, source, hasPack, await this.deps.checks.all(batch.id), allImages);
     if (unchecked.length > 0) throw new Refusal(`R35: the repair of this draft is not checked yet, so it cannot become a final. Still missing: ${unchecked.join("; ")}.`);
     // In an outreach batch the owner picked this draft with the pack measure's warning before him.
     const defect = defectOf(judgedIn(batch, await this.deps.checks.get(batch.id, source.id)));
