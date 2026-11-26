@@ -10,7 +10,8 @@ import type { Pictures } from "../pictures/store.js";
 import type { RenderStore } from "../render/store.js";
 import type { BriefStore } from "../brief/store.js";
 import { Refusal } from "../mcp/registry.js";
-import { DRAFTS_PER_IDEA } from "../render/service.js";
+import { draftsPerIdea } from "../render/service.js";
+import { IDEAS_PER_BATCH } from "../ideas/checks.js";
 import type { TruthStore } from "../truth/store.js";
 import { burstPacket, conceptsPacket, draftsPacket, ideasPacket, rankable } from "./packet.js";
 import type { CriticStep, CriticStore, Ticket } from "./store.js";
@@ -100,9 +101,10 @@ export class CriticService {
       return { ...ideasPacket(common, ideas), ...(await critic.issue(batchId, { step, ideaIds: ideas.map((idea) => idea.id), stamp })) };
     }
     if (!RANKING.includes(batch.state)) requireMove(batch, "checked", "critic_open");
-    const open = rankable(await board.board(batchId), DRAFTS_PER_IDEA);
+    const perIdea = draftsPerIdea(batch.kind);
+    const open = rankable(await board.board(batchId), perIdea);
     if (open.length === 0) {
-      throw new Refusal(`No idea of this batch can be ranked now. An idea is ranked when its ${DRAFTS_PER_IDEA} drafts are finished and the owner has not chosen for it yet.`);
+      throw new Refusal(`No idea of this batch can be ranked now. An idea is ranked when its ${perIdea} drafts are finished and the owner has not chosen for it yet.`);
     }
     const shown = Object.fromEntries(open.flatMap(({ drafts }) => drafts.map((draft) => [draft.imageId, draft.shownId])));
     return { ...draftsPacket(common, open), ...(await critic.issue(batchId, { step, ideaIds: open.map(({ idea }) => idea.id), stamp, shown })) };
@@ -206,7 +208,7 @@ export class CriticService {
   async select(batchId: string, ticket: string, picks: StagePick[]) {
     const { batches, critic } = this.deps;
     const batch = await batches.get(batchId);
-    if (!hasWords(batch.kind)) throw new Refusal("A v1 batch has three ideas, and the critic keeps or cuts each one: use critic_pick.");
+    if (!hasWords(batch.kind)) throw new Refusal(`A v1 batch has ${IDEAS_PER_BATCH} ideas, and the critic keeps or cuts each one: use critic_pick.`);
     if (batch.state !== "ideas") requireMove(batch, "judged", "critic_select");
     const stages = picks.map((pick) => pick.stage);
     if (!same(stages, [...FUNNEL_STAGES])) throw new Refusal("Give each of tof, mof and bof once: an idea, or ideaId null to refuse the stage.");
@@ -278,7 +280,7 @@ export class CriticService {
         ? "Report the ideas you kept, with your reasons. The main agent takes the one it is most sure of and goes on; it starts no other critic for the ideas."
         : cut.length > 0
           ? "Report your advice and reasons for each idea. In v1 the critic advises and never blocks: the main agent may refine cut ideas (ideas_save) or go on to drafts with the owner's direction."
-          : "Report that the three ideas are kept, with your reasons. The main agent now sends one draft to read its price.",
+          : `Report that all ${IDEAS_PER_BATCH} ideas are kept, with your reasons. The main agent now sends one draft to read its price.`,
     };
   }
 
@@ -288,7 +290,7 @@ export class CriticService {
     const batch = await batches.get(batchId);
     if (!RANKING.includes(batch.state)) requireMove(batch, "checked", "critic_rank");
     const { shown = {} } = await this.ticket(batch, ticket, "drafts", ranks.map((rank) => rank.ideaId));
-    const open = rankable(await board.board(batchId), DRAFTS_PER_IDEA);
+    const open = rankable(await board.board(batchId), draftsPerIdea(batch.kind));
     const saved: Omit<CriticRank, "at">[] = [];
     for (const rank of ranks) {
       const entry = open.find(({ idea }) => idea.id === rank.ideaId);

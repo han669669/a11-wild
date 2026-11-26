@@ -1,11 +1,12 @@
 import type { BatchKind, Idea } from "@a11-wild/shared";
+import { IDEAS_PER_BATCH } from "../../src/ideas/checks.js";
 import { savedProduct } from "./batch.js";
 import type { Studio } from "./deps.js";
 
 const STAGES = ["tof", "mof", "bof"] as const;
 
 /**
- * A batch whose three ideas each have the owner's pick, put there through the stores:
+ * A batch whose five v1 ideas each have the owner's pick, put there through the stores:
  * the steps before it have their own tests. The words on the pictures are approved.
  */
 export async function pickedBatch(studio: Studio, kind: BatchKind = "v2", create: { test?: true } = {}, of?: Awaited<ReturnType<typeof savedProduct>>) {
@@ -13,7 +14,9 @@ export async function pickedBatch(studio: Studio, kind: BatchKind = "v2", create
   const made = await studio.services.batches.create({ kind, brandId: brand.id, productId: product.id, format: "static_4x5", createdBy: "owner@example.com", ...create });
   const batch = { ...made, state: "finals" as const };
   await studio.table.put({ pk: "BATCH", sk: batch.id, ...batch });
-  const ideas = STAGES.map((stage, index) => ({ id: `idea-${index + 1}`, title: `Idea ${index + 1}`, ...(kind === "v1" ? {} : { stage }) })) as Idea[];
+  const ideas = (kind === "v1"
+    ? Array.from({ length: IDEAS_PER_BATCH }, (_, index) => ({ id: `idea-${index + 1}`, title: `Idea ${index + 1}` }))
+    : STAGES.map((stage, index) => ({ id: `idea-${index + 1}`, title: `Idea ${index + 1}`, stage }))) as Idea[];
   await studio.services.batches.saveIdeas(batch.id, ideas, "owner@example.com");
   for (const { id } of ideas) {
     await studio.services.picks.save(batch.id, { ideaId: id, imageId: `${id}-d1`, ownerSaid: "this one", by: "owner@example.com" });

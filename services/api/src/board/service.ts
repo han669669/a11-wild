@@ -11,7 +11,7 @@ import type { ImageStore } from "../images/store.js";
 import { Refusal } from "../mcp/registry.js";
 import type { PickStore } from "../picks/store.js";
 import type { Pictures } from "../pictures/store.js";
-import { DRAFTS_PER_IDEA, type FinalRule } from "../render/service.js";
+import { draftsPerIdea, type FinalRule } from "../render/service.js";
 import type { RenderStore } from "../render/store.js";
 import type { TasteLog } from "../taste/log.js";
 import type { TruthStore } from "../truth/store.js";
@@ -318,7 +318,8 @@ export class BoardService implements FinalRule {
       for (const idea of ideas) {
         const mine = drafts.get(idea.id) ?? [];
         const words = approved.find((copy) => copy.ideaId === idea.id);
-        if (mine.length < DRAFTS_PER_IDEA) missing.push(`${DRAFTS_PER_IDEA - mine.length} more finished draft(s) of ${idea.id}`);
+        const perIdea = draftsPerIdea(batch.kind);
+        if (mine.length < perIdea) missing.push(`${perIdea - mine.length} more finished draft(s) of ${idea.id}`);
         for (const image of mine) {
           const counted = countedOf(image, all);
           missing.push(...(await this.needs(batch, counted, hasPack, found)));

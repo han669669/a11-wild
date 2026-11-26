@@ -371,7 +371,7 @@ describe("an outreach batch and outreach_attach", () => {
     const early = (await batchAtTruth(studio, { prospectId: "00002" })).batchId;
     expect(await callTool(studio, "outreach_show", { batchId: early })).toMatchObject({ ok: false, error: expect.stringMatching(/shown when each one is made, checked/) });
     const batchId = await outreachBatch(studio, "00001", { upTo: "checked" });
-    expect((await callTool(studio, "outreach_show", { batchId })).value).toMatchObject({ drafts: 9, canBePicked: 9, already: false, note: expect.stringMatching(/pick nothing and make no final/) });
+    expect((await callTool(studio, "outreach_show", { batchId })).value).toMatchObject({ drafts: 10, canBePicked: 10, already: false, note: expect.stringMatching(/pick nothing and make no final/) });
     expect((await callTool(studio, "outreach_show", { batchId })).value).toMatchObject({ already: true });
     const file = (await outreach().store.all())[0]!;
     expect(file.events.filter((event) => event.type === "candidates")).toHaveLength(1);

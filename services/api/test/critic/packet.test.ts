@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { TICKET_MINUTES } from "../../src/critic/store.js";
 import { RULES_VERSION } from "../../src/houserules.js";
-import { batchAtTruth, idea, judgeIdeas, rankDrafts } from "../helpers/batch.js";
+import { draftsPerIdea } from "../../src/render/service.js";
+import { batchAtTruth, idea, judgeIdeas, rankDrafts, v1Ideas } from "../helpers/batch.js";
 import { approvedClient, callTool, createStudio, type Studio } from "../helpers/deps.js";
 
 const rules = { rulesVersion: RULES_VERSION };
@@ -13,7 +14,7 @@ let studio: Studio;
 let batchId: string;
 
 const open = (step: "ideas" | "drafts", freshHelper = true) => callTool(studio, "critic_open", { batchId, step, freshHelper });
-const keepAll = (ticket: string, ideas = ["idea-1", "idea-2", "idea-3"]) =>
+const keepAll = (ticket: string, ideas = ["idea-1", "idea-2", "idea-3", "idea-4", "idea-5"]) =>
   callTool(studio, "critic_pick", { ...rules, batchId, ticket, ideas: ideas.map((ideaId) => ({ ideaId, verdict: "keep", reason: WHY })) });
 const state = async () => (await callTool(studio, "batch_get", { batchId })).value.batch.state;
 
@@ -21,13 +22,13 @@ beforeEach(async () => {
   studio = await createStudio();
   await approvedClient(studio);
   batchId = (await batchAtTruth(studio)).batchId;
-  await callTool(studio, "ideas_save", { ...rules, batchId, ideas: [idea(1), idea(2), idea(3)] });
+  await callTool(studio, "ideas_save", { ...rules, batchId, ideas: v1Ideas() });
 });
 
 describe("the blind judgement of the ideas", () => {
   it("gives a fresh helper the ideas without their author's notes, and a ticket", async () => {
     const packet = (await open("ideas")).value;
-    expect(packet.ideas.map((entry: { id: string }) => entry.id)).toEqual(["idea-1", "idea-2", "idea-3"]);
+    expect(packet.ideas.map((entry: { id: string }) => entry.id)).toEqual(["idea-1", "idea-2", "idea-3", "idea-4", "idea-5"]);
     expect(Object.keys(packet.ideas[0]).sort()).toEqual(["device", "elements", "focalPoint", "id", "references", "title", "visual"]);
     expect(JSON.stringify(packet)).not.toMatch(/coverTest|killTest|Only this brand sells the sea/);
     expect(packet).toMatchObject({ step: "ideas", brand: { name: "WonGi" }, product: { name: "Seaweed crisps" }, truthSheet: { version: 1 }, ticket: expect.any(String) });
@@ -42,16 +43,21 @@ describe("the blind judgement of the ideas", () => {
     expect(await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE })).toEqual(refused(/batch is at "ideas".*critic_open/));
   });
 
-  it("moves the batch to judged when all three ideas are kept, and takes a ticket once", async () => {
+  it("moves the batch to judged when all five ideas are kept, and takes a ticket once", async () => {
     const { ticket } = (await open("ideas")).value;
     expect((await keepAll(ticket)).value).toMatchObject({ state: "judged" });
     expect(await keepAll(ticket)).toEqual(refused(/already at "judged"|ticket is not valid/));
-    expect((await callTool(studio, "batch_get", { batchId })).value.criticOnIdeas.verdicts).toHaveLength(3);
+    expect((await callTool(studio, "batch_get", { batchId })).value.criticOnIdeas.verdicts).toHaveLength(5);
   });
 
   it("refuses a second use of a ticket and advises without blocking in v1", async () => {
     const { ticket } = (await open("ideas")).value;
-    const cut = { ...rules, batchId, ticket, ideas: [{ ideaId: "idea-1", verdict: "cut", reason: WHY }, { ideaId: "idea-2", verdict: "keep", reason: WHY }, { ideaId: "idea-3", verdict: "keep", reason: WHY }] };
+    const cut = {
+      ...rules,
+      batchId,
+      ticket,
+      ideas: ["idea-1", "idea-2", "idea-3", "idea-4", "idea-5"].map((ideaId, index) => ({ ideaId, verdict: index === 0 ? "cut" : "keep", reason: WHY })),
+    };
     expect((await callTool(studio, "critic_pick", cut)).value).toMatchObject({ state: "judged", cut: [{ ideaId: "idea-1" }] });
     expect(await keepAll(ticket)).toEqual(refused(/already at "judged"|ticket is not valid/));
     expect(await state()).toBe("judged");
@@ -60,7 +66,9 @@ describe("the blind judgement of the ideas", () => {
   it("refuses a ticket that ran out, a pick that skips an idea, and a ticket made for other ideas", async () => {
     const first = (await open("ideas")).value.ticket;
     expect(await keepAll(first, ["idea-1", "idea-2"])).toEqual(refused(/Judge each idea of the packet once/));
-    await callTool(studio, "ideas_save", { ...rules, batchId, ideas: [idea(1), idea(2), idea(4)] });
+    const changed = v1Ideas();
+    changed[2] = idea(6);
+    await callTool(studio, "ideas_save", { ...rules, batchId, ideas: changed });
     expect(await keepAll(first)).toEqual(refused(/ideas of this batch changed/));
     const second = (await open("ideas")).value.ticket;
     studio.clock.now = new Date(studio.clock.now.getTime() + (TICKET_MINUTES + 1) * 60_000);
@@ -78,8 +86,8 @@ describe("the blind rank of the drafts", () => {
   beforeEach(async () => {
     await judgeIdeas(studio, batchId);
     drafts = {};
-    for (const ideaId of ["idea-1", "idea-2", "idea-3"]) {
-      for (let n = 0; n < 3; n++) {
+    for (const ideaId of ["idea-1", "idea-2", "idea-3", "idea-4", "idea-5"]) {
+      for (let n = 0; n < draftsPerIdea("v1"); n++) {
         studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
         const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId, kind: "draft", prompt: SCENE });
         (drafts[ideaId] ??= []).push((await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id);
@@ -91,7 +99,7 @@ describe("the blind rank of the drafts", () => {
   it("gives each idea's drafts with what a tool measured, and none of the agent's own notes", async () => {
     await studio.services.checks.measure(batchId, drafts["idea-1"]![0]!, "pack_check", { code: "D11", note: "The pouch is 5% wider than the packshot." });
     const packet = (await open("drafts")).value;
-    expect(packet.ideas.map((entry: { drafts: unknown[] }) => entry.drafts.length)).toEqual([3, 3, 3]);
+    expect(packet.ideas.map((entry: { drafts: unknown[] }) => entry.drafts.length)).toEqual([2, 2, 2, 2, 2]);
     expect(packet.ideas[0].drafts[0]).toEqual({ imageId: drafts["idea-1"]![0], shownId: drafts["idea-1"]![0], viewUrl: expect.any(String), measured: [{ code: "D11", note: "The pouch is 5% wider than the packshot.", tool: "pack_check" }] });
     expect(JSON.stringify(packet)).not.toMatch(/A little busy|killTest/);
   });
@@ -104,7 +112,8 @@ describe("the blind rank of the drafts", () => {
     swapped[0]!.order[0]!.imageId = drafts["idea-2"]![0]!;
     expect(await rank(packet.ticket, swapped)).toEqual(refused(/Put every draft of idea-1 in the order once/));
     expect(await rank(packet.ticket, ranks(packet).slice(1))).toEqual(refused(/Judge each idea of the packet once/));
-    expect((await rank(packet.ticket)).value).toMatchObject({ state: "checked", saved: ["idea-1", "idea-2", "idea-3"] });
+    expect(packet.ideas.every((entry: { drafts: { imageId: string }[] }) => entry.drafts.length === draftsPerIdea("v1"))).toBe(true);
+    expect((await rank(packet.ticket)).value).toMatchObject({ state: "checked", saved: ["idea-1", "idea-2", "idea-3", "idea-4", "idea-5"] });
     expect(await rank(packet.ticket)).toEqual(refused(/ticket is not valid/));
   });
 
@@ -112,7 +121,7 @@ describe("the blind rank of the drafts", () => {
     const packet = (await open("drafts")).value;
     await callTool(studio, "critic_rank", { ...rules, batchId, ticket: packet.ticket, ranks: ranks(packet, (ids) => [...ids].reverse()) });
     const before = (await callTool(studio, "board_show", { batchId })).value;
-    expect(before.ideas.map((entry: { rank: unknown }) => entry.rank)).toEqual([null, null, null]);
+    expect(before.ideas.map((entry: { rank: unknown }) => entry.rank)).toEqual([null, null, null, null, null]);
     expect(JSON.stringify(before)).not.toContain(WHY);
     await pick("idea-1", drafts["idea-1"]![0]!);
     const after = (await callTool(studio, "board_show", { batchId })).value;
@@ -126,7 +135,7 @@ describe("the blind rank of the drafts", () => {
     await pick("idea-1", drafts["idea-1"]![1]!);
     await pick("idea-2", null);
     const packet = (await open("drafts")).value;
-    expect(packet.ideas.map((entry: { idea: { id: string } }) => entry.idea.id)).toEqual(["idea-3"]);
+    expect(packet.ideas.map((entry: { idea: { id: string } }) => entry.idea.id)).toEqual(["idea-3", "idea-4", "idea-5"]);
     expect(JSON.stringify(packet)).not.toMatch(/"pick"|ownerSaid|it is calm|"order"|"rank"/);
     // A ticket from before his pick cannot rank the idea he has chosen for.
     expect(await callTool(studio, "critic_rank", { ...rules, batchId, ticket: early.ticket, ranks: ranks(early) })).toEqual(refused(/drafts of idea-1 cannot be ranked now: the owner has chosen/));
@@ -158,24 +167,24 @@ describe("the blind rank of the drafts", () => {
   it("counts only the owner's first choice, which he made before he saw the critic's order", async () => {
     await rankDrafts(studio, batchId);
     studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
-    // His first choice was the critic's third place. He then saw the order and changed to its first place.
-    await pick("idea-1", drafts["idea-1"]![2]!);
+    // His first choice was the critic's second place. He then saw the order and changed to its first place.
+    await pick("idea-1", drafts["idea-1"]![1]!);
     studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
     const changed = (await pick("idea-1", drafts["idea-1"]![0]!)).value.pick;
-    expect(changed).toMatchObject({ imageId: drafts["idea-1"]![0], first: { imageId: drafts["idea-1"]![2] } });
+    expect(changed).toMatchObject({ imageId: drafts["idea-1"]![0], first: { imageId: drafts["idea-1"]![1] } });
     studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
-    expect((await pick("idea-1", drafts["idea-1"]![1]!)).value.pick.first).toMatchObject({ imageId: drafts["idea-1"]![2] });
+    expect((await pick("idea-1", drafts["idea-1"]![1]!)).value.pick.first).toMatchObject({ imageId: drafts["idea-1"]![1] });
     const report = (await callTool(studio, "calibration_report", {})).value;
-    expect(report.picks).toMatchObject({ firstPlace: { k: 0, n: 1 }, byPlace: { "3": 1 } });
+    expect(report.picks).toMatchObject({ firstPlace: { k: 0, n: 1 }, byPlace: { "2": 1 } });
   });
 
   it("counts how often the owner picked the critic's first place", async () => {
     await rankDrafts(studio, batchId);
     studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
     await pick("idea-1", drafts["idea-1"]![0]!);
-    await pick("idea-2", drafts["idea-2"]![2]!);
+    await pick("idea-2", drafts["idea-2"]![1]!);
     await pick("idea-3", null);
     const report = (await callTool(studio, "calibration_report", {})).value;
-    expect(report.picks).toEqual({ firstPlace: { k: 1, n: 2, value: 0.5, interval: expect.any(Array), note: expect.stringMatching(/small sample/) }, byPlace: { "1": 1, "3": 1 } });
+    expect(report.picks).toEqual({ firstPlace: { k: 1, n: 2, value: 0.5, interval: expect.any(Array), note: expect.stringMatching(/small sample/) }, byPlace: { "1": 1, "2": 1 } });
   });
 });

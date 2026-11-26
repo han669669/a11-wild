@@ -127,6 +127,9 @@ describe("pack_publish", () => {
 
   it("keeps completed v1 finals and packs deliverable after a later logo save", async () => {
     await setUp("v1");
+    for (const ideaId of ["idea-4", "idea-5"]) {
+      await studio.services.picks.save(batchId, { ideaId, imageId: null, ownerSaid: "he passed", by: "owner@example.com" });
+    }
     await approve();
     await state("done");
     const ideas = ["idea-1", "idea-2", "idea-3"];
@@ -179,8 +182,11 @@ describe("pack_publish", () => {
 
     studio.services.board.finals = actualFinals;
     const before = await actualFinals(await studio.services.batches.get(batchId));
-    expect(before).toHaveLength(3);
-    expect(before.every((entry) => entry.missing.length === 0 && entry.delivered?.kind === "finish")).toBe(true);
+    expect(before).toHaveLength(5);
+    const deliveredBefore = before.filter((entry) => entry.delivered);
+    expect(before.every((entry) => entry.missing.length === 0)).toBe(true);
+    expect(deliveredBefore).toHaveLength(3);
+    expect(deliveredBefore.every((entry) => entry.delivered?.kind === "finish")).toBe(true);
 
     const brand = await studio.services.brands.brand(batchOf!.brand.id);
     const offer = await studio.services.brands.offer({
@@ -196,8 +202,11 @@ describe("pack_publish", () => {
     expect(saved.ok).toBe(true);
     expect(await studio.services.batches.get(batchId)).toMatchObject({ state: "done" });
     const after = await actualFinals(await studio.services.batches.get(batchId));
-    expect(after).toHaveLength(3);
-    expect(after.every((entry) => entry.missing.length === 0 && entry.delivered?.kind === "finish")).toBe(true);
+    expect(after).toHaveLength(5);
+    const deliveredAfter = after.filter((entry) => entry.delivered);
+    expect(after.every((entry) => entry.missing.length === 0)).toBe(true);
+    expect(deliveredAfter).toHaveLength(3);
+    expect(deliveredAfter.every((entry) => entry.delivered?.kind === "finish")).toBe(true);
 
     expect((await publish()).ok).toBe(true);
     expect((await callTool(studio, "pack_update", { ...rules, batchId })).value.version.version).toBe(2);

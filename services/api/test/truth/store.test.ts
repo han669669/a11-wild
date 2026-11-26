@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { RULES_VERSION } from "../../src/houserules.js";
-import { idea, PAGE, readTaste, savedProduct, sheet } from "../helpers/batch.js";
+import { PAGE, readTaste, savedProduct, sheet, v1Ideas } from "../helpers/batch.js";
 import { approvedClient, callTool, createStudio, type Studio } from "../helpers/deps.js";
 import { extractReply } from "../helpers/parallel.js";
 
@@ -58,7 +58,7 @@ describe("truth sheet", () => {
     const first = await callTool(studio, "truth_save", { batchId, ...sheet, measures: [{ name: "pack height", value: 180, unit: "mm" }] });
     expect(first.value.truthSheet.version).toBe(1);
     await readTaste(studio, batchId);
-    await callTool(studio, "ideas_save", { rulesVersion: RULES_VERSION, batchId, ideas: [idea(1), idea(2), idea(3)] });
+    await callTool(studio, "ideas_save", { rulesVersion: RULES_VERSION, batchId, ideas: v1Ideas() });
 
     const later = (await callTool(studio, "batch_create", { kind: "v1", brandId, productId })).value.batch.id;
     // A new batch sees the product's sheet before it saves one, and a save that changes nothing keeps the version.

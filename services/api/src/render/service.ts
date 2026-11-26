@@ -1,4 +1,4 @@
-import type { Batch, BatchImage, Idea, Render, RenderKind } from "@a11-wild/shared";
+import type { Batch, BatchImage, BatchKind, Idea, Render, RenderKind } from "@a11-wild/shared";
 import { hasWords, requireMove, StateError, stepAfter } from "../batch/state.js";
 import type { DirectionStore } from "../direction/store.js";
 import type { BatchStore } from "../batch/store.js";
@@ -18,6 +18,7 @@ import { renderRules, wordsAsked } from "./prompt-guard.js";
 import { publicRender, type RenderStore, type StoredRender } from "./store.js";
 
 export const DRAFTS_PER_IDEA = 3;
+export const draftsPerIdea = (kind: BatchKind): number => (kind === "v1" ? 2 : DRAFTS_PER_IDEA);
 /** A final that fails its checks may be made again, this many times for one idea. */
 export const FINALS_PER_IDEA = 3;
 export const REFERENCES_MAX = 4;
@@ -236,8 +237,9 @@ export class RenderService {
           redoOf = before.id;
         }
       }
-      if (mine.length - (redoOf ? 1 : 0) >= DRAFTS_PER_IDEA) {
-        throw new Refusal(`Idea ${idea.id} has its ${DRAFTS_PER_IDEA} drafts. A failed render can be sent again; a finished draft can be made again once with redo only if its checks reject it.`);
+      const perIdea = draftsPerIdea(batch.kind);
+      if (mine.length - (redoOf ? 1 : 0) >= perIdea) {
+        throw new Refusal(`Idea ${idea.id} has its ${perIdea} drafts. A failed render can be sent again; a finished draft can be made again once with redo only if its checks reject it.`);
       }
       const hasPack = product.photos.some((photo) => photo.kind === "pack");
       if (input.fromId) {
@@ -259,7 +261,7 @@ export class RenderService {
         const unsent = shows.filter((name) => !input.references.includes(name));
         if (unsent.length > 0) throw new Refusal(`Real photos first: idea ${idea.id} shows ${unsent.join(", ")}. Give the real photo of each one in references.`);
       }
-      count = (await batches.ideas(batch.id)).length * DRAFTS_PER_IDEA;
+      count = (await batches.ideas(batch.id)).length * draftsPerIdea(batch.kind);
     } else {
       if (!["waiting_pick", "finals"].includes(batch.state)) requireMove(batch, "finals", "render_submit");
       if (!input.fromId) throw new Refusal("A final is made from the draft the owner picked. Give that draft's picture id as fromId.");

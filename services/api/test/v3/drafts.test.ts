@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { batchAtTruth, idea, judgeIdeas } from "../helpers/batch.js";
+import { batchAtTruth, judgeIdeas, v1Ideas } from "../helpers/batch.js";
 import { approvedClient, callTool, createStudio, type Studio } from "../helpers/deps.js";
 import { directionOf, rules, v3AtDirected } from "../helpers/v3.js";
 
@@ -103,7 +103,7 @@ describe("a draft of a concept ad", () => {
 
   it("keeps the draft number for v3 only", async () => {
     const v1 = await batchAtTruth(studio);
-    await callTool(studio, "ideas_save", { ...rules, batchId: v1.batchId, ideas: [idea(1), idea(2), idea(3)] });
+    await callTool(studio, "ideas_save", { ...rules, batchId: v1.batchId, ideas: v1Ideas() });
     await judgeIdeas(studio, v1.batchId);
     const before = studio.fal.submits().length;
     const refused = await callTool(studio, "render_submit", { ...rules, batchId: v1.batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, references: [], draft: 1 });

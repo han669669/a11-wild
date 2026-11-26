@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { batchAtTruth, idea, judgeIdeas } from "../helpers/batch.js";
+import { batchAtTruth, judgeIdeas, v1Ideas } from "../helpers/batch.js";
 import { approvedClient, callTool, createStudio, type Studio } from "../helpers/deps.js";
 import type { FalCall } from "../helpers/fal.js";
 import { brief, concepts, rules, v3AtConcepts, v3AtTruth } from "../helpers/v3.js";
@@ -121,7 +121,7 @@ describe("a rough of a concept", () => {
     expect(before.ok).toBe(false);
 
     const v1 = await batchAtTruth(studio);
-    await callTool(studio, "ideas_save", { ...rules, batchId: v1.batchId, ideas: [idea(1), idea(2), idea(3)] });
+    await callTool(studio, "ideas_save", { ...rules, batchId: v1.batchId, ideas: v1Ideas() });
     await judgeIdeas(studio, v1.batchId);
     const wrong = await callTool(studio, "render_submit", { ...rules, batchId: v1.batchId, ideaId: "idea-1", kind: "rough", prompt: SCENE, references: [] });
     expect(wrong).toMatchObject({ ok: false, error: expect.stringMatching(/Only a batch of concept ads \(v3\) has roughs/) });

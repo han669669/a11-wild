@@ -1,4 +1,5 @@
 import type { Batch, BatchKind, BatchState } from "@a11-wild/shared";
+import { IDEAS_PER_BATCH } from "../ideas/checks.js";
 import { Refusal } from "../mcp/registry.js";
 
 /** A kind with words stops for the owner's approval of them before any draft. */
@@ -15,7 +16,7 @@ const STEP: Record<BatchState, string> = {
   intake: "choose a saved brand and product (batch_create)",
   truth: "save the product's truth sheet (truth_save)",
   briefed: "save the brief with the buyer insights (brief_save)",
-  ideas: "save three ideas (ideas_save)",
+  ideas: `save ${IDEAS_PER_BATCH} ideas (ideas_save)`,
   reviewed: 'the review of every concept, by a fresh helper that gets the batch id only: critic_open with step "concepts", then concept_review_save',
   judged: 'the blind pick, by a fresh helper that gets the batch id only: critic_open with step "ideas", then critic_pick',
   worded: "the owner's yes to the words of each idea, saved with his exact words (copy_approve)",

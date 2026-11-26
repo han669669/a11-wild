@@ -1,11 +1,18 @@
 import { randomUUID } from "node:crypto";
-import type { BrandKit, Product } from "@a11-wild/shared";
+import type { BrandKit, Product, ProductPhoto } from "@a11-wild/shared";
 import { Refusal } from "../mcp/registry.js";
 import { type Item, record, type Table } from "../store/table.js";
 
 const DAY_SECONDS = 24 * 60 * 60;
 const BRANDS = "BRAND";
+export const PHOTOS_MAX = 16;
 const brandKey = (brandId: string) => `BRAND#${brandId}`;
+type ProductItem = Item & Product & { photoVersion?: string };
+
+function productRecord(item: ProductItem): Product {
+  const { photoVersion: _photoVersion, ...product } = record<ProductItem>(item);
+  return product;
+}
 
 /**
  * What an extract or a picture search offered. Kept for a day, so that a save can prove the
@@ -67,7 +74,7 @@ export class BrandStore {
     await this.brand(product.brandId);
     const before = product.id ? await this.table.get<Item & Product>(brandKey(product.brandId), `PRODUCT#${product.id}`) : undefined;
     const saved: Product = { ...product, id: product.id ?? randomUUID(), createdAt: before?.createdAt ?? this.now().toISOString() };
-    await this.table.put({ pk: brandKey(saved.brandId), sk: `PRODUCT#${saved.id}`, ...saved });
+    await this.table.put({ pk: brandKey(saved.brandId), sk: `PRODUCT#${saved.id}`, ...saved, photoVersion: randomUUID() });
     // A second item finds the product by its id alone.
     await this.table.put({ pk: "PRODUCT", sk: saved.id, brandId: saved.brandId });
     return saved;
@@ -75,16 +82,39 @@ export class BrandStore {
 
   async product(productId: string): Promise<Product> {
     const pointer = await this.table.get<Item & { brandId: string }>("PRODUCT", productId);
-    const item = pointer && (await this.table.get<Item & Product>(brandKey(pointer.brandId), `PRODUCT#${productId}`));
+    const item = pointer && (await this.table.get<ProductItem>(brandKey(pointer.brandId), `PRODUCT#${productId}`));
     if (!item) throw new Refusal(`There is no product ${productId}. Call brand_list for the saved products.`);
-    return record<Product>(item);
+    return productRecord(item);
+  }
+
+  async appendProductPhotos(productId: string, photos: ProductPhoto[]): Promise<Product> {
+    const pointer = await this.table.get<Item & { brandId: string }>("PRODUCT", productId);
+    const item = pointer && (await this.table.get<ProductItem>(brandKey(pointer.brandId), `PRODUCT#${productId}`));
+    if (!item) throw new Refusal(`There is no product ${productId}. Call brand_list for the saved products.`);
+
+    const product = productRecord(item);
+    const duplicates = photos.filter((photo) => product.photos.some((existing) => existing.sourceUrl === photo.sourceUrl));
+    if (duplicates.length > 0) throw new Refusal(`The picture ${duplicates[0]!.sourceUrl} is already on this product.`);
+    if (photos.length > 1 && new Set(photos.map((photo) => photo.sourceUrl)).size !== photos.length) {
+      throw new Refusal("A picture is repeated in this call.");
+    }
+    if (product.photos.length + photos.length > PHOTOS_MAX) {
+      throw new Refusal(`This product can hold at most ${PHOTOS_MAX} photos.`);
+    }
+
+    const next: ProductItem = { ...item, photos: [...product.photos, ...photos], photoVersion: randomUUID() };
+    const saved = item.photoVersion
+      ? await this.table.put(next, { ifEquals: { attribute: "photoVersion", value: item.photoVersion } })
+      : await this.table.put(next, { ifNotExistsAttribute: "photoVersion" });
+    if (!saved) throw new Refusal("The product's photos changed while they were being added. Run product_photos_add again.");
+    return productRecord(next);
   }
 
   async products(brandId: string): Promise<Product[]> {
-    const items = await this.table.query<Item & Product>(brandKey(brandId));
+    const items = await this.table.query<ProductItem>(brandKey(brandId));
     return items
       .filter((item) => item.sk.startsWith("PRODUCT#"))
-      .map((item) => record<Product>(item))
+      .map(productRecord)
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 }

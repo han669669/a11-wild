@@ -41,7 +41,7 @@ export function boardTools({ board }: { board: BoardService }): ToolDefinition[]
     defineTool({
       name: "board_show",
       description:
-        "The pick board of a batch: each idea's drafts, numbered 1 to 3 in the order they were sent, beside the product's truth sheet, with any D or F item named on the draft. Free. The numbers are names, not a rank: never rank the drafts for the owner and never pick for him. Show him the pictures, or send him to the board in the dashboard. A batch whose drafts are all checked now waits for his pick.",
+        "The pick board of a batch: each idea's drafts, numbered in the order they were sent, beside the product's truth sheet, with any D or F item named on the draft. Free. The numbers are names, not a rank: never rank the drafts for the owner and never pick for him. Show him the pictures, or send him to the board in the dashboard. A batch whose drafts are all checked now waits for his pick.",
       input: { batchId: id },
       writes: true,
       handler: ({ batchId }) => board.show(batchId),

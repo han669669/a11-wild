@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { PACK_CHECK, pickedStamp } from "../../src/board/service.js";
 import { RULES_VERSION } from "../../src/houserules.js";
-import { batchAtTruth, idea, judgeIdeas, rankDrafts } from "../helpers/batch.js";
+import { draftsPerIdea } from "../../src/render/service.js";
+import { IDEAS_PER_BATCH } from "../../src/ideas/checks.js";
+import { batchAtTruth, judgeIdeas, rankDrafts, v1Ideas } from "../helpers/batch.js";
 import { approvedClient, callTool, config, createStudio, json, sessionCookie, type Studio } from "../helpers/deps.js";
 import { fakeNet } from "../helpers/net.js";
 
@@ -10,6 +12,7 @@ const LOGO_URL = "https://wongi.example/logo.png";
 const REAL_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=", "base64");
 const refused = (pattern: RegExp) => ({ ok: false, error: expect.stringMatching(pattern) });
 const rules = { rulesVersion: RULES_VERSION };
+const IDEA_IDS = Array.from({ length: IDEAS_PER_BATCH }, (_, index) => `idea-${index + 1}`);
 
 let studio: Studio;
 let batchId: string;
@@ -22,16 +25,16 @@ async function render(ideaId: string, kind: "draft" | "final", fromId?: string) 
   return callTool(studio, "render_status", { batchId, renderId: sent.value.id });
 }
 
-/** A batch with nine finished drafts, none checked yet. */
+/** A v1 batch with ten finished drafts, none checked yet. */
 async function batchWithDrafts() {
   studio = await createStudio({ net: fakeNet({ [LOGO_URL]: { body: REAL_PNG, headers: { "content-type": "image/png" } } }) });
   await approvedClient(studio);
   batchId = (await batchAtTruth(studio)).batchId;
-  await callTool(studio, "ideas_save", { ...rules, batchId, ideas: [idea(1), idea(2), idea(3)] });
+  await callTool(studio, "ideas_save", { ...rules, batchId, ideas: v1Ideas() });
   await judgeIdeas(studio, batchId);
   drafts = {};
-  for (const ideaId of ["idea-1", "idea-2", "idea-3"]) {
-    for (let n = 0; n < 3; n++) {
+  for (const ideaId of IDEA_IDS) {
+    for (let n = 0; n < draftsPerIdea("v1"); n++) {
       studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
       (drafts[ideaId] ??= []).push((await render(ideaId, "draft")).value.image.id);
     }
@@ -67,7 +70,7 @@ describe("checks", () => {
     const one = await check(first!, [{ code: "F6", note: "Seven things to look at." }]);
     expect(one.value).toMatchObject({ state: "drafting", checks: { looked: true, items: [{ code: "F6" }] } });
     // Eight more looks, and the blind critic's rank of each idea's drafts.
-    expect(one.value.stillMissing).toHaveLength(11);
+    expect(one.value.stillMissing).toHaveLength(14);
     expect(await callTool(studio, "board_show", { batchId })).toEqual(refused(/board is not ready.*checks_save for picture/));
     // The dashboard shows the drafts so far, and tells the owner that he cannot pick yet.
     const early = await json(await studio.app.request(`/api/batches/${batchId}/board`, { headers: { cookie: await sessionCookie(studio) } }));
@@ -75,7 +78,7 @@ describe("checks", () => {
     for (const imageId of rest) await check(imageId);
     expect(await state()).toBe("drafting");
     expect(await callTool(studio, "board_show", { batchId })).toEqual(refused(/still missing: the blind critic's rank of the drafts of idea-1/i));
-    expect((await rankDrafts(studio, batchId)).value).toMatchObject({ state: "checked", saved: ["idea-1", "idea-2", "idea-3"] });
+    expect((await rankDrafts(studio, batchId)).value).toMatchObject({ state: "checked", saved: IDEA_IDS });
   });
 
   it("keeps a D item that a tool measured: the agent's save cannot remove it", async () => {
@@ -302,13 +305,13 @@ describe("checks", () => {
 describe("pick board", () => {
   beforeEach(checkAll);
 
-  it("shows each idea's three drafts numbered in the order they were sent, with no rank, beside the truth sheet", async () => {
+  it("shows five ideas with two drafts each numbered in order, with no rank, beside the truth sheet", async () => {
     const board = (await callTool(studio, "board_show", { batchId })).value;
     expect(board.batch.state).toBe("waiting_pick");
     expect(board.truthSheet).toMatchObject({ version: 1 });
-    expect(board.ideas).toHaveLength(3);
+    expect(board.ideas).toHaveLength(IDEAS_PER_BATCH);
     for (const entry of board.ideas) {
-      expect(entry.drafts.map((draft: { number: number }) => draft.number)).toEqual([1, 2, 3]);
+      expect(entry.drafts.map((draft: { number: number }) => draft.number)).toEqual([1, 2]);
       expect(entry.drafts.map((draft: { image: { id: string } }) => draft.image.id)).toEqual(drafts[entry.idea.id]);
       expect(entry.pick).toBeNull();
       // The blind critic has ranked these drafts. The board keeps that from him until he has picked.
@@ -323,23 +326,23 @@ describe("pick board", () => {
     expect(await pick("idea-1", drafts["idea-2"]![0]!)).toEqual(refused(/not a draft of idea-1/));
     expect((await pick("idea-1", drafts["idea-1"]![1]!)).value.pick).toMatchObject({ ideaId: "idea-1", imageId: drafts["idea-1"]![1], by: "owner@example.com" });
     const log = (await callTool(studio, "taste_log", {})).value.entries;
-    expect(log[0]).toMatchObject({ kind: "pick", ownerSaid: "this one, the rock reads at once", about: "WonGi, Seaweed crisps. Idea 1: draft 2 of 3.", batchId, ideaId: "idea-1", draftId: drafts["idea-1"]![1] });
+    expect(log[0]).toMatchObject({ kind: "pick", ownerSaid: "this one, the rock reads at once", about: "WonGi, Seaweed crisps. Idea 1: draft 2 of 2.", batchId, ideaId: "idea-1", draftId: drafts["idea-1"]![1] });
   });
 
-  it("saves a pass on all three drafts with the owner's note", async () => {
+  it("saves a pass on both drafts with the owner's note", async () => {
     await pick("idea-2", null, "none of these: the wave hides the pack");
     const log = (await callTool(studio, "taste_log", {})).value.entries;
-    expect(log[0]).toMatchObject({ kind: "pass", ownerSaid: "none of these: the wave hides the pack", about: expect.stringMatching(/passed on all 3 drafts/) });
+    expect(log[0]).toMatchObject({ kind: "pass", ownerSaid: "none of these: the wave hides the pack", about: expect.stringMatching(/passed on all 2 drafts/) });
     expect((await callTool(studio, "board_show", { batchId })).value.ideas[1].pick).toMatchObject({ imageId: null });
   });
 
   it("replaces a pick with a second one for the same idea and keeps both in the log", async () => {
     await pick("idea-1", drafts["idea-1"]![0]!, "first thought");
     studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
-    await pick("idea-1", drafts["idea-1"]![2]!, "no, the third: calmer");
-    expect((await callTool(studio, "board_show", { batchId })).value.ideas[0].pick).toMatchObject({ imageId: drafts["idea-1"]![2] });
+    await pick("idea-1", drafts["idea-1"]![1]!, "no, the second: calmer");
+    expect((await callTool(studio, "board_show", { batchId })).value.ideas[0].pick).toMatchObject({ imageId: drafts["idea-1"]![1] });
     const log = (await callTool(studio, "taste_log", {})).value.entries.filter((entry: { ideaId?: string }) => entry.ideaId === "idea-1");
-    expect(log.map((entry: { ownerSaid: string }) => entry.ownerSaid)).toEqual(["no, the third: calmer", "first thought"]);
+    expect(log.map((entry: { ownerSaid: string }) => entry.ownerSaid)).toEqual(["no, the second: calmer", "first thought"]);
   });
 
   it("gives the board to a signed-in dashboard and takes the owner's pick there, from the same origin only", async () => {
@@ -391,13 +394,15 @@ describe("finals", () => {
   it("moves the batch to finished when every picked idea has a checked final with no D item", async () => {
     await pick("idea-1", drafts["idea-1"]![0]!);
     await pick("idea-2", null, "none");
-    await pick("idea-3", drafts["idea-3"]![2]!);
+    await pick("idea-3", drafts["idea-3"]![1]!);
+    await pick("idea-4", null, "none");
+    await pick("idea-5", null, "none");
     const first = await render("idea-1", "final", drafts["idea-1"]![0]);
     expect(first.value.note).toMatch(/2 finals come to about US\$0\.15, under US\$1/);
     const bad = await check(first.value.image.id, [{ code: "D10", note: "The pack keeps its studio highlight." }]);
     expect(bad.value).toMatchObject({ state: "finals", stillMissing: expect.arrayContaining([expect.stringMatching(/^a finished final of idea-3, from the picked draft/)]) });
 
-    const third = await render("idea-3", "final", drafts["idea-3"]![2]);
+    const third = await render("idea-3", "final", drafts["idea-3"]![1]);
     await check(third.value.image.id);
     expect(await state()).toBe("finals");
     // The failed final is made again; the newest one is the one that counts.
@@ -431,8 +436,13 @@ describe("finals", () => {
   it("does not finish while an idea has no pick and no pass", async () => {
     await pick("idea-1", drafts["idea-1"]![0]!);
     await pick("idea-2", null, "none");
-    expect(await finished("idea-1", drafts["idea-1"]![0]!)).toMatchObject({ state: "finals", stillMissing: ["the owner's pick, or his pass, for idea-3"] });
+    expect(await finished("idea-1", drafts["idea-1"]![0]!)).toMatchObject({
+      state: "finals",
+      stillMissing: ["the owner's pick, or his pass, for idea-3", "the owner's pick, or his pass, for idea-4", "the owner's pick, or his pass, for idea-5"],
+    });
     await pick("idea-3", null, "none of these");
+    await pick("idea-4", null, "none of these");
+    await pick("idea-5", null, "none of these");
     expect((await check(drafts["idea-1"]![1]!)).value.state).toBe("finished");
   });
 
@@ -440,6 +450,8 @@ describe("finals", () => {
     await pick("idea-1", drafts["idea-1"]![0]!);
     await pick("idea-2", null, "none");
     await pick("idea-3", null, "none");
+    await pick("idea-4", null, "none");
+    await pick("idea-5", null, "none");
     const faults = [{ code: "F1", note: "The rope sags too far." }, { code: "F2", note: "The plinth edge is soft." }];
     expect(await finished("idea-1", drafts["idea-1"]![0]!, faults)).toMatchObject({ state: "finals", stillMissing: ["a final of idea-1 with fewer than two F items"] });
     await pick("idea-1", drafts["idea-1"]![1]!, "the second one after all");

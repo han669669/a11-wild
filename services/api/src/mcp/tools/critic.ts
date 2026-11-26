@@ -3,7 +3,8 @@ import { CONCEPT_SCORES, type ConceptScore, FUNNEL_STAGES } from "@a11-wild/shar
 import type { Calibration } from "../../critic/calibration.js";
 import { type CriticService, RECOMMEND_VISUAL_MIN } from "../../critic/service.js";
 import { TICKET_MINUTES } from "../../critic/store.js";
-import { DRAFTS_PER_IDEA } from "../../render/service.js";
+import { DRAFTS_PER_IDEA, draftsPerIdea } from "../../render/service.js";
+import { IDEAS_PER_BATCH } from "../../ideas/checks.js";
 import { defineTool, type ToolDefinition } from "../registry.js";
 
 const id = z.string().min(1).max(64);
@@ -15,7 +16,7 @@ export function criticTools({ critic, calibration }: { critic: CriticService; ca
   return [
     defineTool({
       name: "critic_open",
-      description: `The blind critic's first call. Free. Only a fresh helper calls it: a new agent that was given the batch id and nothing else, not the session that wrote the ideas or made the drafts. step "ideas" gives the batch's three ideas to judge, after ideas_save. step "drafts" gives each idea's ${DRAFTS_PER_IDEA} finished drafts to rank, for the ideas the owner has not chosen for yet. The packet holds no owner pick, no earlier rank and none of the author's notes, and a ticket for one critic_pick or one critic_rank within ${TICKET_MINUTES} minutes. If you cannot start a fresh helper, send freshHelper false: the studio then says what to tell the owner.`,
+      description: `The blind critic's first call. Free. Only a fresh helper calls it: a new agent that was given the batch id and nothing else, not the session that wrote the ideas or made the drafts. step "ideas" gives the batch's ${IDEAS_PER_BATCH} v1 ideas or the v2 burst to judge, after ideas_save. step "drafts" gives each idea's ${draftsPerIdea("v1")} v1 drafts or ${DRAFTS_PER_IDEA} v2/v3 drafts to rank, for ideas the owner has not chosen for yet. The packet holds no owner pick, no earlier rank and none of the author's notes, and a ticket for one critic_pick or one critic_rank within ${TICKET_MINUTES} minutes. If you cannot start a fresh helper, send freshHelper false: the studio then says what to tell the owner.`,
       input: {
         batchId: id,
         step: z.enum(["ideas", "concepts", "drafts"]).describe('"concepts": the concepts of a v3 batch, each with its roughs as pictures, after concepts_save.'),
@@ -27,7 +28,7 @@ export function criticTools({ critic, calibration }: { critic: CriticService; ca
     defineTool({
       name: "critic_pick",
       description:
-        "The blind critic's judgement of the batch's three ideas: keep or cut for each, with a reason. It needs the ticket of critic_open with step \"ideas\". All three kept: the batch is judged and its drafts can be made. One cut: the batch stays at its ideas, and the main agent writes another in its place.",
+        `The blind critic's judgement of the batch's ${IDEAS_PER_BATCH} v1 ideas: keep or cut for each, with a reason. It needs the ticket of critic_open with step "ideas". All ${IDEAS_PER_BATCH} kept: the batch is judged and its drafts can be made. One cut: the batch stays at its ideas, and the main agent writes another in its place.`,
       input: {
         batchId: id,
         ticket,
