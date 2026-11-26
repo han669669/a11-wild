@@ -117,6 +117,41 @@ describe("the blind rank of the drafts", () => {
     expect(await rank(packet.ticket)).toEqual(refused(/ticket is not valid/));
   });
 
+  it("ranks all three drafts of a v1 idea made under the earlier draft count", async () => {
+    const third = await studio.services.images.add({
+      batchId,
+      kind: "draft",
+      key: `batches/${batchId}/drafts/legacy-third.png`,
+      ideaId: "idea-1",
+    });
+    const render = await studio.services.renders.create({
+      batchId,
+      ideaId: "idea-1",
+      kind: "draft",
+      prompt: SCENE,
+      usd: 0.009,
+      imageId: third.id,
+      fal: { requestId: "legacy", statusUrl: "https://queue.example/status", responseUrl: "https://queue.example/response" },
+      reservation: { month: "2026-11", sk: "SPEND#legacy", batchId, micro: 9000 },
+      stageCount: 2,
+    });
+    await studio.services.renders.end(render, { status: "done", imageId: third.id });
+    await studio.services.checks.save(batchId, third.id, []);
+
+    const packet = (await open("drafts")).value;
+    const idea = packet.ideas.find((entry: { idea: { id: string } }) => entry.idea.id === "idea-1")!;
+    expect(idea.drafts).toHaveLength(3);
+
+    const rank = (list: ReturnType<typeof ranks>) => callTool(studio, "critic_rank", { ...rules, batchId, ticket: packet.ticket, ranks: list });
+    const incomplete = ranks(packet);
+    incomplete.find((entry) => entry.ideaId === "idea-1")!.order.pop();
+    expect(await rank(incomplete)).toEqual(refused(/Put every draft of idea-1 in the order once/));
+    expect((await rank(ranks(packet))).value).toMatchObject({
+      state: "checked",
+      saved: ["idea-1", "idea-2", "idea-3", "idea-4", "idea-5"],
+    });
+  });
+
   it("keeps the rank off the board until the owner has picked, and shows it for that idea only", async () => {
     const packet = (await open("drafts")).value;
     await callTool(studio, "critic_rank", { ...rules, batchId, ticket: packet.ticket, ranks: ranks(packet, (ids) => [...ids].reverse()) });

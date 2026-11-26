@@ -65,6 +65,8 @@ describe("house rules", () => {
     expect(v1.find((rule) => rule.id === "real-photos-first")?.text).toContain("A pack photo is the pack alone");
     expect(v1.find((rule) => rule.id === "drafts")?.text).toMatch(/In v1, make two drafts.*In v2, make three drafts/);
     expect(v1.find((rule) => rule.id === "owner-board")?.text).toContain("Mark no draft with a pass or fail colour");
-    expect(rulesFor("main", "v2").find((rule) => rule.id === "show-with-words")?.text).toContain("Mark no draft with a pass or fail colour");
+    const v2 = rulesFor("main", "v2");
+    expect(v2.filter((rule) => rule.text.includes("Mark no draft with a pass or fail colour")).map((rule) => rule.id)).toEqual(["owner-board"]);
+    expect(v2.find((rule) => rule.id === "show-with-words")?.text).not.toContain("Mark no draft with a pass or fail colour");
   });
 });

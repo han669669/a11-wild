@@ -85,7 +85,7 @@ export interface BlindDraft {
 /** The drafts of the ideas the owner has not chosen for yet. An idea he has chosen for is left out, with every trace of his choice. */
 export function rankable(board: Board, draftsPerIdea: number): { idea: ReturnType<typeof blindIdea>; drafts: BlindDraft[] }[] {
   return board.ideas
-    .filter((entry) => entry.pick === null && entry.drafts.length === draftsPerIdea)
+    .filter((entry) => entry.pick === null && entry.drafts.length >= draftsPerIdea)
     .map((entry) => ({
       idea: blindIdea(entry.idea),
       drafts: entry.drafts.map((draft) => ({ imageId: draft.image.id, shownId: seenOf(draft).id, viewUrl: draft.words?.viewUrl ?? draft.viewUrl, measured: (draft.checks?.items ?? []).filter((item) => item.tool !== undefined) })),

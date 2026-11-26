@@ -127,7 +127,7 @@ export const HOUSE_RULES: readonly HouseRule[] = [
     id: "show-with-words",
     roles: ["main", "art_director"],
     kinds: WORDS,
-    text: "Show the owner a draft only with the approved words and the real logo set inside the picture (type_set). Never show a bare photo and ask him to imagine the words. Show drafts numbered 1 to 3, with no rank, and name every draft that has a D item. Mark no draft with a pass or fail colour (no green or red border or label): the colour leads his eye before he looks. Put each draft's notes under it in plain text.",
+    text: "Show the owner a draft only with the approved words and the real logo set inside the picture (type_set). Never show a bare photo and ask him to imagine the words. Show drafts numbered 1 to 3, with no rank, and name every draft that has a D item.",
   },
   {
     id: "burst",
