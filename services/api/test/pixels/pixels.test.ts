@@ -105,6 +105,79 @@ describe("skeleton_make", () => {
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, cutout: { darkMax: 45, edges: "left" } });
   });
 
+  it("keeps the default pack for a plan made only from food photos", async () => {
+    await start();
+    const made = await skeleton("idea-1", {
+      plan: {
+        bg: "E83C28",
+        products: [
+          { cx: 0.35, base: 0.9, height: 0.45, photo: "food-1" },
+          { cx: 0.65, base: 0.9, height: 0.45, photo: "food-1" },
+        ],
+      },
+    });
+    const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
+    const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
+
+    await run("pack_check", { imageId, at: [512, 900], bg: "E83C28" });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK });
+    await expect(studio.services.pixels.packCheck({ batchId, imageId, at: [512, 900], bg: "E83C28", sideways: false, photo: "food-1" })).rejects.toThrow(
+      /This picture's skeleton did not use pack photo food-1/,
+    );
+    await run("product_swap", { imageId, old: [400, 620, 500, 1100] });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK });
+  });
+
+  it("uses the numbered plan item's pack and box", async () => {
+    await start();
+    const firstBox = [10, 20, 110, 220];
+    const secondBox = [30, 40, 330, 440];
+    const made = await skeleton("idea-1", {
+      plan: {
+        bg: "E83C28",
+        products: [
+          { cx: 0.35, base: 0.9, height: 0.45, photo: "pack-1", box: firstBox, cutout: { darkMax: 30 } },
+          { cx: 0.65, base: 0.9, height: 0.45, photo: "pack-1", box: secondBox, cutout: { darkMax: 60 } },
+        ],
+      },
+    });
+    const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
+    const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
+
+    await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", pack: 2, photo: "pack-1" });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box: secondBox, cutout: { darkMax: 60 }, pack: 2 });
+    expect(await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", pack: 3 })).toEqual(
+      refused(/This picture's plan has no pack 3\./),
+    );
+    expect(await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", pack: 2, photo: "pack-2" })).toEqual(
+      refused(/This picture's plan pack 2 uses pack photo pack-1/),
+    );
+  });
+
+  it("uses skeleton-wide pack settings for a numbered item with no photo key", async () => {
+    await start(undefined, fakeNet({ [PACK_TWO_URL]: { body: PNG, headers: { "content-type": "image/png" } } }));
+    await appendPackTwo();
+    const defaultBox = [40, 50, 640, 750];
+    const defaultCutout = { darkMax: 25, edges: "right" };
+    const made = await skeleton("idea-1", {
+      pack: "pack-1",
+      box: defaultBox,
+      cutout: defaultCutout,
+      plan: {
+        bg: "E83C28",
+        products: [
+          { cx: 0.35, base: 0.9, height: 0.45, photo: "pack-2", box: [80, 90, 580, 690] },
+          { cx: 0.65, base: 0.9, height: 0.45 },
+        ],
+      },
+    });
+    const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
+    const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
+
+    await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", pack: 2 });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box: defaultBox, cutout: defaultCutout, pack: 2 });
+  });
+
   it("refuses a default pack that no plan item uses", async () => {
     await start(undefined, fakeNet({ [PACK_TWO_URL]: { body: PNG, headers: { "content-type": "image/png" } } }));
     await appendPackTwo();

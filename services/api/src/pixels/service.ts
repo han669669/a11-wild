@@ -163,9 +163,9 @@ export class PixelService {
 
   async packCheck(input: { batchId: string; imageId: string; at: [number, number]; bg: string; sideways: boolean; tilted?: boolean; box?: number[]; pack?: number; photo?: string }): Promise<PixelView> {
     const image = await this.rendered(input.batchId, input.imageId);
-    const { batchId: _batchId, imageId: _imageId, box: around, photo, ...rest } = input;
+    const { batchId: _batchId, imageId: _imageId, box: around, photo, pack, ...rest } = input;
     // `box` in a job is the pack's box in the pack photo, so the box round the drawn pack goes as `around`.
-    return this.start("pack_check", input.batchId, { ...rest, ...(around ? { around } : {}), ...(await this.packOf(input.batchId, image, photo)), renderKey: image.key }, { imageId: image.id });
+    return this.start("pack_check", input.batchId, { ...rest, pack: pack ?? 1, ...(around ? { around } : {}), ...(await this.packOf(input.batchId, image, photo, pack)), renderKey: image.key }, { imageId: image.id });
   }
 
   async capCheck(input: { batchId: string; imageId: string; box: number[]; split: number; pack?: number }): Promise<PixelView> {
@@ -188,49 +188,78 @@ export class PixelService {
   }
 
   /** The pack photo, cut out the same way as for the picture's skeleton: its tuning and its box are carried to each later tool. */
-  private async packOf(batchId: string, image: BatchImage, photo?: string): Promise<Record<string, unknown>> {
+  private async packOf(batchId: string, image: BatchImage, photo?: string, packNumber?: number): Promise<Record<string, unknown>> {
     const { batches, brands } = this.deps;
     const { skeleton, input } = await this.skeletonContext(batchId, image);
     const { cutout, box, pack } = input;
-    if (photo) {
-      if (!skeleton) {
-        const drawn = await this.drawnPack(batchId, image, photo);
-        if (!drawn) throw new Refusal(`This picture's render did not use pack photo ${photo}.`);
-        return { packKey: drawn.key };
-      }
-      const product = await brands.product((await batches.get(batchId)).productId);
-      const chosen = photoNamed(product, photo);
-      const plan = input.plan as { products?: { photoKey?: string; cutout?: Record<string, unknown>; box?: number[] }[] } | undefined;
-      const items = plan?.products ?? [];
-      const usesDefault = !plan || items.some((entry) => !entry.photoKey);
-      let defaultName = typeof pack === "string" ? pack : undefined;
-      if (!defaultName && typeof input.packKey === "string") {
-        const packPhotos = product.photos.filter((entry) => entry.kind === "pack");
-        const index = packPhotos.findIndex((entry) => entry.key === input.packKey);
-        if (index >= 0) defaultName = `pack-${index + 1}`;
-      }
-      const planItem = chosen ? items.find((entry) => entry.photoKey === chosen.key) : undefined;
-      const settings = planItem
-        ? planItem
-        : chosen && photo === defaultName && usesDefault
-          ? { cutout, box }
-          : undefined;
-      if (!chosen || !settings) throw new Refusal(`This picture's skeleton did not use pack photo ${photo}.`);
-      return {
-        packKey: chosen.key,
-        ...(settings?.cutout ? { cutout: settings.cutout } : {}),
-        ...(settings?.box ? { box: settings.box } : {}),
-      };
-    }
     if (skeleton) {
       const product = await brands.product((await batches.get(batchId)).productId);
       const plan = input.plan as { products?: { photoKey?: string; cutout?: Record<string, unknown>; box?: number[] }[] } | undefined;
       const items = plan?.products ?? [];
       const usesDefault = !plan || items.some((entry) => !entry.photoKey);
+      const packPhotos = product.photos.filter((entry) => entry.kind === "pack");
+      const packNameForKey = (key: string) => {
+        const index = packPhotos.findIndex((entry) => entry.key === key);
+        return index >= 0 ? `pack-${index + 1}` : undefined;
+      };
+      let defaultName = typeof pack === "string" ? pack : undefined;
+      if (!defaultName && typeof input.packKey === "string") {
+        defaultName = packNameForKey(input.packKey);
+      }
+      const savedDefault = typeof input.packKey === "string"
+        ? product.photos.find((entry) => entry.key === input.packKey && entry.kind === "pack")
+        : undefined;
+      const defaultPhoto = savedDefault ?? (defaultName ? photoNamed(product, defaultName) : undefined);
+
+      if (plan && packNumber !== undefined) {
+        const item = items[packNumber - 1];
+        if (!item) throw new Refusal(`This picture's plan has no pack ${packNumber}.`);
+        if (item.photoKey) {
+          const itemPhoto = product.photos.find((entry) => entry.key === item.photoKey);
+          const itemName = itemPhoto?.kind === "pack" ? packNameForKey(itemPhoto.key) : undefined;
+          if (!itemPhoto || itemPhoto.kind !== "pack" || !itemName) {
+            throw new Refusal(`This picture's plan pack ${packNumber} does not use a pack photo.`);
+          }
+          if (photo && photo !== itemName) {
+            throw new Refusal(`This picture's plan pack ${packNumber} uses pack photo ${itemName}.`);
+          }
+          return {
+            packKey: itemPhoto.key,
+            ...(item.cutout ? { cutout: item.cutout } : {}),
+            ...(item.box ? { box: item.box } : {}),
+          };
+        }
+        const defaultPhotoName = defaultPhoto ? packNameForKey(defaultPhoto.key) : undefined;
+        if (!defaultPhoto || !defaultPhotoName) {
+          throw new Refusal(`This picture's plan pack ${packNumber} has no default pack photo.`);
+        }
+        if (photo && photo !== defaultPhotoName) {
+          throw new Refusal(`This picture's plan pack ${packNumber} uses pack photo ${defaultPhotoName}.`);
+        }
+        return { packKey: defaultPhoto.key, ...(cutout ? { cutout } : {}), ...(box ? { box } : {}) };
+      }
+
+      if (photo) {
+        const chosen = photoNamed(product, photo);
+        const planItem = chosen ? items.find((entry) => entry.photoKey === chosen.key) : undefined;
+        const planItemPhoto = planItem?.photoKey ? product.photos.find((entry) => entry.key === planItem.photoKey) : undefined;
+        const settings = planItemPhoto?.kind === "pack"
+          ? planItem
+          : chosen?.kind === "pack" && photo === defaultName && usesDefault
+            ? { cutout, box }
+            : undefined;
+        if (!chosen || chosen.kind !== "pack" || !settings) throw new Refusal(`This picture's skeleton did not use pack photo ${photo}.`);
+        return {
+          packKey: chosen.key,
+          ...(settings?.cutout ? { cutout: settings.cutout } : {}),
+          ...(settings?.box ? { box: settings.box } : {}),
+        };
+      }
+
       const first = items[0];
       if (!usesDefault && first?.photoKey && items.every((entry) => entry.photoKey === first.photoKey)) {
         const chosen = product.photos.find((entry) => entry.key === first.photoKey);
-        if (chosen) {
+        if (chosen?.kind === "pack") {
           return {
             packKey: chosen.key,
             ...(first.cutout ? { cutout: first.cutout } : {}),
@@ -238,6 +267,11 @@ export class PixelService {
           };
         }
       }
+    }
+    if (photo) {
+      const drawn = await this.drawnPack(batchId, image, photo);
+      if (!drawn) throw new Refusal(`This picture's render did not use pack photo ${photo}.`);
+      return { packKey: drawn.key };
     }
     const packKey =
       typeof pack === "string"

@@ -7,11 +7,8 @@ const px = z.number().int().min(0).max(4096);
 const fraction = z.number().min(0).max(1);
 const colour = z.string().regex(/^#?[0-9a-fA-F]{6}$/, "A colour as RRGGBB.");
 const box = z.tuple([px, px, px, px]);
-const packNumber = z
-  .number()
-  .int()
-  .min(1)
-  .max(12)
+const packNumber = z.number().int().min(1).max(12);
+const defaultPackNumber = packNumber
   .default(1)
   .describe("Which pack this is when the picture shows more than one: 1 for the first from the left, 2 for the next. Measure every pack. Each pack keeps its own result, so a pass on one never clears a fail on another.");
 const imageId = id.describe("A draft, a final, or a reprint or swap of one, of this batch.");
@@ -106,10 +103,11 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
         bg: colour.describe("The stage colour as RRGGBB."),
         sideways: z.boolean().default(false).describe("The pack lies on its side."),
         tilted: z.boolean().default(false).describe("The pack is turned in the plane, for example it lies on the stage at 20 degrees. The tool turns it upright before the measure."),
-        box: box.optional().describe("X0,Y0,X1,Y1 in pixels, for a pack that stands on something: a box round the pack with plain stage on its other sides, ending at the pack's base. The measure then stops at the base, so set it within a few pixels."),        pack: packNumber,
+        box: box.optional().describe("X0,Y0,X1,Y1 in pixels, for a pack that stands on something: a box round the pack with plain stage on its other sides, ending at the pack's base. The measure then stops at the base, so set it within a few pixels."),
+        pack: packNumber.optional().describe("With a skeleton plan, pack n is the plan's nth product."),
       },
       writes: true,
-      handler: ({ box: around, photo, ...input }) => pixels.packCheck({ ...input, ...(around ? { box: around } : {}), ...(photo !== undefined ? { photo } : {}) }),
+      handler: ({ box: around, photo, pack, ...input }) => pixels.packCheck({ ...input, ...(pack !== undefined ? { pack } : {}), ...(around ? { box: around } : {}), ...(photo !== undefined ? { photo } : {}) }),
     }),
     defineTool({
       name: "cap_check",
@@ -119,7 +117,8 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
         batchId: id,
         imageId,
         box: box.describe("X0,Y0,X1,Y1 in pixels: the bottle with some plain stage on both sides, ending at its base above any contact shadow."),
-        split: px.describe("Y in pixels: the first row below the cap and the neck (the top of any shoulder)."),        pack: packNumber,
+        split: px.describe("Y in pixels: the first row below the cap and the neck (the top of any shoulder)."),
+        pack: defaultPackNumber,
       },
       writes: true,
       handler: (input) => pixels.capCheck(input),
