@@ -240,6 +240,7 @@ describe("a draft that shows the food alone", () => {
     if (!skeleton.ok) throw new Error(skeleton.error);
     const copies = new Map((await studio.services.copy.list(batchId)).map((copy) => [copy.ideaId, copy]));
     let foodOnlyDraftId: string | undefined;
+    let directPackDraftId: string | undefined;
 
     for (const ideaId of ["idea-2", "idea-4", "idea-5"]) {
       for (let draft = 1; draft <= 3; draft += 1) {
@@ -256,6 +257,7 @@ describe("a draft that shows the food alone", () => {
         if (!rendered.ok) throw new Error(rendered.error);
         const imageId = rendered.value.image.id as string;
         if (foodOnly && draft === 1) foodOnlyDraftId = imageId;
+        if (ideaId === "idea-2" && draft === 1) directPackDraftId = imageId;
         if ((await callTool(studio, "batch_get", { batchId })).value.batch.state === "waiting_spend") {
           await callTool(studio, "spend_approve", { ...rules, batchId, ownerSaid: "yes" });
         }
@@ -323,7 +325,29 @@ describe("a draft that shows the food alone", () => {
     expect(ranked.ok).toBe(true);
     expect((await callTool(studio, "batch_get", { batchId })).value.batch.state).toBe("checked");
 
-    if (!foodOnlyDraftId) throw new Error("The food-only draft was not made.");
+    if (!foodOnlyDraftId || !directPackDraftId) throw new Error("The required drafts were not made.");
+    await callTool(studio, "pick_save", { batchId, ideaId: "idea-2", imageId: directPackDraftId, ownerSaid: "this one" });
+    const directFinalSent = await callTool(studio, "render_submit", {
+      ...rules,
+      batchId,
+      ideaId: "idea-2",
+      kind: "final",
+      fromId: directPackDraftId,
+      prompt: SCENE,
+      references: ["pack-1"],
+    });
+    if (!directFinalSent.ok) throw new Error(directFinalSent.error);
+    const directFinalRendered = await callTool(studio, "render_status", { batchId, renderId: directFinalSent.value.id });
+    if (!directFinalRendered.ok) throw new Error(directFinalRendered.error);
+    const directFinalId = directFinalRendered.value.image.id as string;
+    if ((await callTool(studio, "batch_get", { batchId })).value.batch.state === "waiting_spend") {
+      await callTool(studio, "spend_approve", { ...rules, batchId, ownerSaid: "yes" });
+    }
+    expect(await callTool(studio, "pack_check", { batchId, imageId: directFinalId, noPack: true })).toEqual({
+      ok: false,
+      error: "This picture was built with a pack photo, so measure its pack.",
+    });
+
     await callTool(studio, "pick_save", { batchId, ideaId: "idea-4", imageId: foodOnlyDraftId, ownerSaid: "this one" });
     const sent = await callTool(studio, "render_submit", {
       ...rules,
