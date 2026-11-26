@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { OutreachAd, OutreachEvent, OutreachEventBody, OutreachSend, OutreachStep, Prospect, ProspectFile } from "@a11-wild/shared";
 import { Refusal } from "../mcp/registry.js";
 import { type Item, record, type Table } from "../store/table.js";
+import { blockedValues, numberKey } from "./blocked.js";
 import { phoneRouteNumbers } from "./routes.js";
 
 /**
@@ -36,8 +37,11 @@ export const contactKeys = (profile: Prospect, sends: readonly Pick<OutreachSend
   const email = (value: string | undefined) => {
     if (value) keys.add(`E#${value.toLowerCase()}`);
   };
+  const blocked = blockedValues(profile.flags ?? []);
   const routeLabel = (value: string | undefined) => {
-    for (const candidate of phoneRouteNumbers(value)) number(candidate);
+    for (const candidate of phoneRouteNumbers(value)) {
+      if (!blocked.numbers.has(numberKey(candidate))) number(candidate);
+    }
   };
   const route = (value: Prospect["route"]) => {
     if (!value?.to.trim()) return;

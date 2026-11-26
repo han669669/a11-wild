@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { loadRows, type LoadRow } from "../../src/outreach/load.js";
-import { routeOf } from "../../src/outreach/routes.js";
+import { labelShowsClosed, routeOf } from "../../src/outreach/routes.js";
 import { sendTarget } from "../../src/outreach/stage.js";
 import { OutreachStore } from "../../src/outreach/store.js";
 import { MemoryTable } from "../helpers/memory-table.js";
@@ -141,6 +141,15 @@ describe("the list's ways to reach a brand", () => {
     "does not make a target from %s",
     (text) => expect(routeOf(text)).toBeUndefined(),
   );
+
+  it("checks complete normalised numbers when deciding if a route label shows a closed contact", () => {
+    const closed = new Set(["W#6580000001"]);
+    expect(labelShowsClosed("WhatsApp +6580000001 (verified business)", closed)).toBe(true);
+    expect(labelShowsClosed("Phone 8000 0001 (front desk)", closed)).toBe(true);
+    expect(labelShowsClosed("WhatsApp +6580000002 (backup +6580000001)", closed)).toBe(true);
+    expect(labelShowsClosed("WhatsApp +44 20 8000 0001 (verified business)", closed)).toBe(false);
+    expect(labelShowsClosed("WhatsApp +65 8111 2222; +65 3333 4444", new Set(["W#6522223333"]))).toBe(false);
+  });
 });
 
 describe("loading the additional list fields", () => {

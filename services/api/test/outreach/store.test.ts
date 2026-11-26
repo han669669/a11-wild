@@ -133,6 +133,51 @@ describe("the outreach store", () => {
     expect(contactKeys(profile)).not.toContain("W#6581234567");
   });
 
+  it("keeps valid numbers from a semicolon list even when another entry is malformed", async () => {
+    await loadRows(store, [
+      row(1, {
+        whatsapp: undefined,
+        phone: undefined,
+        dmPhone: undefined,
+        secondRoute: "WhatsApp +6580000001; not-a-number",
+      }),
+      row(2, { whatsapp: undefined, phone: "+65 8000 0001" }),
+    ], now);
+    const first = await store.get("00001");
+    const second = await store.get("00002");
+
+    await store.addEvent(first.id, { type: "optout" }, "owner");
+    await store.addOptOut(await store.get(first.id));
+
+    expect(stageOf({ profile: second, ads: [], sends: [], events: [] }, await store.optOuts())).toBe("opted_out");
+  });
+
+  it("does not spread opt-outs from a quarantined number in a route label, while keeping sent contacts", async () => {
+    await loadRows(store, [
+      row(1, {
+        whatsapp: undefined,
+        phone: undefined,
+        dmPhone: undefined,
+        email: "brand1@example.com",
+        bestRoute: "Email (valid) brand1@example.com",
+        secondRoute: "Phone +65 8000 0001 (9-5 hours)",
+        notes: "AUDIT-FLAG: +65 8000 0001 do not use",
+      }),
+      row(2, { whatsapp: undefined, phone: "+65 8000 0001" }),
+    ], now);
+    const first = await store.get("00001");
+    const second = await store.get("00002");
+
+    expect(first.secondRoute).toBe("Phone (9-5 hours)");
+    expect(contactKeys(first)).not.toContain("W#6580000001");
+    expect(contactKeys(first, [{ channel: "whatsapp", to: "6580000001" }])).toContain("W#6580000001");
+
+    await store.addEvent(first.id, { type: "optout" }, "owner");
+    await store.addOptOut(await store.get(first.id));
+
+    expect(stageOf({ profile: second, ads: [], sends: [], events: [] }, await store.optOuts())).toBe("new");
+  });
+
   it("keeps parenthesised phone routes distinct when one opts out", async () => {
     await loadRows(store, [
       row(1, { whatsapp: undefined, secondRoute: "WhatsApp +65 (8123) 4567 (verified business)" }),

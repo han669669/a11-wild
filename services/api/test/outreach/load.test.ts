@@ -84,6 +84,14 @@ describe("the load of the list", () => {
       why: "a route note can't hold a number or address; put it in Second route or Notes",
     },
     {
+      label: "WhatsApp +6580000001 (verified business",
+      why: "the route can't be read as one number; write a note in words in brackets after it",
+    },
+    {
+      label: "WhatsApp +65 (8123 4567",
+      why: "the route can't be read as one number; write a note in words in brackets after it",
+    },
+    {
       label: "WhatsApp +6580000001 (checked 30-11-2026)",
       why: "a route note can't hold a number or address; put it in Second route or Notes",
     },
