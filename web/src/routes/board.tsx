@@ -253,7 +253,7 @@ function Draft({ draft, label, alt, picked }: { draft: BoardDraft; label: string
         <ul className="mt-1 grid gap-1 text-caption">
           {items.map((item, index) => (
             <li key={`${item.code}-${item.tool ?? "seen"}-${index}`}>
-              <Badge color={item.code.startsWith("D") ? "red" : "amber"}>{item.code}</Badge> {item.note}
+              <Badge color="gray">{item.code}</Badge> {item.note}
               {item.tool ? <span className="ml-1 text-muted-foreground">(measured)</span> : null}
             </li>
           ))}

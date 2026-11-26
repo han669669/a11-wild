@@ -1,7 +1,7 @@
 import type { Fact, FunnelStage, Idea, Insight } from "@a11-wild/shared";
 import { FUNNEL_STAGES } from "@a11-wild/shared";
 
-export const IDEAS_PER_BATCH = 3;
+export const IDEAS_PER_BATCH = 5;
 export const ELEMENTS_MAX = 5;
 /** A kind with words writes many ideas, and a blind critic chooses one for each funnel stage. */
 export const BURST_MIN = 24;

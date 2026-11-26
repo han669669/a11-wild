@@ -2,7 +2,8 @@ import { z } from "zod";
 import { PALETTE_ROLES, type ProductPhoto } from "@a11-wild/shared";
 import { brandExtract, fetchText } from "../../brand/extract.js";
 import { copyFont } from "../../brand/fonts.js";
-import type { BrandStore } from "../../brand/store.js";
+import { PHOTOS_MAX, type BrandStore } from "../../brand/store.js";
+import type { BatchStore } from "../../batch/store.js";
 import type { ParallelClient } from "../../parallel/client.js";
 import { copyPicture, type Pictures } from "../../pictures/store.js";
 import { asPageData, isPublicHttpsUrl, type Net, UnsafeUrlError } from "../../urlsafety.js";
@@ -10,6 +11,7 @@ import { defineTool, Refusal, type ToolDefinition } from "../registry.js";
 import { productPictures } from "../../brand/product-pictures.js";
 
 export interface BrandToolDeps {
+  batches: BatchStore;
   brands: BrandStore;
   parallel: ParallelClient;
   pictures: Pictures;
@@ -20,13 +22,17 @@ const httpsUrl = z.string().max(2000).describe("An https address on a public hos
 const id = z.string().min(1).max(64);
 const LOGO_NOT_CANDIDATE = "That logo is not among the candidates of this extract. Choose one of its logoCandidates, or leave logoUrl out.";
 const SAVED_LOGO_NOT_CANDIDATE = "That logo is not among the candidates of this extract. Choose one of its logoCandidates.";
+const photoInput = z.strictObject({
+  url: httpsUrl,
+  kind: z.enum(["pack", "food", "prop"]),
+  what: z.string().min(1).max(120).optional().describe('What the photo shows, when the product has several of its kind: "mango slice". Give it for each variant and each prop.'),
+  fromId: id.optional().describe("The extractId or searchId that offered this picture. Leave it out for the product's own extract."),
+});
+const photosInput = z.array(photoInput).min(1).max(PHOTOS_MAX);
 
 function siteHost(url: string): string {
   return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
 }
-
-/** A product with many variants needs a real photo of each one (the owner, 22-11-2026: real photos first, for everything). */
-const PHOTOS_MAX = 16;
 
 /** Picture addresses in a page's text, as Markdown or as plain links. */
 function pictureLinks(text: string): string[] {
@@ -34,7 +40,7 @@ function pictureLinks(text: string): string[] {
   return [...new Set(found)].filter(isPublicHttpsUrl).slice(0, 40);
 }
 
-export function brandTools({ brands, parallel, pictures, net }: BrandToolDeps): ToolDefinition[] {
+export function brandTools({ batches, brands, parallel, pictures, net }: BrandToolDeps): ToolDefinition[] {
   return [
     defineTool({
       name: "font_save",
@@ -180,17 +186,7 @@ export function brandTools({ brands, parallel, pictures, net }: BrandToolDeps): 
         brandId: id,
         extractId: id.describe("The extractId that product_extract returned for the product's page."),
         name: z.string().min(1).max(120),
-        photos: z
-          .array(
-            z.strictObject({
-              url: httpsUrl,
-              kind: z.enum(["pack", "food", "prop"]),
-              what: z.string().min(1).max(120).optional().describe('What the photo shows, when the product has several of its kind: "mango slice". Give it for each variant and each prop.'),
-              fromId: id.optional().describe("The extractId or searchId that offered this picture. Leave it out for the product's own extract."),
-            }),
-          )
-          .min(1)
-          .max(PHOTOS_MAX),
+        photos: photosInput,
       },
       writes: true,
       handler: async ({ brandId, extractId, name, photos }, context) => {
@@ -212,6 +208,57 @@ export function brandTools({ brands, parallel, pictures, net }: BrandToolDeps): 
         return {
           product: await brands.saveProduct({ id: productId, brandId, name, url: offer.url, photos: stored, savedBy: context.user.email }),
         };
+      },
+    }),
+    defineTool({
+      name: "product_photos_add",
+      description:
+        "Adds real photos to a saved product without making a new one; existing photo names stay the same. Each photo must be a candidate of the product_extract or image_search named in fromId. The studio copies each picture into its private store.",
+      input: {
+        productId: id.describe("The saved product to add photos to."),
+        extractId: id.describe("The extractId that product_extract returned for the product's page."),
+        photos: photosInput,
+      },
+      writes: true,
+      handler: async ({ productId, extractId, photos }) => {
+        const offer = await brands.offered(extractId);
+        if (offer.kind !== "product") throw new Refusal(`Extract ${extractId} is not a product extract.`);
+        for (const photo of photos) {
+          const from = photo.fromId ? await brands.offered(photo.fromId) : offer;
+          if (!from.photos.includes(photo.url)) {
+            throw new Refusal(`The picture ${photo.url} is not among the candidates the studio found. Choose from photoCandidates.`);
+          }
+        }
+        const product = await brands.product(productId);
+        if (new Set(photos.map((photo) => photo.url)).size !== photos.length) {
+          throw new Refusal("A picture is repeated in this call.");
+        }
+        if (
+          !product.photos.some((photo) => photo.kind === "pack") &&
+          photos.some((photo) => photo.kind === "pack") &&
+          (await batches.list()).some((batch) => batch.productId === productId)
+        ) {
+          throw new Refusal("This product is used by a batch and has no pack photo, so adding one would change what that batch must measure. Save a new product with product_save and its pack photo.");
+        }
+        if (photos.some((photo) => product.photos.some((existing) => existing.sourceUrl === photo.url))) {
+          throw new Refusal("A picture is already on this product.");
+        }
+        if (product.photos.length + photos.length > PHOTOS_MAX) {
+          throw new Refusal(`This product can hold at most ${PHOTOS_MAX} photos.`);
+        }
+        const stored: ProductPhoto[] = [];
+        for (const photo of photos) {
+          const copy = await copyPicture({ url: photo.url, folder: `products/${productId}`, what: "The picture" }, net, pictures);
+          stored.push({ key: copy.key, sourceUrl: copy.sourceUrl, kind: photo.kind, ...(photo.what ? { what: photo.what } : {}) });
+        }
+        try {
+          return { product: await brands.appendProductPhotos(productId, stored) };
+        } catch (error) {
+          if (error instanceof Refusal) {
+            await Promise.allSettled(stored.map((photo) => pictures.remove(photo.key)));
+          }
+          throw error;
+        }
       },
     }),
   ];

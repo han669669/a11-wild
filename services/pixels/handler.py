@@ -191,11 +191,12 @@ class Job:
         fetched = {}
         for product in own:
             key = product.pop("photoKey")
-            if key not in fetched:
+            cache_key = (key, json.dumps(product.get("cutout"), sort_keys=True))
+            if cache_key not in fetched:
                 self.input["_photo"] = key
                 photo = self.fetch("_photo")
-                fetched[key] = (photo, *self.cut(photo, product.get("cutout")))
-            photo, alpha, box = fetched[key]
+                fetched[cache_key] = (photo, *self.cut(photo, product.get("cutout")))
+            photo, alpha, box = fetched[cache_key]
             product.pop("cutout", None)
             product.update(photo=os.path.basename(photo), alpha=os.path.basename(alpha))
             product.setdefault("box", [int(v) for v in box.split(",")])

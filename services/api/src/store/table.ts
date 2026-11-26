@@ -26,10 +26,12 @@ export function record<T>(item: Item & T): T {
 export interface Table {
   get<T extends Item>(pk: string, sk: string): Promise<T | undefined>;
   /**
-   * Returns false when `ifNotExists` is set and the item is already there, or when `ifEquals` is set
-   * and that attribute of the stored item does not have that value.
+   * Returns false when a conditional write does not hold.
    */
-  put(item: Item, options?: { ifNotExists?: boolean; ifEquals?: { attribute: string; value: string } }): Promise<boolean>;
+  put(
+    item: Item,
+    options?: { ifNotExists?: boolean; ifNotExistsAttribute?: string; ifEquals?: { attribute: string; value: string } },
+  ): Promise<boolean>;
   /** With `ifEquals`, deletes only while that attribute still has that value. Returns false when it does not. */
   delete(pk: string, sk: string, options?: { ifEquals?: { attribute: string; value: string } }): Promise<boolean>;
   query<T extends Item>(pk: string): Promise<T[]>;
@@ -57,9 +59,16 @@ export class DynamoTable implements Table {
     return result.Item as T | undefined;
   }
 
-  async put(item: Item, options: { ifNotExists?: boolean; ifEquals?: { attribute: string; value: string } } = {}): Promise<boolean> {
+  async put(
+    item: Item,
+    options: { ifNotExists?: boolean; ifNotExistsAttribute?: string; ifEquals?: { attribute: string; value: string } } = {},
+  ): Promise<boolean> {
     const { ifEquals } = options;
-    const conditions = [...(options.ifNotExists ? ["attribute_not_exists(pk)"] : []), ...(ifEquals ? ["#attribute = :value"] : [])];
+    const conditions = [
+      ...(options.ifNotExists ? ["attribute_not_exists(pk)"] : []),
+      ...(options.ifNotExistsAttribute ? ["attribute_not_exists(#missing)"] : []),
+      ...(ifEquals ? ["#attribute = :value"] : []),
+    ];
     try {
       await this.doc.send(
         new PutCommand({
@@ -67,10 +76,13 @@ export class DynamoTable implements Table {
           Item: item,
           // Each condition that is set must hold, as in the in-memory table of the tests.
           ...(conditions.length > 0 ? { ConditionExpression: conditions.join(" AND ") } : {}),
-          ...(ifEquals
+          ...(ifEquals || options.ifNotExistsAttribute
             ? {
-                ExpressionAttributeNames: { "#attribute": ifEquals.attribute },
-                ExpressionAttributeValues: { ":value": ifEquals.value },
+                ExpressionAttributeNames: {
+                  ...(ifEquals ? { "#attribute": ifEquals.attribute } : {}),
+                  ...(options.ifNotExistsAttribute ? { "#missing": options.ifNotExistsAttribute } : {}),
+                },
+                ...(ifEquals ? { ExpressionAttributeValues: { ":value": ifEquals.value } } : {}),
               }
             : {}),
         }),

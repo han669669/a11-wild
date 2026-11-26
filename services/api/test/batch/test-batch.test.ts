@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { RULES_VERSION } from "../../src/houserules.js";
-import { batchAtTruth, idea, judgeIdeas, rankDrafts } from "../helpers/batch.js";
+import { draftsPerIdea } from "../../src/render/service.js";
+import { batchAtTruth, judgeIdeas, rankDrafts, v1Ideas } from "../helpers/batch.js";
 import { approvedClient, callTool, createStudio, type Studio } from "../helpers/deps.js";
 
 // Found live (22-11-2026): a tester's picks in a batch made to try the studio went into the owner's taste log and into the calibration.
 const rules = { rulesVersion: RULES_VERSION };
 const SCENE = "The pouch stands on a wet black rock at dusk, low camera, a wave about to break behind it.";
-const IDEAS = ["idea-1", "idea-2", "idea-3"];
+const IDEAS = ["idea-1", "idea-2", "idea-3", "idea-4", "idea-5"];
 
 let studio: Studio;
 let batchId: string;
@@ -21,14 +22,14 @@ const check = (imageId: string) => callTool(studio, "checks_save", { ...rules, b
 const pick = (ideaId: string, imageId: string | null) => callTool(studio, "pick_save", { batchId, ideaId, imageId, ownerSaid: "the tester's choice, to reach the finals" });
 const log = async () => (await callTool(studio, "taste_log", {})).value.entries as { batchId?: string }[];
 
-/** A batch with nine checked and ranked drafts, and the board shown. */
+/** A batch with ten checked and ranked drafts, and the board shown. */
 async function batchAtBoard(create: object) {
   batchId = (await batchAtTruth(studio, create)).batchId;
-  await callTool(studio, "ideas_save", { ...rules, batchId, ideas: [idea(1), idea(2), idea(3)] });
+  await callTool(studio, "ideas_save", { ...rules, batchId, ideas: v1Ideas() });
   await judgeIdeas(studio, batchId);
   drafts = {};
   for (const ideaId of IDEAS) {
-    for (let n = 0; n < 3; n++) {
+    for (let n = 0; n < draftsPerIdea("v1"); n++) {
       const imageId = await render(ideaId, "draft");
       await check(imageId);
       drafts[ideaId] ??= imageId;

@@ -697,7 +697,7 @@ describe("the owner's pick of the ad", () => {
   const page = async (id = "00001") => json(await get(`/api/outreach/prospects/${id}`));
   const attention = async () => (await json(await get("/api/attention"))).lines as { kind: string; count: number; to: string }[];
 
-  /** One brand whose nine drafts are shown; the agent saw a pack that is too tall in the second draft of the first idea. */
+  /** One brand whose ten drafts are shown; the agent saw a pack that is too tall in the second draft of the first idea. */
   async function shown() {
     await loadProspects(studio);
     await outreach().sequence.saveTemplates(TEMPLATES as never);
@@ -716,13 +716,13 @@ describe("the owner's pick of the ad", () => {
     expect(prospect).toMatchObject({ stage: "pick_waits" });
     expect(candidates).toMatchObject({ batchId, choosing: "open", waits: true, words: false });
     expect(candidates.picked).toBeUndefined();
-    expect(candidates.drafts).toHaveLength(9);
-    expect(new Set(candidates.drafts.map((draft: { ideaId: string }) => draft.ideaId))).toEqual(new Set(["idea-1", "idea-2", "idea-3"]));
+    expect(candidates.drafts).toHaveLength(10);
+    expect(new Set(candidates.drafts.map((draft: { ideaId: string }) => draft.ideaId))).toEqual(new Set(["idea-1", "idea-2", "idea-3", "idea-4", "idea-5"]));
     expect(candidates.drafts.filter((draft: { blocked?: string }) => draft.blocked)).toEqual([]);
     expect(candidates.drafts.filter((draft: { warning?: string }) => draft.warning)).toEqual([expect.objectContaining({ imageId: bad, warning: "The agent saw: The pouch is too tall.", findings: ["The agent saw: The pouch is too tall."] })]);
     for (const draft of candidates.drafts) expect(draft.viewUrl).toMatch(/^https:\/\//);
     const today = await json(await get("/api/outreach/today"));
-    expect(today.picks).toMatchObject([{ prospect: { id: "00001", brand: "Brand 1", stage: "pick_waits" }, drafts: 9 }]);
+    expect(today.picks).toMatchObject([{ prospect: { id: "00001", brand: "Brand 1", stage: "pick_waits" }, drafts: 10 }]);
     expect(today.firsts).toEqual([]);
     expect(await attention()).toContainEqual(expect.objectContaining({ kind: "ad_picks", count: 1, to: "/outreach" }));
   });

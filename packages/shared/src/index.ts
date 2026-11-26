@@ -893,6 +893,8 @@ export interface BatchImage {
   fromId?: string;
   /** The draft or the final that a repair, a finish or a food crop stands for. */
   rootId?: string;
+  /** The product photo name used for this skeleton, for example "pack-2". */
+  pack?: string;
   /** For a picture with the words set on it: the version of the approved words it carries. */
   wordsVersion?: number;
   createdAt: string;
@@ -910,6 +912,8 @@ export interface Render {
   prompt: string;
   /** A draft's skeleton, or the picked draft of a final. */
   fromId?: string;
+  /** The rough shown to the model for a draft of a concept ad. */
+  roughId?: string;
   /** A draft of a concept ad: which of the direction's three drafts it is, and the version of that direction. */
   draft?: number;
   directionVersion?: number;
@@ -919,6 +923,8 @@ export interface Render {
   redoOf?: string;
   /** The pack photo the model was given, by its name ("pack-2"), when the render named one. The pack checks measure against it. */
   pack?: string;
+  /** Every pack photo named as a reference, when there was more than one. */
+  packPhotos?: string[];
   /** The price held for it in the ledger, in US dollars. */
   usd: number;
   /** The picture it made. */

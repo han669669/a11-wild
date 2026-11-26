@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { BatchStore } from "../../batch/store.js";
+import { IDEAS_PER_BATCH } from "../../ideas/checks.js";
 import type { PackService } from "../../pack/service.js";
 import type { PackStore } from "../../pack/store.js";
 import { defineTool, Refusal, type ToolDefinition } from "../registry.js";
@@ -9,7 +10,7 @@ const packOrBatch = id.describe("The batch of the pack. For a pack carried in fr
 const content = {
   why: z
     .array(z.strictObject({ ideaId: id, why: z.string().min(1).max(400).describe("One plain sentence or two for the client: the buyer truth, what the ad does, and the source. No notes, no slang quote.") }))
-    .max(3)
+    .max(IDEAS_PER_BATCH)
     .optional(),
   launchPlan: z.array(z.string().min(1).max(300)).min(1).max(8).optional().describe("One step in each line: one ad set, all the ads, 72 hours, and when to stop an ad."),
 };

@@ -1,4 +1,5 @@
 import { RULES_VERSION } from "../../src/houserules.js";
+import { IDEAS_PER_BATCH } from "../../src/ideas/checks.js";
 import { callTool, type Studio } from "./deps.js";
 
 export const PAGE = "https://wongi.example/products/seaweed-crisps";
@@ -27,6 +28,8 @@ export const idea = (n: number, extra: object = {}) => ({
   killTest: { passed: true, note: "Real pack, real rock, no claim." },
   ...extra,
 });
+
+export const v1Ideas = () => Array.from({ length: IDEAS_PER_BATCH }, (_, index) => idea(index + 1));
 
 export const sheet = { shape: "A flat pouch with a zip top.", packaging: "Matt black pouch, yellow word mark on the front.", measures: [] };
 

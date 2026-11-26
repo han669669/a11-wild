@@ -44,7 +44,12 @@ describe("MCP server", () => {
   it("lists each tool with the JSON Schema of the input it accepts", async () => {
     const { body } = await send(rpc("tools/list"));
     const tools = Object.fromEntries(body.result.tools.map((tool: { name: string }) => [tool.name, tool]));
-    expect(Object.keys(tools)).toEqual(expect.arrayContaining(["rules_get", "whoami", "studio_status", "brand_logo_save"]));
+    expect(Object.keys(tools)).toEqual(expect.arrayContaining(["rules_get", "whoami", "studio_status", "brand_logo_save", "product_photos_add"]));
+    expect(tools.product_photos_add.description).toMatch(/adds real photos to a saved product without making a new one.*existing photo names stay the same/i);
+    expect(tools.pack_check.description).toContain("In a picture with two different packs, name the pack photo of the pack you measure.");
+    expect(tools.pack_check.inputSchema.properties.photo).toMatchObject({ type: "string", pattern: "^pack-\\d{1,2}$" });
+    expect(tools.critic_pick.description).toMatch(/client v1.*critic advises.*moves to judged even with cuts/i);
+    expect(tools.critic_pick.description).toMatch(/outreach.*one kept idea is enough/i);
     expect(tools.rules_get.inputSchema).toMatchObject({
       type: "object",
       required: ["role", "kind"],
@@ -105,6 +110,10 @@ describe("MCP server", () => {
     expect(text.indexOf("Step 0. Ask first")).toBeGreaterThan(-1);
     expect(text.indexOf("which brand")).toBeLessThan(text.indexOf("Step 1."));
     expect(text.indexOf("which product")).toBeLessThan(text.indexOf("Step 1."));
+    expect(text).toContain("Step 4. Ideas. Write 5 ideas.");
+    expect(text).toContain("what a stranger gets at first glance, and why this prop or twist belongs to this product");
+    expect(text).toContain("Then make 2 drafts for each idea");
+    expect(text).toContain("numbered 1 to 2 with no rank");
     expect(text).toContain(
       "measure them again and save each final's D and F checks with checks_save using the final's id, run photo_finish,",
     );

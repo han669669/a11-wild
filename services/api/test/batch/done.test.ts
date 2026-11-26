@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { RULES_VERSION } from "../../src/houserules.js";
-import { batchAtTruth, idea, judgeIdeas, rankDrafts } from "../helpers/batch.js";
+import { draftsPerIdea } from "../../src/render/service.js";
+import { batchAtTruth, judgeIdeas, rankDrafts, v1Ideas } from "../helpers/batch.js";
 import { approvedClient, callTool, createStudio, json, sessionCookie, type Studio } from "../helpers/deps.js";
 
 const rules = { rulesVersion: RULES_VERSION };
 const SCENE = "The pouch stands on a wet black rock at dusk, low camera, a wave about to break behind it.";
-const IDEAS = ["idea-1", "idea-2", "idea-3"];
+const IDEAS = ["idea-1", "idea-2", "idea-3", "idea-4", "idea-5"];
 
 let studio: Studio;
 let batchId: string;
@@ -29,16 +30,16 @@ async function final(ideaId: string, items: object[] = []) {
 const done = async () => (await callTool(studio, "batch_done", { batchId })).value;
 const condition = (report: { conditions: { name: string }[] }, name: string) => report.conditions.find((entry) => entry.name === name);
 
-/** A batch whose nine drafts are checked and ranked, with the board shown. */
+/** A batch whose ten drafts are checked and ranked, with the board shown. */
 beforeEach(async () => {
   studio = await createStudio();
   await approvedClient(studio);
   batchId = (await batchAtTruth(studio)).batchId;
-  await callTool(studio, "ideas_save", { ...rules, batchId, ideas: [idea(1), idea(2), idea(3)] });
+  await callTool(studio, "ideas_save", { ...rules, batchId, ideas: v1Ideas() });
   await judgeIdeas(studio, batchId);
   drafts = {};
   for (const ideaId of IDEAS) {
-    for (let n = 0; n < 3; n++) {
+    for (let n = 0; n < draftsPerIdea("v1"); n++) {
       const imageId = await render(ideaId, "draft");
       await check(imageId);
       drafts[ideaId] ??= imageId;
@@ -49,14 +50,14 @@ beforeEach(async () => {
 });
 
 describe("the done gate", () => {
-  it("is not done with two picks out of three ideas, and names the idea without a pick", async () => {
+  it("is not done with two picks out of five ideas, and names the idea without a pick", async () => {
     await pick("idea-1", drafts["idea-1"]!);
     await pick("idea-2", drafts["idea-2"]!);
     await final("idea-1");
     await final("idea-2");
     const report = await done();
     expect(report).toMatchObject({ done: false, batch: { state: "finals" }, nextStep: expect.stringMatching(/Not met: picks/) });
-    expect(condition(report, "picks")).toMatchObject({ passed: false, evidence: "idea-3: no pick yet" });
+    expect(condition(report, "picks")).toMatchObject({ passed: false, evidence: "idea-3: no pick yet; idea-4: no pick yet; idea-5: no pick yet" });
     expect(condition(report, "finals")).toMatchObject({ passed: true });
   });
 
@@ -64,6 +65,8 @@ describe("the done gate", () => {
     await pick("idea-1", drafts["idea-1"]!);
     await pick("idea-2", drafts["idea-2"]!);
     await pick("idea-3", null);
+    await pick("idea-4", null);
+    await pick("idea-5", null);
     await final("idea-1");
     await final("idea-2");
     const report = await done();
@@ -82,7 +85,7 @@ describe("the done gate", () => {
     expect(condition(report, "finals")).toMatchObject({ passed: false, evidence: expect.stringMatching(/a final of idea-3 with no D item \(the newest has D11\)/) });
   });
 
-  it("is done with three clean finals, and lists the stranger test", async () => {
+  it("is done with five clean finals, and lists the stranger test", async () => {
     for (const ideaId of IDEAS) await pick(ideaId, drafts[ideaId]!);
     for (const ideaId of IDEAS) await final(ideaId);
     const report = await done();

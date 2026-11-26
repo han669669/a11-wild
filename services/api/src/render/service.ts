@@ -1,4 +1,4 @@
-import type { Batch, BatchImage, Idea, Render, RenderKind } from "@a11-wild/shared";
+import type { Batch, BatchImage, BatchKind, Idea, Render, RenderKind } from "@a11-wild/shared";
 import { hasWords, requireMove, StateError, stepAfter } from "../batch/state.js";
 import type { DirectionStore } from "../direction/store.js";
 import type { BatchStore } from "../batch/store.js";
@@ -18,6 +18,7 @@ import { renderRules, wordsAsked } from "./prompt-guard.js";
 import { publicRender, type RenderStore, type StoredRender } from "./store.js";
 
 export const DRAFTS_PER_IDEA = 3;
+export const draftsPerIdea = (kind: BatchKind): number => (kind === "v1" ? 2 : DRAFTS_PER_IDEA);
 /** A final that fails its checks may be made again, this many times for one idea. */
 export const FINALS_PER_IDEA = 3;
 export const REFERENCES_MAX = 4;
@@ -32,6 +33,37 @@ const draftsFrom = (batch: Batch) => (batch.kind === "v3" ? "directed" : hasWord
 export function photoNamed(product: { photos: { kind: string; key: string }[] }, name: string) {
   const [kind, number] = name.split("-");
   return product.photos.filter((photo) => photo.kind === kind)[Number(number) - 1];
+}
+
+/** The pack photos a v3 draft's rough was built with. */
+export function roughPackReferences(
+  draft: Render,
+  renders: readonly Render[],
+  images: readonly BatchImage[],
+  batchKind: BatchKind,
+  product: { photos: { kind: string; key: string }[] },
+): string[] {
+  if (batchKind !== "v3" || draft.kind !== "draft") return [];
+  const roughImage = draft.roughId ? undefined : [...images]
+    .filter((image) => image.kind === "rough"
+      && image.ideaId === draft.ideaId
+      && image.createdAt < draft.createdAt)
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+    .at(-1);
+  const roughId = draft.roughId ?? roughImage?.id;
+  const rough = roughId ? renders.find((render) => render.id === roughId && render.kind === "rough") : undefined;
+  if (!rough) return [];
+
+  const packs = product.photos.filter((photo) => photo.kind === "pack");
+  const names = [...(rough.packPhotos ?? []), ...(rough.pack ? [rough.pack] : [])];
+  const references = new Set<string>();
+  for (const name of names) {
+    const photo = photoNamed(product, name);
+    if (photo?.kind !== "pack") continue;
+    const index = packs.findIndex((pack) => pack.key === photo.key);
+    if (index >= 0) references.add(`pack-${index + 1}`);
+  }
+  return [...references];
 }
 
 /** fal reads a reference picture when the job starts, which can be some minutes after it is sent. */
@@ -236,8 +268,9 @@ export class RenderService {
           redoOf = before.id;
         }
       }
-      if (mine.length - (redoOf ? 1 : 0) >= DRAFTS_PER_IDEA) {
-        throw new Refusal(`Idea ${idea.id} has its ${DRAFTS_PER_IDEA} drafts. A failed render can be sent again; a finished draft can be made again once with redo only if its checks reject it.`);
+      const perIdea = draftsPerIdea(batch.kind);
+      if (!redoOf && mine.length >= perIdea) {
+        throw new Refusal(`Idea ${idea.id} has its ${perIdea} drafts. A failed render can be sent again; a finished draft can be made again once with redo only if its checks reject it.`);
       }
       const hasPack = product.photos.some((photo) => photo.kind === "pack");
       if (input.fromId) {
@@ -259,7 +292,7 @@ export class RenderService {
         const unsent = shows.filter((name) => !input.references.includes(name));
         if (unsent.length > 0) throw new Refusal(`Real photos first: idea ${idea.id} shows ${unsent.join(", ")}. Give the real photo of each one in references.`);
       }
-      count = (await batches.ideas(batch.id)).length * DRAFTS_PER_IDEA;
+      count = (await batches.ideas(batch.id)).length * draftsPerIdea(batch.kind);
     } else {
       if (!["waiting_pick", "finals"].includes(batch.state)) requireMove(batch, "finals", "render_submit");
       if (!input.fromId) throw new Refusal("A final is made from the draft the owner picked. Give that draft's picture id as fromId.");
@@ -272,6 +305,7 @@ export class RenderService {
     }
 
     const pack = input.references.find((name) => name.startsWith("pack-"));
+    const packPhotos = input.references.filter((name) => name.startsWith("pack-"));
     const named = input.references.map((name) => {
       const [kind, number] = name.split("-");
       const picture = kind === "logo" ? brand.logo : photoNamed(product, name);
@@ -315,9 +349,11 @@ export class RenderService {
       kind: input.kind,
       prompt: input.prompt.trim(),
       ...(from ? { fromId: from.id } : {}),
+      ...(rough ? { roughId: rough.id } : {}),
       ...(directionVersion !== undefined && input.draft !== undefined ? { draft: input.draft, directionVersion } : {}),
       ...(redoOf ? { redoOf } : {}),
       ...(pack ? { pack } : {}),
+      ...(packPhotos.length > 0 ? { packPhotos } : {}),
       usd,
       fal: job,
       reservation,

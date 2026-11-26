@@ -111,6 +111,7 @@ export function studioTools(parts: StudioParts) {
   const truth = new TruthStore(table, facts, now);
   const images = new ImageStore(table, now);
   const renders = new RenderStore(table, now);
+  const jobs = new JobStore(table, now);
   const fal = new FalClient(parts.keys, parts.falFetch);
   const checks = new CheckStore(table, now);
   const picks = new PickStore(table, now);
@@ -123,7 +124,7 @@ export function studioTools(parts: StudioParts) {
   const proposals = new ProposalStore(table, canon, learning, now);
   const brandNotes = new BrandNotes(table, now);
   const meta = new MetaStore(table, now);
-  const board = new BoardService({ batches, brands, truth, images, renders, checks, picks, critic: criticStore, tasteLog, pictures, copy, points: new PointStore(table, now), directions });
+  const board = new BoardService({ batches, brands, truth, images, renders, jobs, checks, picks, critic: criticStore, tasteLog, pictures, copy, points: new PointStore(table, now), directions });
   const calibration = new Calibration({ batches, picks, critic: criticStore });
   const critic = new CriticService({ batches, brands, truth, facts, board, critic: criticStore, images, pictures, renders, briefs });
   const conceptPicks = new ConceptPicks({ table, now, batches, brands, briefs, critic, tasteLog });
@@ -131,7 +132,6 @@ export function studioTools(parts: StudioParts) {
   const done = new DoneGate({ batches, brands, facts, truth, board, copy });
   const made = new MadeCount(table, references);
   const render = new RenderService({ directions, batches, brands, images, renders, picks, critic: criticStore, ledger, gate, fal, pictures, finals: board, made });
-  const jobs = new JobStore(table, now);
   const pixels = new PixelService({ batches, brands, images, checks, picks, board, renders, jobs, pictures, copy, directions, runner: parts.pixelRunner, now });
   const packs = new PackStore(table);
   const results = new ResultStore(table, now);
@@ -158,7 +158,7 @@ export function studioTools(parts: StudioParts) {
   const tools: ToolDefinition[] = [
     ...coreTools(config),
     ...spendTools({ ledger, gate }),
-    ...brandTools({ brands, parallel, pictures, net }),
+    ...brandTools({ batches, brands, parallel, pictures, net }),
     ...factTools({ brands, facts, parallel }),
     ...leadTools({ brands, parallel, watches: new Watches(table, parallel, now) }),
     ...tasteTools({ canon, tasteLog, swipe, reads, references, batches, pictures, net, brands, learning, proposals, brandNotes }),

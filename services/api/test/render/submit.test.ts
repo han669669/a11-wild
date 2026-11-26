@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import type { BatchImage, Render } from "@a11-wild/shared";
 import { rankable } from "../../src/critic/packet.js";
 import { CriticStore } from "../../src/critic/store.js";
 import { RenderStore } from "../../src/render/store.js";
-import { DRAFTS_PER_IDEA } from "../../src/render/service.js";
+import { draftsPerIdea, roughPackReferences } from "../../src/render/service.js";
 import { RULES_VERSION } from "../../src/houserules.js";
 import { MADE_BEFORE } from "../../src/made/count.js";
-import { batchAtTruth, idea, judgeIdeas, rankDrafts, readTaste, savedProduct, sheet } from "../helpers/batch.js";
+import { batchAtTruth, idea, judgeIdeas, rankDrafts, readTaste, savedProduct, sheet, v1Ideas } from "../helpers/batch.js";
 import { approvedClient, callTool, createStudio, type Studio } from "../helpers/deps.js";
 import type { FalAnswer } from "../helpers/fal.js";
 
@@ -15,7 +16,7 @@ const refused = (pattern: RegExp) => ({ ok: false, error: expect.stringMatching(
 let studio: Studio;
 let batchId: string;
 
-/** A batch with its three ideas saved. With `pack`, the product has a pack photo, so drafts need skeletons. */
+/** A v1 batch with its five ideas saved. With `pack`, the product has a pack photo, so drafts need skeletons. */
 async function batchAtIdeas(options: { fal?: FalAnswer; pack?: boolean; purpose?: "outreach" } = {}) {
   studio = await createStudio(options.fal ? { fal: options.fal } : {});
   await approvedClient(studio);
@@ -34,7 +35,7 @@ async function batchAtIdeas(options: { fal?: FalAnswer; pack?: boolean; purpose?
   if (options.pack) {
     await studio.services.brands.saveProduct({ ...made.product, photos: [...made.product.photos, { key: "products/p/pack.png", sourceUrl: "https://cdn.wongi.example/pack.png", kind: "pack" }] });
   }
-  await callTool(studio, "ideas_save", { rulesVersion: RULES_VERSION, batchId, ideas: [idea(1), idea(2), idea(3)] });
+  await callTool(studio, "ideas_save", { rulesVersion: RULES_VERSION, batchId, ideas: v1Ideas() });
   await judgeIdeas(studio, batchId);
 }
 
@@ -50,8 +51,8 @@ const doneDraft = async (extra: object = {}) => {
 };
 async function readyBoard(leaveLastMissing = false, rank = true) {
   const drafts: { ideaId: string; renderId: string; imageId: string }[] = [];
-  for (const ideaId of ["idea-1", "idea-2", "idea-3"]) {
-    for (let n = 0; n < DRAFTS_PER_IDEA; n++) drafts.push({ ideaId, ...(await doneDraft({ ideaId })) });
+  for (const ideaId of ["idea-1", "idea-2", "idea-3", "idea-4", "idea-5"]) {
+    for (let n = 0; n < draftsPerIdea("v1"); n++) drafts.push({ ideaId, ...(await doneDraft({ ideaId })) });
   }
   for (const [index, draft] of drafts.entries()) {
     if (leaveLastMissing && index === drafts.length - 1) continue;
@@ -59,7 +60,7 @@ async function readyBoard(leaveLastMissing = false, rank = true) {
       rulesVersion: RULES_VERSION,
       batchId,
       imageId: draft.imageId,
-      items: index === 0 || index === DRAFTS_PER_IDEA ? [{ code: "D11", note: "The pouch is too tall." }] : [],
+      items: index === 0 || index === draftsPerIdea("v1") ? [{ code: "D11", note: "The pouch is too tall." }] : [],
     });
   }
   if (rank) await rankDrafts(studio, batchId);
@@ -67,6 +68,55 @@ async function readyBoard(leaveLastMissing = false, rank = true) {
 }
 
 beforeEach(() => batchAtIdeas());
+
+describe("roughPackReferences", () => {
+  it("uses the latest rough image before a legacy draft, not rough submission order", () => {
+    const roughA: Render = {
+      id: "rough-a",
+      batchId: "batch",
+      ideaId: "idea-1",
+      kind: "rough",
+      status: "done",
+      prompt: "",
+      pack: "pack-1",
+      imageId: "rough-a",
+      usd: 0,
+      createdAt: "2026-11-26T10:00:00.000Z",
+      updatedAt: "2026-11-26T10:00:04.000Z",
+    };
+    const roughB: Render = {
+      ...roughA,
+      id: "rough-b",
+      pack: "pack-2",
+      imageId: "rough-b",
+      createdAt: "2026-11-26T10:00:01.000Z",
+      updatedAt: "2026-11-26T10:00:03.000Z",
+    };
+    const draft: Render = {
+      id: "draft",
+      batchId: "batch",
+      ideaId: "idea-1",
+      kind: "draft",
+      status: "queued",
+      prompt: "",
+      usd: 0,
+      createdAt: "2026-11-26T10:00:05.000Z",
+      updatedAt: "2026-11-26T10:00:05.000Z",
+    };
+    const roughImages: BatchImage[] = [
+      { id: "rough-b", batchId: "batch", kind: "rough", key: "rough-b.jpg", ideaId: "idea-1", createdAt: "2026-11-26T10:00:02.000Z" },
+      { id: "rough-a", batchId: "batch", kind: "rough", key: "rough-a.jpg", ideaId: "idea-1", createdAt: "2026-11-26T10:00:04.000Z" },
+    ];
+    const product = {
+      photos: [
+        { key: "pack-a.jpg", kind: "pack" },
+        { key: "pack-b.jpg", kind: "pack" },
+      ],
+    };
+
+    expect(roughPackReferences(draft, [roughA, roughB], roughImages, "v3", product)).toEqual(["pack-1"]);
+  });
+});
 
 describe("render_submit", () => {
   it("covers AE3: refuses a prompt that asks for a headline, names R16, and sends nothing", async () => {
@@ -88,13 +138,55 @@ describe("render_submit", () => {
     expect(await state()).toBe("judged");
   });
 
+  it("caps v1 at two drafts per idea", async () => {
+    await doneDraft();
+    await doneDraft();
+    expect(await draft()).toEqual(refused(/has its 2 drafts/));
+  });
+
+  it("still lets v2 make three drafts of an idea", async () => {
+    const { batchId: v2Batch } = await batchAtTruth(studio, { kind: "v2" });
+    batchId = v2Batch;
+    const stages = ["tof", "mof", "bof"] as const;
+    const ideas = [1, 2, 3].map((n) => ({ id: `idea-${n}`, ...idea(n, { stage: stages[n - 1] }) }));
+    await studio.services.batches.saveIdeas(batchId, ideas, "owner");
+    const atIdeas = await studio.services.batches.move(await studio.services.batches.get(batchId), "ideas", "ideas_save");
+    const judged = await studio.services.batches.move(atIdeas, "judged", "critic_select");
+    await callTool(studio, "copy_approve", {
+      rulesVersion: RULES_VERSION,
+      batchId,
+      ideas: ideas.map(({ id }) => ({ ideaId: id, headline: "ONCE YOU START.", subline: "You cannot stop.", ownerSaid: "Yes, those words." })),
+    });
+    for (let index = 0; index < 3; index++) {
+      const sent = await callTool(studio, "render_submit", {
+        rulesVersion: RULES_VERSION,
+        batchId,
+        ideaId: "idea-1",
+        kind: "draft",
+        prompt: SCENE,
+        references: ["food-1"],
+      });
+      expect(sent.ok).toBe(true);
+      await callTool(studio, "render_status", { batchId, renderId: sent.value.id });
+    }
+    expect(await callTool(studio, "render_submit", {
+      rulesVersion: RULES_VERSION,
+      batchId,
+      ideaId: "idea-1",
+      kind: "draft",
+      prompt: SCENE,
+      references: ["food-1"],
+    })).toEqual(refused(/has its 3 drafts/));
+    expect(judged.state).toBe("judged");
+  });
+
   it("refuses a second draft before the first draft's price is known, then sends the rest when it is under US$1", async () => {
     const first = await draft();
     expect(await draft({ ideaId: "idea-2" })).toEqual(refused(/first of the drafts is out to read the price/));
     expect(studio.fal.submits()).toHaveLength(1);
 
     const done = await callTool(studio, "render_status", { batchId, renderId: first.value.id });
-    expect(done.value).toMatchObject({ status: "done", image: { kind: "draft", ideaId: "idea-1", viewUrl: expect.stringContaining("signed=1") }, note: expect.stringMatching(/9 drafts come to about US\$0\.08, under US\$1/) });
+    expect(done.value).toMatchObject({ status: "done", image: { kind: "draft", ideaId: "idea-1", viewUrl: expect.stringContaining("signed=1") }, note: expect.stringMatching(/10 drafts come to about US\$0\.09, under US\$1/) });
     expect(studio.pictures.files.has(done.value.image.key)).toBe(true);
     expect(await state()).toBe("priced");
 
@@ -107,9 +199,9 @@ describe("render_submit", () => {
     const first = await draft();
     await callTool(studio, "render_status", { batchId, renderId: first.value.id });
     // A dearer price for each of the rest: with the first one and this one, the nine pass US$1.
-    await studio.spend.gate.price(batchId, "drafts", { firstUsd: 0.15, count: 9 });
+    await studio.spend.gate.price(batchId, "drafts", { firstUsd: 0.15, count: 10 });
 
-    expect(await draft({ ideaId: "idea-2" })).toEqual(refused(/waits for the owner's yes: 9 drafts at about US\$1\.\d+ in total/));
+    expect(await draft({ ideaId: "idea-2" })).toEqual(refused(/waits for the owner's yes: 10 drafts at about US\$1\.\d+ in total/));
     expect(await state()).toBe("waiting_spend");
     expect(await callTool(studio, "spend_approve", { batchId, stage: "drafts" }, { sub: "sub-member" })).toEqual(refused(/Only the owner/));
     expect((await callTool(studio, "spend_approve", { batchId, stage: "drafts" })).ok).toBe(true);
@@ -126,8 +218,7 @@ describe("render_submit", () => {
 
     expect(await draft({ fromId: one })).toEqual(refused(/R23.*its own skeleton/));
     expect((await draft({ fromId: two })).ok).toBe(true);
-    expect((await draft({ fromId: three })).ok).toBe(true);
-    expect(await draft({ fromId: await skeleton(4) })).toEqual(refused(/has its 3 drafts/));
+    expect(await draft({ fromId: three })).toEqual(refused(/has its 2 drafts/));
     // Another idea may use a skeleton that a first idea used, or draw directly from real photos without a skeleton.
     expect((await draft({ ideaId: "idea-2", fromId: one })).ok).toBe(true);
     expect((await draft({ ideaId: "idea-2" })).ok).toBe(true);
@@ -136,7 +227,6 @@ describe("render_submit", () => {
   it("lets a rejected v1 draft be made again once and replaces it on the board and critic packet", async () => {
     const first = await doneDraft();
     const second = await doneDraft();
-    const third = await doneDraft();
     await callTool(studio, "checks_save", {
       rulesVersion: RULES_VERSION,
       batchId,
@@ -152,13 +242,46 @@ describe("render_submit", () => {
 
     const board = await studio.services.board.board(batchId);
     const boardDrafts = board.ideas.find((entry) => entry.idea.id === "idea-1")!.drafts.map((entry) => entry.image.id);
-    expect(boardDrafts).toHaveLength(DRAFTS_PER_IDEA);
-    expect(boardDrafts).toEqual(expect.arrayContaining([second.imageId, third.imageId, done.value.image.id]));
+    expect(boardDrafts).toHaveLength(draftsPerIdea("v1"));
+    expect(boardDrafts).toEqual(expect.arrayContaining([second.imageId, done.value.image.id]));
     expect(boardDrafts).not.toContain(first.imageId);
 
-    const criticDrafts = rankable(board, DRAFTS_PER_IDEA).find((entry) => entry.idea.id === "idea-1")!.drafts.map((entry) => entry.imageId);
-    expect(criticDrafts).toEqual(expect.arrayContaining([second.imageId, third.imageId, done.value.image.id]));
+    const criticDrafts = rankable(board, draftsPerIdea("v1")).find((entry) => entry.idea.id === "idea-1")!.drafts.map((entry) => entry.imageId);
+    expect(criticDrafts).toEqual(expect.arrayContaining([second.imageId, done.value.image.id]));
     expect(criticDrafts).not.toContain(first.imageId);
+  });
+
+  it("lets a rejected v1 draft be redone when three legacy drafts already exist", async () => {
+    const first = await doneDraft();
+    await doneDraft();
+    const third = await studio.services.images.add({
+      batchId,
+      kind: "draft",
+      key: `batches/${batchId}/drafts/legacy-third.png`,
+      ideaId: "idea-1",
+    });
+    const legacy = await studio.services.renders.create({
+      batchId,
+      ideaId: "idea-1",
+      kind: "draft",
+      prompt: SCENE,
+      usd: 0.009,
+      imageId: third.id,
+      fal: { requestId: "legacy", statusUrl: "https://queue.example/status", responseUrl: "https://queue.example/response" },
+      reservation: { month: "2026-11", sk: "SPEND#legacy", batchId, micro: 9000 },
+      stageCount: 2,
+    });
+    await studio.services.renders.end(legacy, { status: "done", imageId: third.id });
+    await callTool(studio, "checks_save", {
+      rulesVersion: RULES_VERSION,
+      batchId,
+      imageId: first.imageId,
+      items: [{ code: "D11", note: "The pouch is too tall." }],
+    });
+
+    const sent = await draft({ redo: first.renderId });
+
+    expect(sent.ok).toBe(true);
   });
 
   it("refuses to make a v1 draft again when its checks do not reject it", async () => {
@@ -176,8 +299,8 @@ describe("render_submit", () => {
 
   it("refuses a redo after that idea is ranked, but allows one for an unranked idea while checks remain", async () => {
     const drafts: { ideaId: string; renderId: string; imageId: string }[] = [];
-    for (const ideaId of ["idea-1", "idea-2", "idea-3"]) {
-      for (let n = 0; n < DRAFTS_PER_IDEA; n++) drafts.push({ ideaId, ...(await doneDraft({ ideaId })) });
+    for (const ideaId of ["idea-1", "idea-2", "idea-3", "idea-4", "idea-5"]) {
+      for (let n = 0; n < draftsPerIdea("v1"); n++) drafts.push({ ideaId, ...(await doneDraft({ ideaId })) });
     }
     for (const [index, made] of drafts.entries()) {
       if (index === drafts.length - 1) continue;
@@ -185,7 +308,7 @@ describe("render_submit", () => {
         rulesVersion: RULES_VERSION,
         batchId,
         imageId: made.imageId,
-        items: index === 0 || index === DRAFTS_PER_IDEA ? [{ code: "D11", note: "The pouch is too tall." }] : [],
+        items: index === 0 || index === draftsPerIdea("v1") ? [{ code: "D11", note: "The pouch is too tall." }] : [],
       });
     }
     const ranked = drafts.filter((made) => made.ideaId === "idea-1");
@@ -426,14 +549,14 @@ describe("render_status", () => {
     // The failed draft was charged, so its price stays in what the stage came to.
     expect(failed.value.billed).toBe(true);
     copies = true;
-    // The draft sent in its place reads the price, and the quote counts the charge for the one that failed.
+    // The draft sent in its place reads the price, including the failed charge and the ten planned drafts.
     const second = await draft();
     const done = await callTool(studio, "render_status", { batchId, renderId: second.value.id });
-    expect(done.value).toMatchObject({ status: "done", note: expect.stringMatching(/9 drafts come to about US\$0\.09/) });
-    expect((await studio.spend.gate.peek(batchId, "drafts"))?.estimateUsd).toBeCloseTo(0.009 * 10);
+    expect(done.value).toMatchObject({ status: "done", note: expect.stringMatching(/10 drafts come to about US\$0\.10/) });
+    expect((await studio.spend.gate.peek(batchId, "drafts"))?.estimateUsd).toBeCloseTo(0.009 * 11);
     // The next draft does not move it.
     expect((await draft({ ideaId: "idea-2" })).ok).toBe(true);
-    expect((await studio.spend.gate.peek(batchId, "drafts"))?.estimateUsd).toBeCloseTo(0.009 * 10);
+    expect((await studio.spend.gate.peek(batchId, "drafts"))?.estimateUsd).toBeCloseTo(0.009 * 11);
   });
 
   it("leaves the render queued while fal is busy, and copies the picture once when two reads meet", async () => {

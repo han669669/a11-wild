@@ -1,13 +1,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { RULES_VERSION } from "../../src/houserules.js";
 import { PACK_CHECK } from "../../src/checks/store.js";
-import { batchAtTruth, idea, judgeIdeas, rankDrafts } from "../helpers/batch.js";
+import { draftsPerIdea } from "../../src/render/service.js";
+import { batchAtTruth, idea, judgeIdeas, rankDrafts, v1Ideas } from "../helpers/batch.js";
 import { approvedClient, callTool, createStudio, type Studio } from "../helpers/deps.js";
 import { loadProspects } from "../outreach/helpers.js";
 
 const rules = { rulesVersion: RULES_VERSION };
 const SCENE = "The pouch stands on a wet black rock at dusk, low camera, a wave about to break behind it.";
-const IDEAS = ["idea-1", "idea-2", "idea-3"];
+const IDEAS = ["idea-1", "idea-2", "idea-3", "idea-4", "idea-5"];
 const PROSPECT = "00001";
 
 let studio: Studio;
@@ -33,11 +34,11 @@ const log = async () => (await callTool(studio, "taste_log", {})).value.entries 
 
 async function batchAtBoard(create: object) {
   batchId = (await batchAtTruth(studio, create)).batchId;
-  await callTool(studio, "ideas_save", { ...rules, batchId, ideas: [idea(1), idea(2), idea(3)] });
+  await callTool(studio, "ideas_save", { ...rules, batchId, ideas: v1Ideas() });
   await judgeIdeas(studio, batchId);
   drafts = {};
   for (const ideaId of IDEAS) {
-    for (let n = 0; n < 3; n++) {
+    for (let n = 0; n < draftsPerIdea("v1"); n++) {
       const imageId = await render(ideaId, "draft");
       await check(imageId);
       drafts[ideaId] ??= imageId;
@@ -80,7 +81,7 @@ describe("an outreach batch", () => {
     expect(await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "final", scene: SCENE, fromId: drafts["idea-1"] })).toMatchObject({ ok: false });
     await ownerPicks(drafts["idea-1"]!);
     const board = (await callTool(studio, "board_show", { batchId })).value;
-    expect(board.ideas.map((entry: { pick: { imageId: string | null } }) => entry.pick.imageId)).toEqual([drafts["idea-1"], null, null]);
+    expect(board.ideas.map((entry: { pick: { imageId: string | null } }) => entry.pick.imageId)).toEqual([drafts["idea-1"], null, null, null, null]);
     expect((await log()).length).toBe(before);
     expect((await callTool(studio, "calibration_report", {})).value.picks).toMatchObject({ firstPlace: { n: 0 }, byPlace: {} });
   });
@@ -187,14 +188,14 @@ describe("an outreach batch", () => {
     };
     const withIdeas = async (create: object) => {
       batchId = (await batchAtTruth(studio, create)).batchId;
-      await callTool(studio, "ideas_save", { ...rules, batchId, ideas: [idea(1), idea(2), idea(3)] });
+      await callTool(studio, "ideas_save", { ...rules, batchId, ideas: v1Ideas() });
     };
     const state = async () => (await callTool(studio, "batch_get", { batchId })).value.batch.state;
 
     it("goes on with one kept idea: it makes one ad, so a cut idea starts no new round", async () => {
       await withIdeas({ prospectId: PROSPECT });
-      const reply = await judge(["idea-1", "idea-3"]);
-      expect(reply.value).toMatchObject({ state: "judged", kept: ["idea-2"], cut: [{ ideaId: "idea-1" }, { ideaId: "idea-3" }], nextStep: expect.stringMatching(/starts no other critic/) });
+      const reply = await judge(["idea-1", "idea-3", "idea-4", "idea-5"]);
+      expect(reply.value).toMatchObject({ state: "judged", kept: ["idea-2"], cut: [{ ideaId: "idea-1" }, { ideaId: "idea-3" }, { ideaId: "idea-4" }, { ideaId: "idea-5" }], nextStep: expect.stringMatching(/starts no other critic/) });
       expect((await studio.services.batches.ideas(batchId)).map((entry) => entry.id)).toEqual(["idea-2"]);
     });
 
@@ -202,10 +203,10 @@ describe("an outreach batch", () => {
       await withIdeas({ prospectId: PROSPECT });
       const first = await judge(IDEAS);
       expect(first.value).toMatchObject({ state: "ideas", nextStep: expect.stringMatching(/round 1 of 2.*once more/) });
-      await callTool(studio, "ideas_save", { ...rules, batchId, ideas: [idea(4), idea(5), idea(6)] });
+      await callTool(studio, "ideas_save", { ...rules, batchId, ideas: [idea(4), idea(5), idea(6), idea(7), idea(8)] });
       const second = await judge(IDEAS);
       expect(second.value).toMatchObject({ state: "ideas", nextStep: expect.stringMatching(/round 2 of 2, the last.*parks the brand/) });
-      await callTool(studio, "ideas_save", { ...rules, batchId, ideas: [idea(7), idea(8), idea(9)] });
+      await callTool(studio, "ideas_save", { ...rules, batchId, ideas: [idea(9), idea(10), idea(11), idea(12), idea(13)] });
       const third = await judge([]);
       expect(third).toMatchObject({ ok: false, error: expect.stringMatching(/judged 2 times.*Park it/) });
       expect(await state()).toBe("ideas");
@@ -213,10 +214,10 @@ describe("an outreach batch", () => {
 
     it("owes the drafts of every kept idea, and no rank of them", async () => {
       await withIdeas({ prospectId: PROSPECT });
-      expect((await judge(["idea-3"])).value).toMatchObject({ state: "judged", kept: ["idea-1", "idea-2"] });
+      expect((await judge(["idea-3", "idea-4", "idea-5"])).value).toMatchObject({ state: "judged", kept: ["idea-1", "idea-2"] });
       drafts = {};
       for (const ideaId of ["idea-1", "idea-2"]) {
-        for (let n = 0; n < 3; n++) {
+        for (let n = 0; n < draftsPerIdea("v1"); n++) {
           // The drafts of one idea are not enough: the owner picks among the drafts of every kept idea.
           expect(await state()).not.toBe("checked");
           const imageId = await render(ideaId, "draft");
@@ -249,9 +250,9 @@ describe("an outreach batch", () => {
       await withIdeas({});
       const reply = await judge(["idea-1"]);
       expect(reply.value).toMatchObject({ state: "judged", cut: [{ ideaId: "idea-1" }], nextStep: expect.stringMatching(/advises and never blocks/) });
-      expect(await studio.services.batches.ideas(batchId)).toHaveLength(3);
+      expect(await studio.services.batches.ideas(batchId)).toHaveLength(5);
       // Refining cut ideas after the advisory critic keeps the batch in "judged", ready for drafting.
-      const refined = await callTool(studio, "ideas_save", { ...rules, batchId, ideas: [idea(4), idea(5), idea(6)] });
+      const refined = await callTool(studio, "ideas_save", { ...rules, batchId, ideas: [idea(4), idea(5), idea(6), idea(7), idea(8)] });
       expect(refined.value).toMatchObject({ state: "judged" });
       expect((await studio.services.batches.ideas(batchId))[0]?.title).toBe(idea(4).title);
     });

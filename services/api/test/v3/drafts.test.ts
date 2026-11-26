@@ -1,7 +1,9 @@
+import { FINAL_POINTS } from "@a11-wild/shared";
 import { beforeEach, describe, expect, it } from "vitest";
-import { batchAtTruth, idea, judgeIdeas } from "../helpers/batch.js";
+import { batchAtTruth, judgeIdeas, rankDrafts, v1Ideas } from "../helpers/batch.js";
 import { approvedClient, callTool, createStudio, type Studio } from "../helpers/deps.js";
 import { directionOf, rules, v3AtDirected } from "../helpers/v3.js";
+import type { Item } from "../../src/store/table.js";
 
 const SCENE = "One empty pouch lies flat on a yellow seamless, one hard shadow to its right, camera from above.";
 
@@ -67,7 +69,7 @@ describe("a draft of a concept ad", () => {
       const sent = await send("idea-2", draft, { references });
       const { image } = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value;
       if ((await callTool(studio, "batch_get", { batchId })).value.batch.state === "waiting_spend") await callTool(studio, "spend_approve", { ...rules, batchId, ownerSaid: "yes" });
-      const job = await callTool(studio, "pack_check", { batchId, imageId: image.id, at: [500, 800], bg: "FFD21E" });
+      const job = await callTool(studio, "pack_check", { batchId, imageId: image.id, pack: 1, at: [500, 800], bg: "FFD21E" });
       expect(job.ok ? "" : job.error).toBe("");
       return studio.pixels.events.at(-1)!.input.packKey;
     };
@@ -103,7 +105,7 @@ describe("a draft of a concept ad", () => {
 
   it("keeps the draft number for v3 only", async () => {
     const v1 = await batchAtTruth(studio);
-    await callTool(studio, "ideas_save", { ...rules, batchId: v1.batchId, ideas: [idea(1), idea(2), idea(3)] });
+    await callTool(studio, "ideas_save", { ...rules, batchId: v1.batchId, ideas: v1Ideas() });
     await judgeIdeas(studio, v1.batchId);
     const before = studio.fal.submits().length;
     const refused = await callTool(studio, "render_submit", { ...rules, batchId: v1.batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, references: [], draft: 1 });
@@ -114,6 +116,60 @@ describe("a draft of a concept ad", () => {
 
 describe("a real-photo plan", () => {
   const plan = (products: object[]) => ({ bg: "FFD21E", products });
+
+  it("uses the rough's pack reference for a food-only skeleton and a legacy draft", async () => {
+    const got = (await callTool(studio, "batch_get", { batchId })).value;
+    const pouch = {
+      key: "products/p/pack-pouch.jpg",
+      sourceUrl: "https://cdn.wongi.example/pack-pouch.jpg",
+      kind: "pack" as const,
+      what: "The 230 g pouch",
+    };
+    await studio.services.brands.saveProduct({ ...got.product, photos: [...got.product.photos, pouch], savedBy: "owner@example.com" });
+
+    const rough = (await studio.services.renders.list(batchId)).find((render) => render.kind === "rough" && render.ideaId === "idea-2")!;
+    const roughRow = await studio.table.get<Item>(`BATCH#${batchId}`, `RENDER#${rough.id}`);
+    await studio.table.put({ ...roughRow!, pack: "pack-1", packPhotos: ["pack-1", "pack-2"] });
+    const ideas = await studio.services.batches.ideas(batchId);
+    await studio.services.batches.saveIdeas(batchId, ideas.map((idea) => idea.id === "idea-2" ? { ...idea, shows: [] } : idea), "owner@example.com");
+
+    const made = await callTool(studio, "skeleton_make", { ...rules, batchId, ideaId: "idea-2", plan: plan([{ cx: 0.5, base: 0.8, height: 0.3, photo: "food-1" }]) });
+    if (!made.ok) throw new Error(made.error);
+    const skeleton = await callTool(studio, "pixel_status", { batchId, jobId: made.value.id });
+    if (!skeleton.ok) throw new Error(skeleton.error);
+
+    studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
+    const sent = await send("idea-2", 1, { fromId: skeleton.value.image.id, references: [] });
+    if (!sent.ok) throw new Error(sent.error);
+    expect(await studio.services.renders.get(batchId, sent.value.id)).toMatchObject({ roughId: rough.id });
+    const rendered = await callTool(studio, "render_status", { batchId, renderId: sent.value.id });
+    if (!rendered.ok) throw new Error(rendered.error);
+    const imageId = rendered.value.image.id;
+    if ((await callTool(studio, "batch_get", { batchId })).value.batch.state === "waiting_spend") {
+      await callTool(studio, "spend_approve", { ...rules, batchId, ownerSaid: "yes" });
+    }
+    const second = await send("idea-2", 2, { references: [] });
+    if (!second.ok) throw new Error(second.error);
+    const secondRendered = await callTool(studio, "render_status", { batchId, renderId: second.value.id });
+    if (!secondRendered.ok) throw new Error(secondRendered.error);
+    if ((await callTool(studio, "batch_get", { batchId })).value.batch.state === "waiting_spend") {
+      await callTool(studio, "spend_approve", { ...rules, batchId, ownerSaid: "yes" });
+    }
+
+    const looked = await callTool(studio, "checks_save", { ...rules, batchId, imageId, items: [] });
+    expect(looked.value.stillMissing).toContain(`pack_check for picture ${imageId}`);
+
+    const measure = await callTool(studio, "pack_check", { batchId, imageId, photo: "pack-2", pack: 2, at: [500, 800], bg: "FFD21E" });
+    if (!measure.ok) throw new Error(measure.error);
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: pouch.key, pack: 2 });
+
+    const draftRow = await studio.table.get<Item>(`BATCH#${batchId}`, `RENDER#${sent.value.id}`);
+    const { roughId: _roughId, ...legacyDraft } = draftRow!;
+    await studio.table.put(legacyDraft);
+    const legacyMeasure = await callTool(studio, "pack_check", { batchId, imageId, photo: "pack-2", pack: 2, at: [500, 800], bg: "FFD21E" });
+    if (!legacyMeasure.ok) throw new Error(legacyMeasure.error);
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: pouch.key, pack: 2 });
+  });
 
   it("is made after the direction, from the product's saved real photos by name", async () => {
     const made = await callTool(studio, "skeleton_make", { ...rules, batchId, ideaId: "idea-2", plan: plan([{ cx: 0.3, base: 0.8, height: 0.3 }, { cx: 0.7, base: 0.8, height: 0.2, photo: "food-1" }]) });
@@ -152,6 +208,10 @@ describe("a draft that shows the food alone", () => {
   it("owes no pack measure, and a draft that shows the pack still does", async () => {
     const ideas = await studio.services.batches.ideas(batchId);
     await studio.services.batches.saveIdeas(batchId, ideas.map((idea) => (idea.id === "idea-4" ? { ...idea, shows: ["food-1"] } : idea)), "owner@example.com");
+    const rough = (await studio.services.renders.list(batchId)).find((render) => render.kind === "rough" && render.ideaId === "idea-4")!;
+    const roughRow = await studio.table.get<Item>(`BATCH#${batchId}`, `RENDER#${rough.id}`);
+    const { pack: _pack, packPhotos: _packPhotos, ...foodRough } = roughRow!;
+    await studio.table.put(foodRough);
     const made = async (ideaId: string, references: string[]) => {
       const sent = await send(ideaId, 1, { references });
       if (!sent.ok) throw new Error(sent.error);
@@ -164,6 +224,213 @@ describe("a draft that shows the food alone", () => {
     expect(looked.value.stillMissing).toContain(`pack_check for picture ${pack}`);
     expect(looked.value.stillMissing).not.toContain(`pack_check for picture ${food}`);
     expect(looked.value.stillMissing).not.toContain(`checks_save for picture ${food}`);
+  });
+
+  it("settles rough-only pack checks on a food-only draft and its final", async () => {
+    const ideas = await studio.services.batches.ideas(batchId);
+    await studio.services.batches.saveIdeas(batchId, ideas.map((idea) => idea.id === "idea-4" ? { ...idea, shows: ["food-1"] } : idea), "owner@example.com");
+    const skeletonJob = await callTool(studio, "skeleton_make", {
+      ...rules,
+      batchId,
+      ideaId: "idea-4",
+      plan: { bg: "FFD21E", products: [{ cx: 0.5, base: 0.8, height: 0.3, photo: "food-1" }] },
+    });
+    if (!skeletonJob.ok) throw new Error(skeletonJob.error);
+    const skeleton = await callTool(studio, "pixel_status", { batchId, jobId: skeletonJob.value.id });
+    if (!skeleton.ok) throw new Error(skeleton.error);
+    const copies = new Map((await studio.services.copy.list(batchId)).map((copy) => [copy.ideaId, copy]));
+    let foodOnlyDraftId: string | undefined;
+    let directPackDraftId: string | undefined;
+
+    for (const ideaId of ["idea-2", "idea-4", "idea-5"]) {
+      for (let draft = 1; draft <= 3; draft += 1) {
+        const foodOnly = ideaId === "idea-4";
+        const fromId = foodOnly && draft === 1 ? skeleton.value.image.id : undefined;
+        const references = foodOnly ? ["food-1"] : ["pack-1"];
+        const sent = await send(ideaId, draft, {
+          ...(fromId ? { fromId } : {}),
+          references,
+          prompt: `${SCENE} Draft ${draft}.`,
+        });
+        if (!sent.ok) throw new Error(sent.error);
+        const rendered = await callTool(studio, "render_status", { batchId, renderId: sent.value.id });
+        if (!rendered.ok) throw new Error(rendered.error);
+        const imageId = rendered.value.image.id as string;
+        if (foodOnly && draft === 1) foodOnlyDraftId = imageId;
+        if (ideaId === "idea-2" && draft === 1) directPackDraftId = imageId;
+        if ((await callTool(studio, "batch_get", { batchId })).value.batch.state === "waiting_spend") {
+          await callTool(studio, "spend_approve", { ...rules, batchId, ownerSaid: "yes" });
+        }
+        const looked = await callTool(studio, "checks_save", { ...rules, batchId, imageId, items: [] });
+
+        if (foodOnly && draft === 1) {
+          expect(looked.value.stillMissing).toContain(`pack_check for picture ${imageId}`);
+          const workerCallsBefore = studio.pixels.events.length;
+          const falCallsBefore = studio.fal.submits().length;
+          const jobsBefore = (await studio.table.query<Item>(`BATCH#${batchId}`)).filter((row) => row.sk.startsWith("JOB#")).length;
+          const spendBefore = await studio.spend.ledger.summary(batchId);
+          const noPack = await callTool(studio, "pack_check", { batchId, imageId, noPack: true });
+          if (!noPack.ok) throw new Error(noPack.error);
+          expect(noPack).toMatchObject({ ok: true, value: { status: "done", line: "no pack shown", imageId } });
+          expect(noPack.value.state).not.toBeUndefined();
+          expect(noPack.value.stillMissing ?? []).not.toContain(`pack_check for picture ${imageId}`);
+          expect(await studio.services.checks.measuredBy(batchId, imageId)).toEqual(["pack_check"]);
+          expect(await callTool(studio, "pack_check", { batchId, imageId, noPack: true })).toEqual({
+            ok: false,
+            error: "This picture already has a pack measure. Measure the pack again, or redo the picture.",
+          });
+          expect((await studio.services.checks.get(batchId, imageId))!.items).toEqual([]);
+          expect(studio.pixels.events).toHaveLength(workerCallsBefore);
+          expect(studio.fal.submits()).toHaveLength(falCallsBefore);
+          expect((await studio.table.query<Item>(`BATCH#${batchId}`)).filter((row) => row.sk.startsWith("JOB#"))).toHaveLength(jobsBefore);
+          expect(await studio.spend.ledger.summary(batchId)).toEqual(spendBefore);
+        } else {
+          if (ideaId === "idea-2" && draft === 1) {
+            expect(await callTool(studio, "pack_check", { batchId, imageId, noPack: true })).toEqual({
+              ok: false,
+              error: "This picture was built with a pack photo, so measure its pack.",
+            });
+            expect(await callTool(studio, "pack_check", { batchId, imageId })).toEqual({
+              ok: false,
+              error: "Give at to measure the pack, or set noPack: true.",
+            });
+          }
+          const measured = await callTool(studio, "pack_check", {
+            batchId,
+            imageId,
+            ...(foodOnly ? { photo: "pack-1" } : {}),
+            at: [500, 800],
+            bg: "FFD21E",
+          });
+          if (!measured.ok) throw new Error(measured.error);
+          if (foodOnly && draft === 2) {
+            expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: "products/p/pack.jpg" });
+          }
+          expect((await callTool(studio, "pixel_status", { batchId, jobId: measured.value.id })).value.status).toBe("done");
+        }
+        const copy = copies.get(ideaId);
+        if (!copy) throw new Error(`The words of ${ideaId} were not approved.`);
+        const typesetId = `typeset-${ideaId}-${draft}`;
+        await studio.services.images.add({
+          id: typesetId,
+          batchId,
+          kind: "typeset",
+          key: `batches/${batchId}/typeset/${ideaId}-${draft}.png`,
+          ideaId,
+          fromId: imageId,
+          rootId: imageId,
+          wordsVersion: copy.version,
+        });
+        await callTool(studio, "checks_save", { ...rules, batchId, imageId: typesetId, items: [] });
+      }
+    }
+
+    const ranked = await rankDrafts(studio, batchId);
+    expect(ranked.ok).toBe(true);
+    expect((await callTool(studio, "batch_get", { batchId })).value.batch.state).toBe("checked");
+
+    if (!foodOnlyDraftId || !directPackDraftId) throw new Error("The required drafts were not made.");
+    await callTool(studio, "pick_save", { batchId, ideaId: "idea-2", imageId: directPackDraftId, ownerSaid: "this one" });
+    const directFinalSent = await callTool(studio, "render_submit", {
+      ...rules,
+      batchId,
+      ideaId: "idea-2",
+      kind: "final",
+      fromId: directPackDraftId,
+      prompt: SCENE,
+      references: ["pack-1"],
+    });
+    if (!directFinalSent.ok) throw new Error(directFinalSent.error);
+    const directFinalRendered = await callTool(studio, "render_status", { batchId, renderId: directFinalSent.value.id });
+    if (!directFinalRendered.ok) throw new Error(directFinalRendered.error);
+    const directFinalId = directFinalRendered.value.image.id as string;
+    if ((await callTool(studio, "batch_get", { batchId })).value.batch.state === "waiting_spend") {
+      await callTool(studio, "spend_approve", { ...rules, batchId, ownerSaid: "yes" });
+    }
+    expect(await callTool(studio, "pack_check", { batchId, imageId: directFinalId, noPack: true })).toEqual({
+      ok: false,
+      error: "This picture was built with a pack photo, so measure its pack.",
+    });
+
+    await callTool(studio, "pick_save", { batchId, ideaId: "idea-4", imageId: foodOnlyDraftId, ownerSaid: "this one" });
+    studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
+    const packShowingFinalSent = await callTool(studio, "render_submit", {
+      ...rules,
+      batchId,
+      ideaId: "idea-4",
+      kind: "final",
+      fromId: foodOnlyDraftId,
+      prompt: SCENE,
+      references: ["food-1", "pack-1"],
+    });
+    if (!packShowingFinalSent.ok) throw new Error(packShowingFinalSent.error);
+    const packShowingFinalRendered = await callTool(studio, "render_status", { batchId, renderId: packShowingFinalSent.value.id });
+    if (!packShowingFinalRendered.ok) throw new Error(packShowingFinalRendered.error);
+    const packShowingFinalId = packShowingFinalRendered.value.image.id as string;
+    if ((await callTool(studio, "batch_get", { batchId })).value.batch.state === "waiting_spend") {
+      await callTool(studio, "spend_approve", { ...rules, batchId, ownerSaid: "yes" });
+    }
+    const batch = await studio.services.batches.get(batchId);
+    const allImages = await studio.services.images.list(batchId);
+    expect(await studio.services.board.packEvidence(batch, await studio.services.images.get(batchId, foodOnlyDraftId), allImages)).toEqual({ direct: false, rough: true });
+    expect((await studio.services.board.packEvidence(batch, await studio.services.images.get(batchId, packShowingFinalId), allImages)).direct).toBe(true);
+    expect(await callTool(studio, "pack_check", { batchId, imageId: packShowingFinalId, noPack: true })).toEqual({
+      ok: false,
+      error: "This picture was built with a pack photo, so measure its pack.",
+    });
+    const packMeasure = await callTool(studio, "pack_check", { batchId, imageId: packShowingFinalId, at: [500, 800], bg: "FFD21E" });
+    if (!packMeasure.ok) throw new Error(packMeasure.error);
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: "products/p/pack.jpg" });
+    expect((await callTool(studio, "pixel_status", { batchId, jobId: packMeasure.value.id })).value.status).toBe("done");
+    expect(await studio.services.checks.measuredBy(batchId, packShowingFinalId)).toEqual(["pack_check"]);
+
+    studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
+    const sent = await callTool(studio, "render_submit", {
+      ...rules,
+      batchId,
+      ideaId: "idea-4",
+      kind: "final",
+      fromId: foodOnlyDraftId,
+      prompt: SCENE,
+      references: ["food-1"],
+    });
+    if (!sent.ok) throw new Error(sent.error);
+    const renderedFinal = await callTool(studio, "render_status", { batchId, renderId: sent.value.id });
+    if (!renderedFinal.ok) throw new Error(renderedFinal.error);
+    const finalId = renderedFinal.value.image.id as string;
+    if ((await callTool(studio, "batch_get", { batchId })).value.batch.state === "waiting_spend") {
+      await callTool(studio, "spend_approve", { ...rules, batchId, ownerSaid: "yes" });
+    }
+    await callTool(studio, "checks_save", { ...rules, batchId, imageId: finalId, items: [] });
+    const finalGateBefore = (await studio.services.board.finals(await studio.services.batches.get(batchId))).find((entry) => entry.ideaId === "idea-4");
+    expect(finalGateBefore?.missing).toContain(`pack_check for picture ${finalId}`);
+    const noPackFinal = await callTool(studio, "pack_check", { batchId, imageId: finalId, noPack: true });
+    if (!noPackFinal.ok) throw new Error(noPackFinal.error);
+    expect(noPackFinal.value).toMatchObject({ status: "done", line: "no pack shown", imageId: finalId });
+    expect(await studio.services.checks.measuredBy(batchId, finalId)).toEqual(["pack_check"]);
+
+    const finish = await callTool(studio, "photo_finish", { ...rules, batchId, imageId: finalId });
+    if (!finish.ok) throw new Error(finish.error);
+    const finished = await callTool(studio, "pixel_status", { batchId, jobId: finish.value.id });
+    if (!finished.ok) throw new Error(finished.error);
+    const copy = copies.get("idea-4");
+    if (!copy) throw new Error("The words of idea-4 were not approved.");
+    const typesetId = `typeset-final-${finalId}`;
+    await studio.services.images.add({
+      id: typesetId,
+      batchId,
+      kind: "typeset",
+      key: `batches/${batchId}/typeset/final-${finalId}.png`,
+      ideaId: "idea-4",
+      fromId: finished.value.image.id,
+      rootId: finalId,
+      wordsVersion: copy.version,
+    });
+    await callTool(studio, "checks_save", { ...rules, batchId, imageId: typesetId, items: [] });
+    const points = Object.fromEntries(FINAL_POINTS.map((point) => [point, { passed: true, note: "" }]));
+    await callTool(studio, "final_points_save", { ...rules, batchId, imageId: typesetId, points });
+    const finalGateAfter = (await studio.services.board.finals(await studio.services.batches.get(batchId))).find((entry) => entry.ideaId === "idea-4");
+    expect(finalGateAfter).toMatchObject({ delivered: { id: typesetId }, missing: [] });
   });
 
   it("is measured turned upright when the pack lies at an angle", async () => {

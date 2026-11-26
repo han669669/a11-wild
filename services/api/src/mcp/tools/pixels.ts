@@ -7,13 +7,12 @@ const px = z.number().int().min(0).max(4096);
 const fraction = z.number().min(0).max(1);
 const colour = z.string().regex(/^#?[0-9a-fA-F]{6}$/, "A colour as RRGGBB.");
 const box = z.tuple([px, px, px, px]);
-const packNumber = z
-  .number()
-  .int()
-  .min(1)
-  .max(12)
+const packNumber = z.number().int().min(1).max(12);
+const packNumberDescription = "Number the packs of a picture from the left, 1 to 12; each pack keeps its own result.";
+const packCheckNumberDescription = `${packNumberDescription} This picture's layout and references use more than one pack photo: give pack, the pack's number from the left in this picture (1 if it shows only one pack).`;
+const defaultPackNumber = packNumber
   .default(1)
-  .describe("Which pack this is when the picture shows more than one: 1 for the first from the left, 2 for the next. Measure every pack. Each pack keeps its own result, so a pass on one never clears a fail on another.");
+  .describe(packNumberDescription);
 const imageId = id.describe("A draft, a final, or a reprint or swap of one, of this batch.");
 
 const cutout = z
@@ -45,6 +44,7 @@ const plan = z
             rot: z.number().min(-15).max(15).default(0),
             photo: z.string().regex(/^(pack|food|prop)-\d{1,2}$/).optional(),
             cutout: cutout.optional(),
+            box: box.optional(),
             blur: z.number().min(0).max(12).optional(),
           })
           .strict(),
@@ -59,7 +59,7 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
     defineTool({
       name: "skeleton_make",
       description:
-        "Makes a skeleton: the real pack, cut from the product's pack photo, on a blank 4:5 canvas at its true proportions. Free. Use it before every v2 draft of a product that has a pack photo (and in v1 or v3 when locking a pack or combining more than four photos), and give its picture id to render_submit as fromId: a model keeps what is already in its picture, so the pack's shape is right by construction. Each draft of an idea needs its own skeleton, with another place, scale or crop. Give either one pack (height, cx, base, count) or a plan with each pack's place, side and small turn, and flat shapes for a surface. Leave clear stage round each thing, a third of a pack's width or more: the model draws things a little larger than the skeleton, and a pack that touches its neighbour or its food cannot be measured alone. Only a skeleton made from a plan can be reprinted later. The pack photo needs a plain backdrop or its own transparency. The reply is a job: pixel_status gives the picture.",
+        "Makes a skeleton: the real pack, cut from the product's pack photo, on a blank 4:5 canvas at its true proportions. Free. Use it before every v2 draft of a product that has a pack photo (and in v1 or v3 when locking a pack or combining more than four photos), and give its picture id to render_submit as fromId: a model keeps what is already in its picture, so the pack's shape is right by construction. Name the clean pack photo (for example, pack-2) to use in skeleton_make and in references, so pack checks and repairs use the same photo. Each draft of an idea needs its own skeleton, with another place, scale or crop. Give either one pack (height, cx, base, count) or a plan with each pack's place, side and small turn, and flat shapes for a surface. Leave clear stage round each thing, a third of a pack's width or more: the model draws things a little larger than the skeleton, and a pack that touches its neighbour or its food cannot be measured alone. Only a skeleton made from a plan can be reprinted later. The pack photo needs a plain backdrop or its own transparency. The reply is a job: pixel_status gives the picture.",
       input: {
         batchId: id,
         ideaId: id,
@@ -67,6 +67,7 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
         height: z.number().min(0.05).max(1).default(0.5).describe("The pack's height as a share of the canvas height."),
         cx: fraction.default(0.5).describe("The pack's centre, as a share of the width."),
         base: fraction.default(0.9).describe("Where the pack's base is, as a share of the height."),
+        pack: z.string().regex(/^pack-\d{1,2}$/).optional().describe('The pack photo to use by name, for example "pack-2". Leave it out to use the first pack photo.'),
         count: z.number().int().min(1).max(6).default(1),
         gap: z.number().min(0).max(2).default(0.18).describe("The gap between packs, as a share of one pack's width."),
         plan: plan
@@ -84,28 +85,42 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
       },
       writes: true,
       needsRules: true,
-      handler: ({ batchId, ideaId, plan: layout, vary, bg, box: packBox, cutout: tuning, ...one }) =>
+      handler: ({ batchId, ideaId, pack, plan: layout, vary, bg, box: packBox, cutout: tuning, ...one }) =>
         pixels.skeleton({
           batchId,
           ideaId,
+          ...(pack ? { pack } : {}),
           placement: { ...(layout ? { plan: layout, ...(vary ? { vary } : {}) } : { ...one, bg }), ...(packBox ? { box: packBox } : {}), ...(tuning ? { cutout: tuning } : {}) },
         }),
     }),
     defineTool({
       name: "pack_check",
       description:
-        "Measures whether the pack in a picture is as tall and as wide as the real pack, within 2%. Free. Run it on every draft and every final that shows the pack of a product with a pack photo: the batch does not move on without it. A concept ad (v3) that shows the food alone, and whose render named no pack photo, needs none. The real pack is the product's first pack photo, or the pack photo the picture's render named when the model drew it with no skeleton. The pack needs a plain stage of one colour round it, apart from every other pack and thing, and seen from the front: a pack that touches another, or lies in steep perspective, cannot be measured. When it stands on something, give a box that ends at its base. When it is turned in the plane (it lies on the stage at an angle), send tilted. A fail is saved on the picture as D11, and only a later pass of this tool on the same pack of the same picture clears it. A picture with more than one pack: measure each, with its pack number. The reply is a job: pixel_status gives the measure.",
+        "Measures whether the pack in a picture is as tall and as wide as the real pack, within 2%. Free. Run it on every draft and every final that shows the pack of a product with a pack photo: the batch does not move on without it. A v3 draft or final whose pack is named only in its concept rough still needs a check; if the picture shows no pack, send noPack:true instead. For a skeleton-based picture, a plan item with its own photo uses that photo; an unnamed pack item uses the skeleton's default pack photo. A simple skeleton uses the photo named in skeleton_make, or the first pack photo on an older skeleton with no name. A plan with no pack item uses the pack photo named in its render. Without a skeleton, it is the pack photo the render named, or the first pack photo. In a picture with two different packs, name the pack photo of the pack you measure. The pack needs a plain stage of one colour round it, apart from every other pack and thing, and seen from the front: a pack that touches another, or lies in steep perspective, cannot be measured. When it stands on something, give a box that ends at its base. When it is turned in the plane (it lies on the stage at an angle), send tilted. A fail is saved on the picture as D11, and only a later pass of this tool on the same pack of the same picture clears it. A picture with more than one pack: measure each, with its pack number. A normal measure is a job: pixel_status gives the result. noPack saves the result at once and needs no pixel_status call.",
       input: {
         batchId: id,
         imageId,
-        at: z.tuple([px, px]).describe("X,Y of a point inside the pack, in pixels of the picture."),
-        bg: colour.describe("The stage colour as RRGGBB."),
-        sideways: z.boolean().default(false).describe("The pack lies on its side."),
+        noPack: z.literal(true).optional().describe("Only for a v3 draft or final whose pack came only from its concept rough and whose picture shows no pack: says so instead of measuring."),
+        photo: z.string().regex(/^pack-\d{1,2}$/).optional().describe("The pack photo of the pack you measure, when the picture shows more than one pack photo."),
+        at: z.tuple([px, px]).optional().describe("X,Y of a point inside the pack, in pixels of the picture. Required unless noPack:true."),
+        bg: colour.optional().describe("The stage colour as RRGGBB. Required unless noPack:true."),
+        sideways: z.boolean().default(false).describe("The pack lies on its side. Defaults to false for a normal measure; noPack:true does not need it."),
         tilted: z.boolean().default(false).describe("The pack is turned in the plane, for example it lies on the stage at 20 degrees. The tool turns it upright before the measure."),
-        box: box.optional().describe("X0,Y0,X1,Y1 in pixels, for a pack that stands on something: a box round the pack with plain stage on its other sides, ending at the pack's base. The measure then stops at the base, so set it within a few pixels."),        pack: packNumber,
+        box: box.optional().describe("X0,Y0,X1,Y1 in pixels, for a pack that stands on something: a box round the pack with plain stage on its other sides, ending at the pack's base. The measure then stops at the base, so set it within a few pixels."),
+        pack: packNumber.optional().describe(packCheckNumberDescription),
+        item: packNumber.optional().describe("The place of this pack in the skeleton plan's products, 1 for the first; needed only when two packs of the plan use the same pack photo with different crops."),
       },
       writes: true,
-      handler: ({ box: around, ...input }) => pixels.packCheck({ ...input, ...(around ? { box: around } : {}) }),
+      handler: ({ box: around, photo, pack, item, noPack, at, bg, ...input }) => pixels.packCheck({
+        ...input,
+        ...(noPack !== undefined ? { noPack } : {}),
+        ...(at !== undefined ? { at } : {}),
+        ...(bg !== undefined ? { bg } : {}),
+        ...(pack !== undefined ? { pack } : {}),
+        ...(around ? { box: around } : {}),
+        ...(photo !== undefined ? { photo } : {}),
+        ...(item !== undefined ? { item } : {}),
+      }),
     }),
     defineTool({
       name: "cap_check",
@@ -115,7 +130,8 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
         batchId: id,
         imageId,
         box: box.describe("X0,Y0,X1,Y1 in pixels: the bottle with some plain stage on both sides, ending at its base above any contact shadow."),
-        split: px.describe("Y in pixels: the first row below the cap and the neck (the top of any shoulder)."),        pack: packNumber,
+        split: px.describe("Y in pixels: the first row below the cap and the neck (the top of any shoulder)."),
+        pack: defaultPackNumber.describe(packNumberDescription),
       },
       writes: true,
       handler: (input) => pixels.capCheck(input),
@@ -123,7 +139,7 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
     defineTool({
       name: "product_reprint",
       description:
-        "Puts the real print of the pack photo back on each pack of a picture that was built round a plan skeleton. Free. Use it when the model smeared small print (D9) but kept the pack's place and shape. It makes a new picture that stands for the old one: check it again with checks_save and pack_check. The reply is a job: pixel_status gives the picture.",
+        "Puts the real print of the pack photo back on each pack of a picture that was built round a plan skeleton. Free. Use it when the model smeared small print (D9) but kept the pack's place and shape. It only works on a plan built round the default pack photo; repair a picture whose plan items name photos with product_swap. It makes a new picture that stands for the old one: check it again with checks_save and pack_check. The reply is a job: pixel_status gives the picture.",
       input: {
         batchId: id,
         imageId,
@@ -141,6 +157,9 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
         batchId: id,
         imageId,
         old: box.describe("x0,x1,top,base of the drawn pack in the picture, in pixels."),
+        photo: z.string().regex(/^pack-\d{1,2}$/).optional().describe("The pack photo of the pack you measure, when the picture shows more than one pack photo."),
+        pack: packNumber.optional().describe(packNumberDescription),
+        item: packNumber.optional().describe("The place of this pack in the skeleton plan's products, 1 for the first; needed only when two packs of the plan use the same pack photo with different crops."),
         scale: z.number().positive().max(20).optional().describe("Paste at this scale instead of fitting the old pack."),
         cx: px.optional().describe("The centre x of the pasted pack. Default: the centre of the old one."),
         lowerOnly: z.boolean().default(false).describe("Keep the scene above the label: for an open jar."),
@@ -148,8 +167,16 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
       },
       writes: true,
       needsRules: true,
-      handler: ({ scale, cx, bandTop, ...input }) =>
-        pixels.swap({ ...input, ...(scale !== undefined ? { scale } : {}), ...(cx !== undefined ? { cx } : {}), ...(bandTop !== undefined ? { bandTop } : {}) }),
+      handler: ({ scale, cx, bandTop, photo, pack, item, ...input }) =>
+        pixels.swap({
+          ...input,
+          ...(photo !== undefined ? { photo } : {}),
+          ...(pack !== undefined ? { pack } : {}),
+          ...(item !== undefined ? { item } : {}),
+          ...(scale !== undefined ? { scale } : {}),
+          ...(cx !== undefined ? { cx } : {}),
+          ...(bandTop !== undefined ? { bandTop } : {}),
+        }),
     }),
     defineTool({
       name: "photo_finish",
