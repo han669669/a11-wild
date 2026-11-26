@@ -8,7 +8,7 @@ import { fontOf } from "../brand/fonts.js";
 import type { CopyStore } from "../copy/store.js";
 import { photoNamed, roughPackReferences } from "../render/service.js";
 import type { BrandStore } from "../brand/store.js";
-import type { CheckStore } from "../checks/store.js";
+import { PACK_CHECK, type CheckStore } from "../checks/store.js";
 import type { ImageStore } from "../images/store.js";
 import { Refusal } from "../mcp/registry.js";
 import type { Pictures } from "../pictures/store.js";
@@ -79,6 +79,17 @@ interface SkeletonContext {
 }
 
 export type PixelView = PixelJob & { image?: BatchImage & { viewUrl: string }; next?: string; state?: string; stillMissing?: string[] };
+
+interface NoPackCheckView {
+  batchId: string;
+  imageId: string;
+  tool: "pack_check";
+  status: "done";
+  line: "no pack shown";
+  passed: true;
+  state: Batch["state"];
+  stillMissing?: string[];
+}
 
 /** The pixel scripts read a plan's colours with their "#". */
 const hashed = (colour: unknown) => `#${String(colour).replace("#", "")}`;
@@ -195,9 +206,35 @@ export class PixelService {
     };
   }
 
-  async packCheck(input: { batchId: string; imageId: string; at: [number, number]; bg: string; sideways: boolean; tilted?: boolean; box?: number[]; pack?: number; photo?: string; item?: number }): Promise<PixelView> {
+  async packCheck(input: { batchId: string; imageId: string; noPack?: boolean; at?: [number, number]; bg?: string; sideways?: boolean; tilted?: boolean; box?: number[]; pack?: number; photo?: string; item?: number }): Promise<PixelView | NoPackCheckView> {
     const image = await this.rendered(input.batchId, input.imageId);
-    const { batchId: _batchId, imageId: _imageId, box: around, photo, item, pack, ...rest } = input;
+    if (input.noPack) {
+      const { batches, images, checks, board, now } = this.deps;
+      const batch = await batches.get(input.batchId);
+      const evidence = await board.packEvidence(batch, image, await images.list(input.batchId));
+      if (evidence.direct) throw new Refusal("This picture was built with a pack photo, so measure its pack.");
+      if (batch.kind !== "v3" || image.kind !== "draft" || !evidence.rough) {
+        throw new Refusal("noPack is only for a v3 draft whose pack came only from its rough.");
+      }
+      await checks.measure(input.batchId, image.id, PACK_CHECK, null, now().toISOString(), input.pack ?? 1);
+      const { batch: progressed, missing } = await board.progress(batch);
+      return {
+        batchId: input.batchId,
+        imageId: image.id,
+        tool: "pack_check",
+        status: "done",
+        line: "no pack shown",
+        passed: true,
+        state: progressed.state,
+        ...(missing.length > 0 ? { stillMissing: missing } : {}),
+      };
+    }
+    if (!input.at) throw new Refusal("Give at to measure the pack, or set noPack: true.");
+    if (!input.bg) throw new Refusal("Give bg to measure the pack, or set noPack: true.");
+    const at = input.at;
+    const bg = input.bg;
+    const sideways = input.sideways ?? false;
+    const { batchId: _batchId, imageId: _imageId, noPack: _noPack, box: around, photo, item, pack, tilted } = input;
     // `box` in a job is the pack's box in the pack photo, so the box round the drawn pack goes as `around`.
     const { number, ...reference } = await this.packRef(input.batchId, image, {
       requirePackLabel: true,
@@ -205,7 +242,7 @@ export class PixelService {
       ...(item !== undefined ? { item } : {}),
       ...(pack !== undefined ? { pack } : {}),
     });
-    return this.start("pack_check", input.batchId, { ...rest, pack: number, ...(around ? { around } : {}), ...reference, renderKey: image.key }, { imageId: image.id });
+    return this.start("pack_check", input.batchId, { at, bg, sideways, ...(tilted !== undefined ? { tilted } : {}), pack: number, ...(around ? { around } : {}), ...reference, renderKey: image.key }, { imageId: image.id });
   }
 
   async capCheck(input: { batchId: string; imageId: string; box: number[]; split: number; pack?: number }): Promise<PixelView> {
@@ -290,7 +327,7 @@ export class PixelService {
     const mayShowMultiplePacks = packItems.length > 1
       || new Set([...planPackKeys, ...lineagePackKeys]).size > 1;
     if (options.requirePackLabel && options.pack === undefined && mayShowMultiplePacks) {
-      throw new Refusal("This picture shows more than one pack: give pack, the pack's number from the left in this picture.");
+      throw new Refusal("This picture's layout and references use more than one pack photo: give pack, the pack's number from the left in this picture (1 if it shows only one pack).");
     }
     const number = options.pack ?? 1;
     const itemRef = (entry: typeof packItems[number]): PackReference => {

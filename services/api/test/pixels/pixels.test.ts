@@ -192,7 +192,7 @@ describe("skeleton_make", () => {
     const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
 
     expect(await run("pack_check", { imageId, at: [700, 900], bg: "E83C28" })).toEqual(
-      refused(/This picture shows more than one pack: give pack, the pack's number from the left in this picture\./),
+      refused(/This picture's layout and references use more than one pack photo: give pack, the pack's number from the left in this picture \(1 if it shows only one pack\)\./),
     );
     await run("pack_check", { imageId, at: [700, 900], bg: "E83C28", pack: 1 });
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box, cutout, pack: 1 });
@@ -425,14 +425,14 @@ describe("skeleton_make", () => {
     const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
 
     expect(await run("pack_check", { imageId, at: [350, 900], bg: "E83C28", photo: "pack-1" })).toEqual(
-      refused(/This picture shows more than one pack: give pack, the pack's number from the left in this picture\./),
+      refused(/This picture's layout and references use more than one pack photo: give pack, the pack's number from the left in this picture \(1 if it shows only one pack\)\./),
     );
     await run("pack_check", { imageId, at: [350, 900], bg: "E83C28", pack: 1, photo: "pack-1" });
     expect((await studio.services.checks.get(batchId, imageId))!.items).toEqual([
       { code: "D11", note: "difference -10.2%; FAIL at 2%", tool: "pack_check" },
     ]);
     expect(await run("pack_check", { imageId, at: [700, 900], bg: "E83C28", photo: "pack-2" })).toEqual(
-      refused(/This picture shows more than one pack: give pack, the pack's number from the left in this picture\./),
+      refused(/This picture's layout and references use more than one pack photo: give pack, the pack's number from the left in this picture \(1 if it shows only one pack\)\./),
     );
     await run("pack_check", { imageId, at: [700, 900], bg: "E83C28", pack: 2, photo: "pack-2" });
 

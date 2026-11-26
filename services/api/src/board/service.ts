@@ -178,29 +178,36 @@ export class BoardService implements FinalRule {
     };
   }
 
-  /** Whether a picture shows a pack, based on its render references or skeleton plan. */
-  private async showsPack(batch: Batch, image: BatchImage, allImages: readonly BatchImage[]): Promise<boolean> {
-    if (batch.kind !== "v3" && batch.kind !== "v1") return true;
+  /** Separates pack references on the picture from those on its concept rough. */
+  async packEvidence(batch: Batch, image: BatchImage, allImages: readonly BatchImage[]): Promise<{ direct: boolean; rough: boolean }> {
+    if (batch.kind !== "v3" && batch.kind !== "v1") return { direct: true, rough: false };
     const { brands, images, jobs, renders } = this.deps;
     const product = await brands.product(batch.productId);
     const packPhotos = product.photos.filter((photo) => photo.kind === "pack");
     const packKeys = new Set(packPhotos.map((photo) => photo.key));
     const all = await renders.list(batch.id);
     let at: BatchImage | undefined = image.rootId ? await images.get(batch.id, image.rootId) : image;
+    let rough = false;
     // A final is made from its draft, and a repair from its picture: a render reference or its skeleton plan can show the pack.
     for (let step = 0; at && step < 6; step += 1) {
       const render = all.find((other) => other.id === at!.id);
-      if (!render) return true;
-      if ([...(render.packPhotos ?? []), ...(render.pack ? [render.pack] : [])].some((name) => photoNamed(product, name)?.kind === "pack")) return true;
+      if (!render) return { direct: true, rough };
+      if ([...(render.packPhotos ?? []), ...(render.pack ? [render.pack] : [])].some((name) => photoNamed(product, name)?.kind === "pack")) return { direct: true, rough };
       const roughImagesForDraft = batch.kind === "v3" && render.kind === "draft" && !render.roughId
         ? allImages
         : [];
-      if (roughPackReferences(render, all, roughImagesForDraft, batch.kind, product).length > 0) return true;
-      if (!render.fromId) return false;
+      if (roughPackReferences(render, all, roughImagesForDraft, batch.kind, product).length > 0) rough = true;
+      if (!render.fromId) return { direct: false, rough };
       at = await images.get(batch.id, render.fromId);
-      if (at.kind === "skeleton") return planShowsPack((await jobs.get(batch.id, at.id)).input.plan, packKeys);
+      if (at.kind === "skeleton") return { direct: planShowsPack((await jobs.get(batch.id, at.id)).input.plan, packKeys), rough };
     }
-    return true;
+    return { direct: true, rough };
+  }
+
+  /** Whether a picture shows a pack, based on its render references, skeleton plan or concept rough. */
+  private async showsPack(batch: Batch, image: BatchImage, allImages: readonly BatchImage[]): Promise<boolean> {
+    const evidence = await this.packEvidence(batch, image, allImages);
+    return evidence.direct || evidence.rough;
   }
 
   /** What one picture still needs before it counts as checked: the agent's look, and the pack measure when the product has a pack photo and the picture shows the pack. */

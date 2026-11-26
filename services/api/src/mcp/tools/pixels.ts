@@ -9,6 +9,7 @@ const colour = z.string().regex(/^#?[0-9a-fA-F]{6}$/, "A colour as RRGGBB.");
 const box = z.tuple([px, px, px, px]);
 const packNumber = z.number().int().min(1).max(12);
 const packNumberDescription = "Number the packs of a picture from the left, 1 to 12; each pack keeps its own result.";
+const packCheckNumberDescription = `${packNumberDescription} This picture's layout and references use more than one pack photo: give pack, the pack's number from the left in this picture (1 if it shows only one pack).`;
 const defaultPackNumber = packNumber
   .default(1)
   .describe(packNumberDescription);
@@ -95,21 +96,31 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
     defineTool({
       name: "pack_check",
       description:
-        "Measures whether the pack in a picture is as tall and as wide as the real pack, within 2%. Free. Run it on every draft and every final that shows the pack of a product with a pack photo: the batch does not move on without it. A concept ad (v3) that shows the food alone, and whose render named no pack photo, needs none. For a skeleton-based picture, a plan item with its own photo uses that photo; an unnamed pack item uses the skeleton's default pack photo. A simple skeleton uses the photo named in skeleton_make, or the first pack photo on an older skeleton with no name. A plan with no pack item uses the pack photo named in its render. Without a skeleton, it is the pack photo the render named, or the first pack photo. In a picture with two different packs, name the pack photo of the pack you measure. The pack needs a plain stage of one colour round it, apart from every other pack and thing, and seen from the front: a pack that touches another, or lies in steep perspective, cannot be measured. When it stands on something, give a box that ends at its base. When it is turned in the plane (it lies on the stage at an angle), send tilted. A fail is saved on the picture as D11, and only a later pass of this tool on the same pack of the same picture clears it. A picture with more than one pack: measure each, with its pack number. The reply is a job: pixel_status gives the measure.",
+        "Measures whether the pack in a picture is as tall and as wide as the real pack, within 2%. Free. Run it on every draft and every final that shows the pack of a product with a pack photo: the batch does not move on without it. A v3 draft whose pack is named only in its rough still needs a check; if the picture shows no pack, send noPack:true instead. For a skeleton-based picture, a plan item with its own photo uses that photo; an unnamed pack item uses the skeleton's default pack photo. A simple skeleton uses the photo named in skeleton_make, or the first pack photo on an older skeleton with no name. A plan with no pack item uses the pack photo named in its render. Without a skeleton, it is the pack photo the render named, or the first pack photo. In a picture with two different packs, name the pack photo of the pack you measure. The pack needs a plain stage of one colour round it, apart from every other pack and thing, and seen from the front: a pack that touches another, or lies in steep perspective, cannot be measured. When it stands on something, give a box that ends at its base. When it is turned in the plane (it lies on the stage at an angle), send tilted. A fail is saved on the picture as D11, and only a later pass of this tool on the same pack of the same picture clears it. A picture with more than one pack: measure each, with its pack number. A normal measure is a job: pixel_status gives the result. noPack saves the result at once and needs no pixel_status call.",
       input: {
         batchId: id,
         imageId,
+        noPack: z.literal(true).optional().describe("Only for a v3 draft whose pack came only from its rough and whose picture shows no pack: says so instead of measuring."),
         photo: z.string().regex(/^pack-\d{1,2}$/).optional().describe("The pack photo of the pack you measure, when the picture shows more than one pack photo."),
-        at: z.tuple([px, px]).describe("X,Y of a point inside the pack, in pixels of the picture."),
-        bg: colour.describe("The stage colour as RRGGBB."),
-        sideways: z.boolean().default(false).describe("The pack lies on its side."),
+        at: z.tuple([px, px]).optional().describe("X,Y of a point inside the pack, in pixels of the picture. Required unless noPack:true."),
+        bg: colour.optional().describe("The stage colour as RRGGBB. Required unless noPack:true."),
+        sideways: z.boolean().default(false).describe("The pack lies on its side. Defaults to false for a normal measure; noPack:true does not need it."),
         tilted: z.boolean().default(false).describe("The pack is turned in the plane, for example it lies on the stage at 20 degrees. The tool turns it upright before the measure."),
         box: box.optional().describe("X0,Y0,X1,Y1 in pixels, for a pack that stands on something: a box round the pack with plain stage on its other sides, ending at the pack's base. The measure then stops at the base, so set it within a few pixels."),
-        pack: packNumber.optional().describe(packNumberDescription),
+        pack: packNumber.optional().describe(packCheckNumberDescription),
         item: packNumber.optional().describe("The place of this pack in the skeleton plan's products, 1 for the first; needed only when two packs of the plan use the same pack photo with different crops."),
       },
       writes: true,
-      handler: ({ box: around, photo, pack, item, ...input }) => pixels.packCheck({ ...input, ...(pack !== undefined ? { pack } : {}), ...(around ? { box: around } : {}), ...(photo !== undefined ? { photo } : {}), ...(item !== undefined ? { item } : {}) }),
+      handler: ({ box: around, photo, pack, item, noPack, at, bg, ...input }) => pixels.packCheck({
+        ...input,
+        ...(noPack !== undefined ? { noPack } : {}),
+        ...(at !== undefined ? { at } : {}),
+        ...(bg !== undefined ? { bg } : {}),
+        ...(pack !== undefined ? { pack } : {}),
+        ...(around ? { box: around } : {}),
+        ...(photo !== undefined ? { photo } : {}),
+        ...(item !== undefined ? { item } : {}),
+      }),
     }),
     defineTool({
       name: "cap_check",

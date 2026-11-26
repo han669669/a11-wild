@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { batchAtTruth, judgeIdeas, v1Ideas } from "../helpers/batch.js";
+import { batchAtTruth, judgeIdeas, rankDrafts, v1Ideas } from "../helpers/batch.js";
 import { approvedClient, callTool, createStudio, type Studio } from "../helpers/deps.js";
 import { directionOf, rules, v3AtDirected } from "../helpers/v3.js";
 import type { Item } from "../../src/store/table.js";
@@ -223,6 +223,102 @@ describe("a draft that shows the food alone", () => {
     expect(looked.value.stillMissing).toContain(`pack_check for picture ${pack}`);
     expect(looked.value.stillMissing).not.toContain(`pack_check for picture ${food}`);
     expect(looked.value.stillMissing).not.toContain(`checks_save for picture ${food}`);
+  });
+
+  it("lets a food-only draft settle a rough-only pack check without a job", async () => {
+    const ideas = await studio.services.batches.ideas(batchId);
+    await studio.services.batches.saveIdeas(batchId, ideas.map((idea) => idea.id === "idea-4" ? { ...idea, shows: ["food-1"] } : idea), "owner@example.com");
+    const skeletonJob = await callTool(studio, "skeleton_make", {
+      ...rules,
+      batchId,
+      ideaId: "idea-4",
+      plan: { bg: "FFD21E", products: [{ cx: 0.5, base: 0.8, height: 0.3, photo: "food-1" }] },
+    });
+    if (!skeletonJob.ok) throw new Error(skeletonJob.error);
+    const skeleton = await callTool(studio, "pixel_status", { batchId, jobId: skeletonJob.value.id });
+    if (!skeleton.ok) throw new Error(skeleton.error);
+    const copies = new Map((await studio.services.copy.list(batchId)).map((copy) => [copy.ideaId, copy]));
+
+    for (const ideaId of ["idea-2", "idea-4", "idea-5"]) {
+      for (let draft = 1; draft <= 3; draft += 1) {
+        const foodOnly = ideaId === "idea-4";
+        const fromId = foodOnly && draft === 1 ? skeleton.value.image.id : undefined;
+        const references = foodOnly ? ["food-1"] : ["pack-1"];
+        const sent = await send(ideaId, draft, {
+          ...(fromId ? { fromId } : {}),
+          references,
+          prompt: `${SCENE} Draft ${draft}.`,
+        });
+        if (!sent.ok) throw new Error(sent.error);
+        const rendered = await callTool(studio, "render_status", { batchId, renderId: sent.value.id });
+        if (!rendered.ok) throw new Error(rendered.error);
+        const imageId = rendered.value.image.id as string;
+        if ((await callTool(studio, "batch_get", { batchId })).value.batch.state === "waiting_spend") {
+          await callTool(studio, "spend_approve", { ...rules, batchId, ownerSaid: "yes" });
+        }
+        const looked = await callTool(studio, "checks_save", { ...rules, batchId, imageId, items: [] });
+
+        if (foodOnly && draft === 1) {
+          expect(looked.value.stillMissing).toContain(`pack_check for picture ${imageId}`);
+          const workerCallsBefore = studio.pixels.events.length;
+          const falCallsBefore = studio.fal.submits().length;
+          const jobsBefore = (await studio.table.query<Item>(`BATCH#${batchId}`)).filter((row) => row.sk.startsWith("JOB#")).length;
+          const spendBefore = await studio.spend.ledger.summary(batchId);
+          const noPack = await callTool(studio, "pack_check", { batchId, imageId, noPack: true });
+          if (!noPack.ok) throw new Error(noPack.error);
+          expect(noPack).toMatchObject({ ok: true, value: { status: "done", line: "no pack shown", imageId } });
+          expect(noPack.value.state).not.toBeUndefined();
+          expect(noPack.value.stillMissing ?? []).not.toContain(`pack_check for picture ${imageId}`);
+          expect(await studio.services.checks.measuredBy(batchId, imageId)).toEqual(["pack_check"]);
+          expect((await studio.services.checks.get(batchId, imageId))!.items).toEqual([]);
+          expect(studio.pixels.events).toHaveLength(workerCallsBefore);
+          expect(studio.fal.submits()).toHaveLength(falCallsBefore);
+          expect((await studio.table.query<Item>(`BATCH#${batchId}`)).filter((row) => row.sk.startsWith("JOB#"))).toHaveLength(jobsBefore);
+          expect(await studio.spend.ledger.summary(batchId)).toEqual(spendBefore);
+        } else {
+          if (ideaId === "idea-2" && draft === 1) {
+            expect(await callTool(studio, "pack_check", { batchId, imageId, noPack: true })).toEqual({
+              ok: false,
+              error: "This picture was built with a pack photo, so measure its pack.",
+            });
+            expect(await callTool(studio, "pack_check", { batchId, imageId })).toEqual({
+              ok: false,
+              error: "Give at to measure the pack, or set noPack: true.",
+            });
+          }
+          const measured = await callTool(studio, "pack_check", {
+            batchId,
+            imageId,
+            ...(foodOnly ? { photo: "pack-1" } : {}),
+            at: [500, 800],
+            bg: "FFD21E",
+          });
+          if (!measured.ok) throw new Error(measured.error);
+          if (foodOnly && draft === 2) {
+            expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: "products/p/pack.jpg" });
+          }
+          expect((await callTool(studio, "pixel_status", { batchId, jobId: measured.value.id })).value.status).toBe("done");
+        }
+        const copy = copies.get(ideaId);
+        if (!copy) throw new Error(`The words of ${ideaId} were not approved.`);
+        const typesetId = `typeset-${ideaId}-${draft}`;
+        await studio.services.images.add({
+          id: typesetId,
+          batchId,
+          kind: "typeset",
+          key: `batches/${batchId}/typeset/${ideaId}-${draft}.png`,
+          ideaId,
+          fromId: imageId,
+          rootId: imageId,
+          wordsVersion: copy.version,
+        });
+        await callTool(studio, "checks_save", { ...rules, batchId, imageId: typesetId, items: [] });
+      }
+    }
+
+    const ranked = await rankDrafts(studio, batchId);
+    expect(ranked.ok).toBe(true);
+    expect((await callTool(studio, "batch_get", { batchId })).value.batch.state).toBe("checked");
   });
 
   it("is measured turned upright when the pack lies at an angle", async () => {
