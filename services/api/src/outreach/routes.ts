@@ -89,8 +89,11 @@ const candidateKeysFrom = (text: string): string[] => {
     add(match);
     let current = match;
     while (current.endsWith(")")) {
-      const stripped = current.replace(/\s*\([^)]*\)$/, "").trimEnd();
-      if (stripped === current || !stripped) break;
+      const trailing = current.match(/\s*\(([^)]*)\)$/);
+      if (!trailing) break;
+      add(trailing[1]!);
+      const stripped = current.slice(0, trailing.index).trimEnd();
+      if (!stripped) break;
       add(stripped);
       current = stripped;
     }
