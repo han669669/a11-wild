@@ -5,6 +5,24 @@ import { address, numbers } from "./load.js";
 const EMAIL_IN_NOTE = new RegExp(EMAIL_IN_TEXT.source, EMAIL_IN_TEXT.flags.replace("g", ""));
 const PHONE_IN_NOTE = /\+?\d[\d().\s-]{5,}\d/;
 
+const trailingBracketGroup = (value: string): { prefix: string; content: string } | undefined => {
+  if (!value.endsWith(")")) return undefined;
+  let depth = 0;
+  let opening = -1;
+  for (let i = value.length - 1; i >= 0; i -= 1) {
+    if (value[i] === ")") depth += 1;
+    else if (value[i] === "(") {
+      depth -= 1;
+      if (depth === 0) {
+        opening = i;
+        break;
+      }
+    }
+  }
+  if (opening <= 0 || !/\s/.test(value[opening - 1]!)) return undefined;
+  return { prefix: value.slice(0, opening).trimEnd(), content: value.slice(opening + 1, -1).trim() };
+};
+
 const numberFrom = (value: string): string | undefined => {
   try {
     return numbers(value)[0];
@@ -20,10 +38,13 @@ export function routeOf(value: string | undefined): ProspectRoute | undefined {
   const phone = label.match(/^(DM phone|Phone|WhatsApp)\s+(.+)$/i);
   if (phone) {
     try {
-      const bracket = phone[2]!.match(/^(.*)\s+\(([^()]*)\)$/);
-      const notedNumber = bracket ? numberFrom(bracket[1]!.trim()) : undefined;
-      const numberText = notedNumber ? bracket![1]!.trim() : phone[2]!;
-      const noteText = notedNumber ? bracket![2]!.trim() : undefined;
+      const bracket = trailingBracketGroup(phone[2]!);
+      const noteCandidate = bracket && /\p{L}/u.test(bracket.content) ? bracket : undefined;
+      const numberLikeSuffix = bracket && PHONE_IN_NOTE.test(bracket.content) ? bracket : undefined;
+      const split = noteCandidate ?? numberLikeSuffix;
+      const notedNumber = split ? numberFrom(split.prefix) : undefined;
+      const numberText = notedNumber ? split!.prefix : phone[2]!;
+      const noteText = noteCandidate && notedNumber ? noteCandidate.content : undefined;
       const note =
         noteText &&
         Array.from(noteText).length <= 40 &&

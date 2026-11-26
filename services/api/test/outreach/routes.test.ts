@@ -52,6 +52,17 @@ describe("the list's ways to reach a brand", () => {
     });
   });
 
+  it("keeps nested parentheses inside a trailing note", () => {
+    const label = "WhatsApp +6580000001 (front desk (weekdays))";
+    expect(routeOf(label)).toEqual({
+      channel: "whatsapp",
+      to: "6580000001",
+      direct: false,
+      label,
+      note: "front desk (weekdays)",
+    });
+  });
+
   it("drops phone numbers and email addresses from notes without losing the route", () => {
     const withPhone = "WhatsApp +6580000001 (+6580000003)";
     expect(routeOf(withPhone)).toMatchObject({ channel: "whatsapp", to: "6580000001", label: withPhone });
@@ -62,8 +73,11 @@ describe("the list's ways to reach a brand", () => {
     expect(routeOf(withEmail)).not.toHaveProperty("note");
   });
 
-  it("treats a digits-only bracket as part of the phone number", () => {
-    const label = "Phone +65 6123 (4567)";
+  it("treats a digits-only final bracket group as part of the phone number", () => {
+    const shortLabel = "Phone +65 6123 (4567)";
+    expect(routeOf(shortLabel)).toEqual({ channel: "call", to: "6561234567", direct: false, label: shortLabel });
+
+    const label = "Phone +65 (6123) 45 (67)";
     expect(routeOf(label)).toEqual({ channel: "call", to: "6561234567", direct: false, label });
   });
 

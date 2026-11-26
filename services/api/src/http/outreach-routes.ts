@@ -101,16 +101,16 @@ export function outreachRoutes(
     const target = sendTarget(file, optOuts);
     const sendTo = target && !sendTargetUnavailable(file, target, optOuts) && routeOpen(target, closed) ? target : undefined;
     const noteForNumber = (number: string) =>
-      [profile.route, profile.second].find((route) => route?.note && routeOpen(route, closed) && route.to.replace(/\D/g, "") === number.replace(/\D/g, ""))?.note;
-    const phoneDigits = profile.phone?.replace(/\D/g, "");
+      [profile.route, profile.second].find((route) => route?.note && routeOpen(route, closed) && numberKey(route.to) === numberKey(number))?.note;
+    const phoneKey = profile.phone ? numberKey(profile.phone) : undefined;
     const phoneNote =
-      phoneDigits && openNumber(profile.phone)
+      phoneKey && openNumber(profile.phone)
         ? [profile.route, profile.second].find(
             (route) =>
               route?.channel === "call" &&
               route.note &&
               routeOpen(route, closed) &&
-              route.to.replace(/\D/g, "") === phoneDigits,
+              numberKey(route.to) === phoneKey,
           )?.note
         : undefined;
     const second = routeOpen(profile.second, closed) ? profile.second : undefined;

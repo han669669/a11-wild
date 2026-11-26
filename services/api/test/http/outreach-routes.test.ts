@@ -436,6 +436,12 @@ describe("the owner's day", () => {
     expect(page.contact).toMatchObject({ phone: "+65 6123 4567", phoneNote: "front desk" });
   });
 
+  it("matches a local phone to the country-coded call route note", async () => {
+    await loadProspects(studio, [row(1, { phone: "6123 4567", bestRoute: "Phone +65 6123 4567 (front desk)" })]);
+    const page = await json(await get("/api/outreach/prospects/00001"));
+    expect(page.contact).toMatchObject({ phone: "6123 4567", phoneNote: "front desk" });
+  });
+
   it("provides a checked link for an open second WhatsApp route absent from the WhatsApp list", async () => {
     await loadProspects(studio, [row(1, { whatsapp: "", secondRoute: "WhatsApp +6580000002 (direct line)" })]);
     const page = await json(await get("/api/outreach/prospects/00001"));
