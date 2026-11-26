@@ -119,6 +119,20 @@ describe("the outreach store", () => {
     expect(stageOf({ profile: label, ads: [], sends: [], events: [] }, await store.optOuts())).toBe("opted_out");
   });
 
+  it("does not split a formatted phone label into a false contact key", async () => {
+    await loadRows(store, [
+      row(1, {
+        whatsapp: undefined,
+        phone: undefined,
+        dmPhone: undefined,
+        secondRoute: "Phone +49 30 / 8123 4567",
+      }),
+    ], now);
+    const profile = await store.get("00001");
+
+    expect(contactKeys(profile)).not.toContain("W#6581234567");
+  });
+
   it("keeps parenthesised phone routes distinct when one opts out", async () => {
     await loadRows(store, [
       row(1, { whatsapp: undefined, secondRoute: "WhatsApp +65 (8123) 4567 (verified business)" }),
