@@ -92,8 +92,9 @@ export const isInstagramClosed = (value: string, closed: ReadonlySet<string>): b
 export const textShowsClosedInstagram = (text: string, closed: ReadonlySet<string>): boolean => {
   if (!text || closed.size === 0) return false;
   for (const match of text.matchAll(IG_URL_IN_TEXT)) {
-    const url = trimUrlPunctuation(match[1] ?? "");
-    if (url && isInstagramClosed(url, closed)) return true;
+    const rawUrl = match[1] ?? "";
+    const url = trimUrlPunctuation(rawUrl);
+    if ((rawUrl && isInstagramClosed(rawUrl, closed)) || (url && isInstagramClosed(url, closed))) return true;
   }
   for (const match of text.matchAll(IG_HANDLE_IN_TEXT)) {
     const raw = match[1];
@@ -110,8 +111,10 @@ export const scrubInstagramText = (segment: string, hidden: ReadonlySet<string>)
     .replace(IG_URL_IN_TEXT, (match, rawUrl: string) => {
       const url = trimUrlPunctuation(rawUrl);
       const suffix = rawUrl.slice(url.length);
-      if (!url || !isInstagramClosed(url, hidden)) return match;
-      return match.slice(0, match.length - rawUrl.length) + suffix;
+      const rawClosed = rawUrl !== "" && isInstagramClosed(rawUrl, hidden);
+      const trimmedClosed = url !== "" && isInstagramClosed(url, hidden);
+      if (!rawClosed && !trimmedClosed) return match;
+      return match.slice(0, match.length - rawUrl.length) + (rawClosed ? "" : suffix);
     })
     .replace(IG_HANDLE_IN_TEXT, (match, raw: string) => {
       const trimmed = trimHandleDots(raw);

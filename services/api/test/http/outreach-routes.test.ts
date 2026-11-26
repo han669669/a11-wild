@@ -639,10 +639,18 @@ describe("the owner's day", () => {
     const schemelessOpen = await json(await get("/api/outreach/prospects/00010"));
     expect(schemelessOpen.contact.sendTo).toMatchObject({ channel: "instagram", to: "@open.brand" });
     expect(schemelessOpen.contact.instagram?.href).toBe("https://www.instagram.com/open.brand/");
-    // A pre-existing stored phone fallback with a quarantined Instagram handle in its note keeps the number on both surfaces.
+    // A pre-existing stored primary WhatsApp route and phone fallback with a quarantined handle in their notes keep both numbers scrubbed identically.
     const saved = (await outreach().store.all()).find((entry) => entry.profile.id === "00006")!;
     await outreach().store.saveProfile({
       ...saved.profile,
+      whatsapp: ["6580000006"],
+      route: {
+        channel: "whatsapp",
+        to: "6580000006",
+        direct: false,
+        label: "WhatsApp 80000006 (founder line @sample.brand)",
+        note: "founder line @sample.brand",
+      },
       second: {
         channel: "call",
         to: "6560000001",
@@ -651,7 +659,10 @@ describe("the owner's day", () => {
         note: "ask for sales @sample.brand",
       },
     });
-    expect((await json(await get("/api/outreach/prospects/00006"))).contact.others?.second).toMatchObject({
+    const savedPage = await json(await get("/api/outreach/prospects/00006"));
+    expect(savedPage.contact.sendTo).toMatchObject({ channel: "whatsapp", to: "6580000006", note: "founder line" });
+    expect(savedPage.contact.whatsapp[0]?.note).toBe("founder line");
+    expect(savedPage.contact.others?.second).toMatchObject({
       channel: "call",
       to: "6560000001",
       note: "ask for sales",
