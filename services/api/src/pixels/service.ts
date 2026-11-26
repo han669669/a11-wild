@@ -6,7 +6,7 @@ import { hasWords } from "../batch/state.js";
 import { type BoardService, countedOf, finishOf, pickedStamp, REPAIR_KINDS } from "../board/service.js";
 import { fontOf } from "../brand/fonts.js";
 import type { CopyStore } from "../copy/store.js";
-import { photoNamed } from "../render/service.js";
+import { photoNamed, roughPackReferences } from "../render/service.js";
 import type { BrandStore } from "../brand/store.js";
 import type { CheckStore } from "../checks/store.js";
 import type { ImageStore } from "../images/store.js";
@@ -75,6 +75,7 @@ interface SkeletonContext {
   skeleton?: BatchImage;
   input: Record<string, unknown>;
   lineagePacks: string[];
+  product: { photos: { kind: string; key: string }[] };
 }
 
 export type PixelView = PixelJob & { image?: BatchImage & { viewUrl: string }; next?: string; state?: string; stillMissing?: string[] };
@@ -199,6 +200,7 @@ export class PixelService {
     const { batchId: _batchId, imageId: _imageId, box: around, photo, item, pack, ...rest } = input;
     // `box` in a job is the pack's box in the pack photo, so the box round the drawn pack goes as `around`.
     const { number, ...reference } = await this.packRef(input.batchId, image, {
+      requirePackLabel: true,
       ...(photo !== undefined ? { photo } : {}),
       ...(item !== undefined ? { item } : {}),
       ...(pack !== undefined ? { pack } : {}),
@@ -213,10 +215,13 @@ export class PixelService {
 
   /** What the skeleton of a picture was made with, through its draft when the picture is a final or a repair. */
   private async skeletonContext(batchId: string, image: BatchImage): Promise<SkeletonContext> {
-    const { images, jobs, renders } = this.deps;
+    const { batches, brands, images, jobs, renders } = this.deps;
+    const batch = await batches.get(batchId);
+    const product = await brands.product(batch.productId);
     const imageById = new Map((await images.list(batchId)).map((entry) => [entry.id, entry] as const));
     imageById.set(image.id, image);
-    const renderById = new Map((await renders.list(batchId)).map((entry) => [entry.id, entry] as const));
+    const allRenders = await renders.list(batchId);
+    const renderById = new Map(allRenders.map((entry) => [entry.id, entry] as const));
     const pending = [image.id];
     const seen = new Set<string>();
     const lineagePacks: string[] = [];
@@ -231,26 +236,30 @@ export class PixelService {
       for (const name of [...(render?.packPhotos ?? []), ...(render?.pack ? [render.pack] : [])]) {
         if (!lineagePacks.includes(name)) lineagePacks.push(name);
       }
+      if (render) {
+        for (const name of roughPackReferences(render, allRenders, batch.kind, product)) {
+          if (!lineagePacks.includes(name)) lineagePacks.push(name);
+        }
+      }
       const parents = [current?.fromId, current?.rootId, render?.fromId].filter((parent): parent is string => typeof parent === "string");
       for (const parent of parents.reverse()) pending.push(parent);
     }
     const input = skeleton
       ? { ...(await jobs.get(batchId, skeleton.id)).input, ...(skeleton.pack ? { pack: skeleton.pack } : {}) }
       : {};
-    return { ...(skeleton ? { skeleton } : {}), input, lineagePacks };
+    return { ...(skeleton ? { skeleton } : {}), input, lineagePacks, product };
   }
 
   private async packRef(
     batchId: string,
     image: BatchImage,
-    options: { photo?: string; pack?: number; item?: number } = {},
+    options: { photo?: string; pack?: number; item?: number; requirePackLabel?: boolean } = {},
     context?: SkeletonContext,
   ): Promise<PackReference> {
-    const { batches, brands } = this.deps;
-    const product = await brands.product((await batches.get(batchId)).productId);
+    const skeletonContext = context ?? await this.skeletonContext(batchId, image);
+    const { product } = skeletonContext;
     const productPacks = product.photos.filter((entry) => entry.kind === "pack");
     const productPackKeys = new Set(productPacks.map((entry) => entry.key));
-    const skeletonContext = context ?? await this.skeletonContext(batchId, image);
     const { skeleton, input, lineagePacks } = skeletonContext;
     const packNameForKey = (key: string) => {
       const index = productPacks.findIndex((entry) => entry.key === key);
@@ -262,7 +271,10 @@ export class PixelService {
     const defaultPhoto = namedDefault?.kind === "pack" ? namedDefault : undefined;
     const firstProductPack = productPacks[0];
     const lineagePackNames = lineagePacks.filter((name) => photoNamed(product, name)?.kind === "pack");
-    const lineagePackKeys = new Set(lineagePackNames.map((name) => photoNamed(product, name)?.key));
+    const lineagePackKeys = new Set(lineagePackNames.flatMap((name) => {
+      const photo = photoNamed(product, name);
+      return photo?.kind === "pack" ? [photo.key] : [];
+    }));
     const plan = input.plan as { products?: { cx: number; photoKey?: string; cutout?: Record<string, unknown>; box?: number[] }[] } | undefined;
     const planItems = (plan?.products ?? [])
       .map((item, index) => ({ item, index }));
@@ -270,15 +282,17 @@ export class PixelService {
     const packItems = planItems
       .filter(isPackItem)
       .sort((left, right) => left.item.cx - right.item.cx || left.index - right.index);
-    const numberFor = (selected?: typeof packItems[number]) => {
-      if (options.pack !== undefined) return options.pack;
-      if (selected) return packItems.findIndex(({ index }) => index === selected.index) + 1;
-      if (packItems.length > 1) {
-        throw new Refusal("This picture shows more than one pack: give pack, its number from the left.");
-      }
-      return 1;
-    };
-    const itemRef = (entry: typeof packItems[number], number = numberFor(entry)): PackReference => {
+    const planPackKeys = new Set(packItems.flatMap(({ item }) => {
+      const selected = item.photoKey ? productPacks.find((entry) => entry.key === item.photoKey) : defaultPhoto ?? firstProductPack;
+      return selected ? [selected.key] : [];
+    }));
+    const mayShowMultiplePacks = packItems.length > 1
+      || new Set([...planPackKeys, ...lineagePackKeys]).size > 1;
+    if (options.requirePackLabel && options.pack === undefined && mayShowMultiplePacks) {
+      throw new Refusal("This picture shows more than one pack: give pack, the pack's number from the left in this picture.");
+    }
+    const number = options.pack ?? 1;
+    const itemRef = (entry: typeof packItems[number]): PackReference => {
       const { item } = entry;
       const selected = item.photoKey ? productPacks.find((entry) => entry.key === item.photoKey) : defaultPhoto ?? firstProductPack;
       if (!selected) throw new Refusal("This product has no pack photo. Save one with product_photos_save first: the tool needs the real pack.");
@@ -297,7 +311,7 @@ export class PixelService {
       if (!selectedItem || !isPackItem(selectedItem)) {
         throw new Refusal(`This picture's plan has no pack at item ${options.item}.`);
       }
-      const reference = itemRef(selectedItem, numberFor(selectedItem));
+      const reference = itemRef(selectedItem);
       if (options.photo !== undefined && (selectedPhoto?.kind !== "pack" || selectedPhoto.key !== reference.packKey)) {
         throw new Refusal(`This picture's pack at item ${options.item} does not use pack photo ${options.photo}.`);
       }
@@ -310,8 +324,7 @@ export class PixelService {
         })
       : options.photo === undefined ? packItems : [];
     if (candidates.length > 0) {
-      const number = numberFor(candidates.length === 1 ? candidates[0] : undefined);
-      const references = candidates.map((candidate) => itemRef(candidate, number));
+      const references = candidates.map((candidate) => itemRef(candidate));
       const firstReference = references[0]!;
       const sameReference = references.every((reference) =>
         reference.packKey === firstReference.packKey
@@ -325,7 +338,7 @@ export class PixelService {
     }
 
     if (options.photo !== undefined) {
-      if (selectedPhoto?.kind === "pack" && lineagePackKeys.has(selectedPhoto.key)) return { packKey: selectedPhoto.key, number: numberFor() };
+      if (selectedPhoto?.kind === "pack" && lineagePackKeys.has(selectedPhoto.key)) return { packKey: selectedPhoto.key, number };
       throw new Refusal(`This picture did not use pack photo ${options.photo}.`);
     }
 
@@ -333,19 +346,19 @@ export class PixelService {
     const firstLineagePack = lineagePackNames[0] ? photoNamed(product, lineagePackNames[0]) : undefined;
     if (!hasPackItem) {
       if (lineagePackNames.length === 0) throw new Refusal("This picture's plan has no pack 1.");
-      if (firstLineagePack?.kind === "pack") return { packKey: firstLineagePack.key, number: numberFor() };
+      if (firstLineagePack?.kind === "pack") return { packKey: firstLineagePack.key, number };
     }
     if (skeleton && defaultPhoto) {
       return {
         packKey: defaultPhoto.key,
         ...(input.cutout ? { cutout: input.cutout as Record<string, unknown> } : {}),
         ...(input.box ? { box: input.box as number[] } : {}),
-        number: numberFor(),
+        number,
       };
     }
     const fallback = firstLineagePack?.kind === "pack" ? firstLineagePack : firstProductPack;
     if (!fallback) throw new Refusal("This product has no pack photo. Save one with product_photos_save first: the tool needs the real pack.");
-    return { packKey: fallback.key, number: numberFor() };
+    return { packKey: fallback.key, number };
   }
 
   private async planOf(batchId: string, image: BatchImage, context?: SkeletonContext): Promise<unknown> {
@@ -380,9 +393,9 @@ export class PixelService {
     const image = await this.rendered(input.batchId, input.imageId);
     const { batchId: _batchId, imageId: _imageId, photo, item, pack, ...rest } = input;
     const { number, ...reference } = await this.packRef(input.batchId, image, {
+      pack: pack ?? 1,
       ...(photo !== undefined ? { photo } : {}),
       ...(item !== undefined ? { item } : {}),
-      ...(pack !== undefined ? { pack } : {}),
     });
     return this.start(
       "swap",

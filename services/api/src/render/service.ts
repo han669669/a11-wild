@@ -35,6 +35,38 @@ export function photoNamed(product: { photos: { kind: string; key: string }[] },
   return product.photos.filter((photo) => photo.kind === kind)[Number(number) - 1];
 }
 
+/** The pack photos a v3 draft's rough was built with. */
+export function roughPackReferences(
+  draft: Render,
+  renders: readonly Render[],
+  batchKind: BatchKind,
+  product: { photos: { kind: string; key: string }[] },
+): string[] {
+  if (batchKind !== "v3" || draft.kind !== "draft") return [];
+  const rough = draft.roughId
+    ? renders.find((render) => render.id === draft.roughId && render.kind === "rough")
+    : [...renders]
+      .filter((render) => render.kind === "rough"
+        && render.ideaId === draft.ideaId
+        && render.status === "done"
+        && render.imageId !== undefined
+        && render.createdAt < draft.createdAt)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+      .at(-1);
+  if (!rough) return [];
+
+  const packs = product.photos.filter((photo) => photo.kind === "pack");
+  const names = [...(rough.packPhotos ?? []), ...(rough.pack ? [rough.pack] : [])];
+  const references = new Set<string>();
+  for (const name of names) {
+    const photo = photoNamed(product, name);
+    if (photo?.kind !== "pack") continue;
+    const index = packs.findIndex((pack) => pack.key === photo.key);
+    if (index >= 0) references.add(`pack-${index + 1}`);
+  }
+  return [...references];
+}
+
 /** fal reads a reference picture when the job starts, which can be some minutes after it is sent. */
 const REFERENCE_LINK_SECONDS = 3600;
 
@@ -318,6 +350,7 @@ export class RenderService {
       kind: input.kind,
       prompt: input.prompt.trim(),
       ...(from ? { fromId: from.id } : {}),
+      ...(rough ? { roughId: rough.id } : {}),
       ...(directionVersion !== undefined && input.draft !== undefined ? { draft: input.draft, directionVersion } : {}),
       ...(redoOf ? { redoOf } : {}),
       ...(pack ? { pack } : {}),

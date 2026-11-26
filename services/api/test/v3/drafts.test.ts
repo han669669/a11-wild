@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { batchAtTruth, judgeIdeas, v1Ideas } from "../helpers/batch.js";
 import { approvedClient, callTool, createStudio, type Studio } from "../helpers/deps.js";
 import { directionOf, rules, v3AtDirected } from "../helpers/v3.js";
+import type { Item } from "../../src/store/table.js";
 
 const SCENE = "One empty pouch lies flat on a yellow seamless, one hard shadow to its right, camera from above.";
 
@@ -67,7 +68,7 @@ describe("a draft of a concept ad", () => {
       const sent = await send("idea-2", draft, { references });
       const { image } = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value;
       if ((await callTool(studio, "batch_get", { batchId })).value.batch.state === "waiting_spend") await callTool(studio, "spend_approve", { ...rules, batchId, ownerSaid: "yes" });
-      const job = await callTool(studio, "pack_check", { batchId, imageId: image.id, at: [500, 800], bg: "FFD21E" });
+      const job = await callTool(studio, "pack_check", { batchId, imageId: image.id, pack: 1, at: [500, 800], bg: "FFD21E" });
       expect(job.ok ? "" : job.error).toBe("");
       return studio.pixels.events.at(-1)!.input.packKey;
     };
@@ -115,6 +116,60 @@ describe("a draft of a concept ad", () => {
 describe("a real-photo plan", () => {
   const plan = (products: object[]) => ({ bg: "FFD21E", products });
 
+  it("uses the rough's pack reference for a food-only skeleton and a legacy draft", async () => {
+    const got = (await callTool(studio, "batch_get", { batchId })).value;
+    const pouch = {
+      key: "products/p/pack-pouch.jpg",
+      sourceUrl: "https://cdn.wongi.example/pack-pouch.jpg",
+      kind: "pack" as const,
+      what: "The 230 g pouch",
+    };
+    await studio.services.brands.saveProduct({ ...got.product, photos: [...got.product.photos, pouch], savedBy: "owner@example.com" });
+
+    const rough = (await studio.services.renders.list(batchId)).find((render) => render.kind === "rough" && render.ideaId === "idea-2")!;
+    const roughRow = await studio.table.get<Item>(`BATCH#${batchId}`, `RENDER#${rough.id}`);
+    await studio.table.put({ ...roughRow!, pack: "pack-1", packPhotos: ["pack-1", "pack-2"] });
+    const ideas = await studio.services.batches.ideas(batchId);
+    await studio.services.batches.saveIdeas(batchId, ideas.map((idea) => idea.id === "idea-2" ? { ...idea, shows: [] } : idea), "owner@example.com");
+
+    const made = await callTool(studio, "skeleton_make", { ...rules, batchId, ideaId: "idea-2", plan: plan([{ cx: 0.5, base: 0.8, height: 0.3, photo: "food-1" }]) });
+    if (!made.ok) throw new Error(made.error);
+    const skeleton = await callTool(studio, "pixel_status", { batchId, jobId: made.value.id });
+    if (!skeleton.ok) throw new Error(skeleton.error);
+
+    studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
+    const sent = await send("idea-2", 1, { fromId: skeleton.value.image.id, references: [] });
+    if (!sent.ok) throw new Error(sent.error);
+    expect(await studio.services.renders.get(batchId, sent.value.id)).toMatchObject({ roughId: rough.id });
+    const rendered = await callTool(studio, "render_status", { batchId, renderId: sent.value.id });
+    if (!rendered.ok) throw new Error(rendered.error);
+    const imageId = rendered.value.image.id;
+    if ((await callTool(studio, "batch_get", { batchId })).value.batch.state === "waiting_spend") {
+      await callTool(studio, "spend_approve", { ...rules, batchId, ownerSaid: "yes" });
+    }
+    const second = await send("idea-2", 2, { references: [] });
+    if (!second.ok) throw new Error(second.error);
+    const secondRendered = await callTool(studio, "render_status", { batchId, renderId: second.value.id });
+    if (!secondRendered.ok) throw new Error(secondRendered.error);
+    if ((await callTool(studio, "batch_get", { batchId })).value.batch.state === "waiting_spend") {
+      await callTool(studio, "spend_approve", { ...rules, batchId, ownerSaid: "yes" });
+    }
+
+    const looked = await callTool(studio, "checks_save", { ...rules, batchId, imageId, items: [] });
+    expect(looked.value.stillMissing).toContain(`pack_check for picture ${imageId}`);
+
+    const measure = await callTool(studio, "pack_check", { batchId, imageId, photo: "pack-2", pack: 2, at: [500, 800], bg: "FFD21E" });
+    if (!measure.ok) throw new Error(measure.error);
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: pouch.key, pack: 2 });
+
+    const draftRow = await studio.table.get<Item>(`BATCH#${batchId}`, `RENDER#${sent.value.id}`);
+    const { roughId: _roughId, ...legacyDraft } = draftRow!;
+    await studio.table.put(legacyDraft);
+    const legacyMeasure = await callTool(studio, "pack_check", { batchId, imageId, photo: "pack-2", pack: 2, at: [500, 800], bg: "FFD21E" });
+    if (!legacyMeasure.ok) throw new Error(legacyMeasure.error);
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: pouch.key, pack: 2 });
+  });
+
   it("is made after the direction, from the product's saved real photos by name", async () => {
     const made = await callTool(studio, "skeleton_make", { ...rules, batchId, ideaId: "idea-2", plan: plan([{ cx: 0.3, base: 0.8, height: 0.3 }, { cx: 0.7, base: 0.8, height: 0.2, photo: "food-1" }]) });
     expect(made.ok ? "" : made.error).toBe("");
@@ -152,6 +207,10 @@ describe("a draft that shows the food alone", () => {
   it("owes no pack measure, and a draft that shows the pack still does", async () => {
     const ideas = await studio.services.batches.ideas(batchId);
     await studio.services.batches.saveIdeas(batchId, ideas.map((idea) => (idea.id === "idea-4" ? { ...idea, shows: ["food-1"] } : idea)), "owner@example.com");
+    const rough = (await studio.services.renders.list(batchId)).find((render) => render.kind === "rough" && render.ideaId === "idea-4")!;
+    const roughRow = await studio.table.get<Item>(`BATCH#${batchId}`, `RENDER#${rough.id}`);
+    const { pack: _pack, packPhotos: _packPhotos, ...foodRough } = roughRow!;
+    await studio.table.put(foodRough);
     const made = async (ideaId: string, references: string[]) => {
       const sent = await send(ideaId, 1, { references });
       if (!sent.ok) throw new Error(sent.error);

@@ -13,7 +13,7 @@ import { planShowsPack } from "../pixels/plan.js";
 import type { JobStore } from "../pixels/store.js";
 import type { PickStore } from "../picks/store.js";
 import type { Pictures } from "../pictures/store.js";
-import { draftsPerIdea, photoNamed, type FinalRule } from "../render/service.js";
+import { draftsPerIdea, photoNamed, roughPackReferences, type FinalRule } from "../render/service.js";
 import type { RenderStore } from "../render/store.js";
 import type { TasteLog } from "../taste/log.js";
 import type { TruthStore } from "../truth/store.js";
@@ -192,6 +192,7 @@ export class BoardService implements FinalRule {
       const render = all.find((other) => other.id === at!.id);
       if (!render) return true;
       if ([...(render.packPhotos ?? []), ...(render.pack ? [render.pack] : [])].some((name) => photoNamed(product, name)?.kind === "pack")) return true;
+      if (roughPackReferences(render, all, batch.kind, product).length > 0) return true;
       if (!render.fromId) return false;
       at = await images.get(batch.id, render.fromId);
       if (at.kind === "skeleton") return planShowsPack((await jobs.get(batch.id, at.id)).input.plan, packKeys);
