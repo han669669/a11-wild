@@ -104,7 +104,7 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
         sideways: z.boolean().default(false).describe("The pack lies on its side."),
         tilted: z.boolean().default(false).describe("The pack is turned in the plane, for example it lies on the stage at 20 degrees. The tool turns it upright before the measure."),
         box: box.optional().describe("X0,Y0,X1,Y1 in pixels, for a pack that stands on something: a box round the pack with plain stage on its other sides, ending at the pack's base. The measure then stops at the base, so set it within a few pixels."),
-        pack: packNumber.optional().describe("With a skeleton plan, pack n is the plan's nth product."),
+        pack: packNumber.optional().describe("With a skeleton plan, pack n is the nth product from the left."),
       },
       writes: true,
       handler: ({ box: around, photo, pack, ...input }) => pixels.packCheck({ ...input, ...(pack !== undefined ? { pack } : {}), ...(around ? { box: around } : {}), ...(photo !== undefined ? { photo } : {}) }),

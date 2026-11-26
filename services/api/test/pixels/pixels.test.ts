@@ -154,6 +154,26 @@ describe("skeleton_make", () => {
     );
   });
 
+  it("numbers plan products from left to right", async () => {
+    await start(undefined, fakeNet({ [PACK_TWO_URL]: { body: PNG, headers: { "content-type": "image/png" } } }));
+    const packTwo = await appendPackTwo();
+    const leftBox = [20, 30, 220, 430];
+    const made = await skeleton("idea-1", {
+      plan: {
+        bg: "E83C28",
+        products: [
+          { cx: 0.75, base: 0.9, height: 0.45, photo: "pack-1", box: [300, 40, 500, 440], cutout: { darkMax: 30 } },
+          { cx: 0.25, base: 0.9, height: 0.45, photo: "pack-2", box: leftBox, cutout: { darkMax: 60 } },
+        ],
+      },
+    });
+    const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
+    const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
+
+    await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", pack: 1 });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, box: leftBox, cutout: { darkMax: 60 }, pack: 1 });
+  });
+
   it("uses skeleton-wide pack settings for a numbered item with no photo key", async () => {
     await start(undefined, fakeNet({ [PACK_TWO_URL]: { body: PNG, headers: { "content-type": "image/png" } } }));
     await appendPackTwo();

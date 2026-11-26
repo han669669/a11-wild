@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 import os
+import tempfile
 import unittest
 
 import numpy as np
@@ -365,6 +366,25 @@ class Repairs(unittest.TestCase):
         yellow = (picture[..., 0] > 170) & (picture[..., 1] > 120) & (picture[..., 2] < 90)
         self.assertTrue(blue[:, :512].any() and not blue[:, 512:].any())
         self.assertTrue(yellow[:, 512:].any() and not yellow[:, :512].any())
+
+    def test_repeated_photo_key_with_different_cutouts_gets_two_masks(self):
+        cutouts = [{"darkMax": 30}, {"darkMax": 60}]
+        plan = {"size": [1024, 1280], "bg": "#E83C28", "products": [
+            {"cx": 0.3, "base": 0.8, "height": 0.3, "photoKey": "products/p/pack.png", "cutout": cutouts[0]},
+            {"cx": 0.7, "base": 0.8, "height": 0.3, "photoKey": "products/p/pack.png", "cutout": cutouts[1]},
+        ]}
+        with tempfile.TemporaryDirectory() as folder:
+            job = handler.Job(self.store, {"input": {"plan": plan}}, folder)
+            calls = []
+            cut = job.cut
+
+            def record_cut(path, options=None, box=None):
+                calls.append(options)
+                return cut(path, options, box)
+
+            job.cut = record_cut
+            job.plan()
+        self.assertEqual(calls, cutouts)
 
     def test_a_plan_of_real_photos_needs_no_pack_and_keeps_their_pixels(self):
         slice_ = np.full((300, 300, 3), 255, np.uint8)
