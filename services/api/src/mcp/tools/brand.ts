@@ -18,6 +18,13 @@ export interface BrandToolDeps {
 
 const httpsUrl = z.string().max(2000).describe("An https address on a public host.");
 const id = z.string().min(1).max(64);
+const LOGO_NOT_CANDIDATE = "That logo is not among the candidates of this extract. Choose one of its logoCandidates, or leave logoUrl out.";
+const SAVED_LOGO_NOT_CANDIDATE = "That logo is not among the candidates of this extract. Choose one of its logoCandidates.";
+
+function siteHost(url: string): string {
+  return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+}
+
 /** A product with many variants needs a real photo of each one (the owner, 22-11-2026: real photos first, for everything). */
 const PHOTOS_MAX = 16;
 
@@ -70,6 +77,7 @@ export function brandTools({ brands, parallel, pictures, net }: BrandToolDeps): 
         const offer = await brands.offer({
           kind: "brand",
           url: found.url,
+          pageUrl: found.pageUrl,
           logos: found.logoCandidates.map((logo) => logo.url),
           photos: [],
           productPages: found.productPages.map((page) => page.url),
@@ -85,7 +93,7 @@ export function brandTools({ brands, parallel, pictures, net }: BrandToolDeps): 
       input: {
         extractId: id.describe("The extractId that brand_extract returned."),
         name: z.string().min(1).max(80).describe("The brand's name, as the owner writes it."),
-        logoUrl: httpsUrl.optional().describe("One of the extract's logo candidates. Leave it out when none is right; the owner supplies a file later."),
+        logoUrl: httpsUrl.optional().describe("One of the extract's logo candidates. Leave it out when none is right; brand_logo_save adds one later."),
         palette: z
           .array(z.strictObject({ role: z.enum(PALETTE_ROLES), hex: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "A colour is # and six hex digits.") }))
           .max(8)
@@ -96,9 +104,7 @@ export function brandTools({ brands, parallel, pictures, net }: BrandToolDeps): 
       handler: async ({ extractId, name, logoUrl, palette, fonts }, context) => {
         const offer = await brands.offered(extractId);
         if (offer.kind !== "brand") throw new Refusal(`Extract ${extractId} is not a brand extract.`);
-        if (logoUrl && !offer.logos.includes(logoUrl)) {
-          throw new Refusal("That logo is not among the candidates of this extract. Choose one of its logoCandidates, or leave logoUrl out.");
-        }
+        if (logoUrl && !offer.logos.includes(logoUrl)) throw new Refusal(LOGO_NOT_CANDIDATE);
         const brandId = crypto.randomUUID();
         const logo = logoUrl ? await copyPicture({ url: logoUrl, folder: `brands/${brandId}`, what: "The logo" }, net, pictures) : null;
         const brand = await brands.saveBrand({
@@ -111,6 +117,29 @@ export function brandTools({ brands, parallel, pictures, net }: BrandToolDeps): 
           savedBy: context.user.email,
         });
         return { brand, productPages: offer.productPages };
+      },
+    }),
+    defineTool({
+      name: "brand_logo_save",
+      description: "Saves the logo of a saved brand that has none, from the owner's choice among one brand_extract's logo candidates. Free. The studio copies it into its private store.",
+      input: { brandId: id, extractId: id, logoUrl: httpsUrl },
+      writes: true,
+      handler: async ({ brandId, extractId, logoUrl }, context) => {
+        const offer = await brands.offered(extractId);
+        if (offer.kind !== "brand") throw new Refusal(`Extract ${extractId} is not a brand extract.`);
+        if (!offer.pageUrl) throw new Refusal("Run brand_extract again on the brand's site.");
+        const brand = await brands.brand(brandId);
+        if (siteHost(offer.pageUrl) !== siteHost(brand.url)) throw new Refusal("That extract is of another site, not this brand's.");
+        if (!offer.logos.includes(logoUrl)) throw new Refusal(SAVED_LOGO_NOT_CANDIDATE);
+        const candidateHost = new URL(logoUrl).hostname.toLowerCase();
+        if (siteHost(logoUrl) !== siteHost(brand.url) && candidateHost !== "cdn.shopify.com") {
+          throw new Refusal("That logo is not on this brand's site.");
+        }
+        if (brand.logo) throw new Refusal("This brand has its logo. A saved logo is not replaced.");
+        const copied = await copyPicture({ url: logoUrl, folder: `brands/${brandId}`, what: "The logo" }, net, pictures);
+        const { createdAt: _createdAt, ...kit } = brand;
+        await brands.saveBrand({ ...kit, logo: { key: copied.key, sourceUrl: copied.sourceUrl }, savedBy: context.user.email });
+        return { brandId, logo: { sourceUrl: copied.sourceUrl } };
       },
     }),
     defineTool({

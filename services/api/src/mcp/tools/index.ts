@@ -132,7 +132,7 @@ export function studioTools(parts: StudioParts) {
   const made = new MadeCount(table, references);
   const render = new RenderService({ directions, batches, brands, images, renders, picks, critic: criticStore, ledger, gate, fal, pictures, finals: board, made });
   const jobs = new JobStore(table, now);
-  const pixels = new PixelService({ batches, brands, images, checks, board, renders, jobs, pictures, copy, directions, runner: parts.pixelRunner, now });
+  const pixels = new PixelService({ batches, brands, images, checks, picks, board, renders, jobs, pictures, copy, directions, runner: parts.pixelRunner, now });
   const packs = new PackStore(table);
   const results = new ResultStore(table, now);
   const commentStore = new CommentStore(table, now);

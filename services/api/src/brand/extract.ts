@@ -351,6 +351,7 @@ export async function brandExtract(input: { url: string }, net: Net) {
 
   return {
     url: base,
+    pageUrl: page.url,
     title,
     siteName: siteName(html) || meta("og:site_name"),
     description: meta("description") ?? meta("og:description"),

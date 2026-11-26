@@ -6,7 +6,7 @@ import type { BatchKind } from "@a11-wild/shared";
  * Change the text only with the owner's say, add a line to docs/decisions.md,
  * and raise RULES_VERSION so that every client reads the rules again.
  */
-export const RULES_VERSION = "2026-11-26.1";
+export const RULES_VERSION = "2026-11-26.2";
 
 /** `main` runs the batch. `writer` writes the ideas and the words. `art_director` makes and checks the pictures. `critic` judges blind. */
 export const RULE_ROLES = ["main", "writer", "art_director", "critic"] as const;
@@ -79,7 +79,7 @@ export const HOUSE_RULES: readonly HouseRule[] = [
     id: "v1-logo",
     roles: MAKERS,
     kinds: ["v1"],
-    text: "Set the brand's real logo on every v1 draft and final in code (logo_set) before the owner sees it, so he judges a finished poster ad and not a bare photo. On a final, run photo_finish first and then logo_set; the studio repeats the picked draft's exact logo placement. A v1 draft that shows food alone names no pack photo and needs no skeleton or pack_check.",
+    text: "Set the brand's real logo in code (logo_set) on every v1 draft before the owner sees it, so he judges a finished poster ad and not a bare photo, and on each final whose picked draft carries it. On a final, run photo_finish first and then logo_set; the studio repeats the picked draft's exact logo placement. A v1 draft that shows food alone names no pack photo and needs no skeleton or pack_check.",
   },
   {
     id: "no-sticker",

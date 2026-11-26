@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Batch, BatchImage, ImageKind, Lockup, PixelJob, PixelTool } from "@a11-wild/shared";
 import type { BatchStore } from "../batch/store.js";
 import { hasWords } from "../batch/state.js";
-import { type BoardService, countedOf, finishOf, REPAIR_KINDS } from "../board/service.js";
+import { type BoardService, countedOf, finishOf, pickedStamp, REPAIR_KINDS } from "../board/service.js";
 import { fontOf } from "../brand/fonts.js";
 import type { CopyStore } from "../copy/store.js";
 import { photoNamed } from "../render/service.js";
@@ -11,6 +11,7 @@ import type { CheckStore } from "../checks/store.js";
 import type { ImageStore } from "../images/store.js";
 import { Refusal } from "../mcp/registry.js";
 import type { Pictures } from "../pictures/store.js";
+import type { PickStore } from "../picks/store.js";
 import type { RenderStore } from "../render/store.js";
 import type { PixelRunner } from "./runner.js";
 import { lockupLayout } from "../direction/lockup.js";
@@ -28,6 +29,7 @@ interface Deps {
   brands: BrandStore;
   images: ImageStore;
   checks: CheckStore;
+  picks: PickStore;
   board: BoardService;
   renders: RenderStore;
   jobs: JobStore;
@@ -318,8 +320,8 @@ export class PixelService {
     const on = root.kind === "final" ? finishOf(counted, all) : counted;
     if (!on) throw new Refusal(`The logo goes on a final after its real-camera finish. Run photo_finish on picture ${counted.id} first.`);
     const brand = await brands.brand(batch.brandId);
-    if (!brand.logo) throw new Refusal("This brand has no saved logo. Save one with brand_save first.");
-    const picked = root.kind === "final" && root.fromId ? await this.setAs(input.batchId, root.fromId, all) : undefined;
+    if (!brand.logo) throw new Refusal("This brand has no saved logo. Use brand_logo_save to add one from its brand_extract candidates.");
+    const picked = root.kind === "final" && root.fromId ? await this.setAs(input.batchId, root.fromId, all, true) : undefined;
     const how = picked ?? {
       logoKey: brand.logo.key,
       ...(input.logoWidth !== undefined ? { logoWidth: input.logoWidth } : {}),
@@ -350,7 +352,7 @@ export class PixelService {
     if (input.subFamily && !sub) {
       throw new Refusal(`The studio holds no font file of "${input.subFamily}" for this brand. Save it with font_save, or leave subFamily out and the subline takes the headline font.`);
     }
-    if (input.logo && !brand.logo) throw new Refusal("This brand has no saved logo. Save one with brand_save, or send logo false and tell the owner the ad has no logo yet.");
+    if (input.logo && !brand.logo) throw new Refusal("This brand has no saved logo. Use brand_logo_save to add one from its brand_extract candidates, or send logo false and tell the owner the ad has no logo yet.");
     return {
       ...(concept ? lockupLayout(concept.lockup, concept.ideaId, input.layout) : input.layout),
       fontKey: font.key,
@@ -363,12 +365,13 @@ export class PixelService {
   }
 
   /** How the words (or v1 logo) stand on a draft as the owner last saw it: prefers a set on the counted draft and falls back to the draft's root if a repair was not restamped. */
-  private async setAs(batchId: string, draftId: string, all: BatchImage[]): Promise<Record<string, unknown> | undefined> {
+  private async setAs(batchId: string, draftId: string, all: BatchImage[], v1 = false): Promise<Record<string, unknown> | undefined> {
     const draft = all.find((image) => image.id === draftId);
     const counted = draft ? countedOf(draft, all) : undefined;
     const onCounted = counted ? all.filter((image) => image.kind === "typeset" && image.fromId === counted.id) : [];
     const pool = onCounted.length > 0 ? onCounted : all.filter((image) => image.kind === "typeset" && image.rootId === draftId);
-    const newest = pool.sort((one, other) => other.createdAt.localeCompare(one.createdAt))[0];
+    const pick = v1 ? (await this.deps.picks.all(batchId)).find((entry) => entry.imageId === draftId) : undefined;
+    const newest = pick ? pickedStamp(pick, all) : pool.sort((one, other) => other.createdAt.localeCompare(one.createdAt))[0];
     // The picture of a set of words has the id of the job that made it.
     const job = newest ? await this.deps.jobs.find(batchId, newest.id) : undefined;
     if (!job) return undefined;

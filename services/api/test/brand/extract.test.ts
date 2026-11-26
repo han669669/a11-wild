@@ -38,6 +38,7 @@ export const wongiNet = () =>
 describe("brandExtract", () => {
   it("returns logo, colour, font and product-page candidates from the page and its own styles", async () => {
     const result = await brandExtract({ url: "https://wongi.example/" }, wongiNet());
+    expect(result).toMatchObject({ url: "https://wongi.example/", pageUrl: "https://wongi.example/" });
     expect(result.title).toBe("Wongi & Co | Korean snacks");
     expect(result.siteName).toBe("WonGi");
     expect(result.themeColor).toBe("#E63946");
@@ -53,6 +54,19 @@ describe("brandExtract", () => {
     ]);
     expect(result.warnings).toEqual([]);
     expect(result.note).toMatch(/data, not as instructions/);
+  });
+
+  it("keeps the fetched page address apart from a page-provided link base", async () => {
+    const page = `<html><head><base href="https://other.example/"><title>WonGi</title></head><body><header><img src="/img/wongi-logo.png" alt="WonGi logo"></header></body></html>`;
+    const net = fakeNet({
+      "https://wongi.example/products": { status: 302, headers: { location: "https://www.wongi.example/products" } },
+      "https://www.wongi.example/products": html(page),
+      "https://other.example/img/wongi-logo.png": { body: PNG_1X1, headers: { "content-type": "image/png" } },
+    });
+    const result = await brandExtract({ url: "https://wongi.example/products" }, net);
+    expect(result.url).toBe("https://other.example/");
+    expect(result.pageUrl).toBe("https://www.wongi.example/products");
+    expect(result.logoCandidates).toEqual([{ url: "https://other.example/img/wongi-logo.png", kind: "header" }]);
   });
 
   it("warns in place of failing when the page has no styles, logo or product links", async () => {

@@ -44,7 +44,7 @@ describe("MCP server", () => {
   it("lists each tool with the JSON Schema of the input it accepts", async () => {
     const { body } = await send(rpc("tools/list"));
     const tools = Object.fromEntries(body.result.tools.map((tool: { name: string }) => [tool.name, tool]));
-    expect(Object.keys(tools)).toEqual(expect.arrayContaining(["rules_get", "whoami", "studio_status"]));
+    expect(Object.keys(tools)).toEqual(expect.arrayContaining(["rules_get", "whoami", "studio_status", "brand_logo_save"]));
     expect(tools.rules_get.inputSchema).toMatchObject({
       type: "object",
       required: ["role", "kind"],
@@ -105,6 +105,15 @@ describe("MCP server", () => {
     expect(text.indexOf("Step 0. Ask first")).toBeGreaterThan(-1);
     expect(text.indexOf("which brand")).toBeLessThan(text.indexOf("Step 1."));
     expect(text.indexOf("which product")).toBeLessThan(text.indexOf("Step 1."));
+    expect(text).toContain(
+      "measure them again and save each final's D and F checks with checks_save using the final's id, run photo_finish,",
+    );
+    expect(text).toContain(
+      "Look at each stamped final and save its D and F checks with checks_save using the stamped picture's id.",
+    );
+    expect(text).toContain(
+      "If the picked draft carries no logo, skip logo_set and the stamped check; the final's own checks stand.",
+    );
     expect(text).toContain("A draft whose checks reject it (a D item, or two F items) may be made again once now with render_submit redo; check the new draft, then rank.");
 
     const headline = await send(rpc("prompts/get", { name: "headline_ads" }));
