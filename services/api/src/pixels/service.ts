@@ -165,7 +165,7 @@ export class PixelService {
     const image = await this.rendered(input.batchId, input.imageId);
     const { batchId: _batchId, imageId: _imageId, box: around, photo, pack, ...rest } = input;
     // `box` in a job is the pack's box in the pack photo, so the box round the drawn pack goes as `around`.
-    return this.start("pack_check", input.batchId, { ...rest, pack: pack ?? 1, ...(around ? { around } : {}), ...(await this.packOf(input.batchId, image, photo, pack)), renderKey: image.key }, { imageId: image.id });
+    return this.start("pack_check", input.batchId, { ...rest, pack: pack ?? 1, ...(around ? { around } : {}), ...(await this.packOf(input.batchId, image, photo, pack ?? 1, pack !== undefined)), renderKey: image.key }, { imageId: image.id });
   }
 
   async capCheck(input: { batchId: string; imageId: string; box: number[]; split: number; pack?: number }): Promise<PixelView> {
@@ -188,7 +188,7 @@ export class PixelService {
   }
 
   /** The pack photo, cut out the same way as for the picture's skeleton: its tuning and its box are carried to each later tool. */
-  private async packOf(batchId: string, image: BatchImage, photo?: string, packNumber?: number): Promise<Record<string, unknown>> {
+  private async packOf(batchId: string, image: BatchImage, photo?: string, packNumber?: number, packNumberWasProvided = packNumber !== undefined): Promise<Record<string, unknown>> {
     const { batches, brands } = this.deps;
     const { skeleton, input } = await this.skeletonContext(batchId, image);
     const { cutout, box, pack } = input;
@@ -196,6 +196,7 @@ export class PixelService {
       const product = await brands.product((await batches.get(batchId)).productId);
       const plan = input.plan as { products?: { cx: number; photoKey?: string; cutout?: Record<string, unknown>; box?: number[] }[] } | undefined;
       const items = plan?.products ?? [];
+      const allItemsUseSamePhoto = items.length > 0 && items.every((entry) => entry.photoKey === items[0]?.photoKey);
       const packPhotos = product.photos.filter((entry) => entry.kind === "pack");
       const packItemsFromLeft = items
         .map((entry, index) => ({ entry, index }))
@@ -216,7 +217,7 @@ export class PixelService {
         : undefined;
       const defaultPhoto = savedDefault ?? (defaultName ? photoNamed(product, defaultName) : undefined);
 
-      if (plan && packNumber !== undefined) {
+      if (plan && packNumber !== undefined && (packNumberWasProvided || (!allItemsUseSamePhoto && packItemsFromLeft.length > 0))) {
         const item = packItemsFromLeft[packNumber - 1];
         if (!item) throw new Refusal(`This picture's plan has no pack ${packNumber}.`);
         if (item.photoKey) {

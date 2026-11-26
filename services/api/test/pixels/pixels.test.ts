@@ -201,6 +201,27 @@ describe("skeleton_make", () => {
     );
   });
 
+  it("defaults an omitted pack number to the first pack in a mixed plan", async () => {
+    await start(undefined, fakeNet({ [PACK_TWO_URL]: { body: PNG, headers: { "content-type": "image/png" } } }));
+    const packTwo = await appendPackTwo();
+    const packBox = [50, 60, 350, 460];
+    const packCutout = { darkMax: 65 };
+    const made = await skeleton("idea-1", {
+      plan: {
+        bg: "E83C28",
+        products: [
+          { cx: 0.2, base: 0.9, height: 0.35, photo: "food-1" },
+          { cx: 0.8, base: 0.9, height: 0.5, photo: "pack-2", box: packBox, cutout: packCutout },
+        ],
+      },
+    });
+    const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
+    const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
+
+    await run("pack_check", { imageId, at: [700, 900], bg: "E83C28" });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, box: packBox, cutout: packCutout, pack: 1 });
+  });
+
   it("uses skeleton-wide pack settings for a numbered item with no photo key", async () => {
     await start(undefined, fakeNet({ [PACK_TWO_URL]: { body: PNG, headers: { "content-type": "image/png" } } }));
     await appendPackTwo();
