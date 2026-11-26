@@ -213,8 +213,8 @@ export class PixelService {
       const batch = await batches.get(input.batchId);
       const evidence = await board.packEvidence(batch, image, await images.list(input.batchId));
       if (evidence.direct) throw new Refusal("This picture was built with a pack photo, so measure its pack.");
-      if (batch.kind !== "v3" || image.kind !== "draft" || !evidence.rough) {
-        throw new Refusal("noPack is only for a v3 draft whose pack came only from its rough.");
+      if (batch.kind !== "v3" || (image.kind !== "draft" && image.kind !== "final") || !evidence.rough) {
+        throw new Refusal("noPack is only for a v3 draft or final whose pack came only from its concept rough.");
       }
       await checks.measure(input.batchId, image.id, PACK_CHECK, null, now().toISOString(), input.pack ?? 1);
       const { batch: progressed, missing } = await board.progress(batch);
