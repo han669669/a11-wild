@@ -13,7 +13,7 @@ describe("house rules", () => {
   it("tells v3 drafts to record rough-only packs when no pack is shown", () => {
     expect(RULES_VERSION).toBe("2026-11-26.3");
     expect(rulesFor("main", "v3").find((rule) => rule.id === "v3-drafts")?.text).toContain(
-      "when the pack came only from the concept rough and the picture shows no pack, record it with pack_check noPack: true; otherwise measure the pack.",
+      "when the pack came only from the concept rough and the picture shows no pack, record it with pack_check noPack: true. When the picture shows a pack, measure it. A food-only draft with no pack among its sources needs no pack measure.",
     );
   });
 

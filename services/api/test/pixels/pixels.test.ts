@@ -5,6 +5,7 @@ import { batchAtTruth, judgeIdeas, v1Ideas } from "../helpers/batch.js";
 import { approvedClient, callTool, createStudio, type Studio } from "../helpers/deps.js";
 import { fakeNet } from "../helpers/net.js";
 import { PNG } from "../helpers/pictures.js";
+import { rules as v3Rules, v3AtDirected } from "../helpers/v3.js";
 
 const SCENE = "The pouch stands on a wet black rock at dusk, low camera, a wave about to break behind it.";
 const refused = (pattern: RegExp) => ({ ok: false, error: expect.stringMatching(pattern) });
@@ -629,20 +630,47 @@ describe("skeleton_make", () => {
 
 describe("pack_check and cap_check", () => {
   it("saves a failed measure on the picture as D11, where the agent's own look cannot clear it", async () => {
-    await start((event) => (event.tool === "pack_check" ? { ok: true, passed: false, line: "render H/W 1.412; packshot H/W 1.500; difference -5.9%; FAIL at 2%" } : { ok: true }));
-    const imageId = await draft();
+    studio = await createStudio({
+      pixels: (event) => (event.tool === "pack_check" ? { ok: true, passed: false, line: "render H/W 1.412; packshot H/W 1.500; difference -5.9%; FAIL at 2%" } : { ok: true }),
+    });
+    await approvedClient(studio);
+    ({ batchId } = await v3AtDirected(studio));
+    const ideas = await studio.services.batches.ideas(batchId);
+    await studio.services.batches.saveIdeas(batchId, ideas.map((idea) => (idea.id === "idea-4" ? { ...idea, shows: ["food-1"] } : idea)), "owner@example.com");
+    studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
+    const sent = await callTool(studio, "render_submit", {
+      ...v3Rules,
+      batchId,
+      ideaId: "idea-4",
+      kind: "draft",
+      draft: 1,
+      prompt: SCENE,
+      references: ["food-1"],
+    });
+    if (!sent.ok) throw new Error(sent.error);
+    const rendered = await callTool(studio, "render_status", { batchId, renderId: sent.value.id });
+    if (!rendered.ok) throw new Error(rendered.error);
+    const imageId = rendered.value.image.id as string;
+    if ((await callTool(studio, "batch_get", { batchId })).value.batch.state === "waiting_spend") {
+      await callTool(studio, "spend_approve", { ...v3Rules, batchId, ownerSaid: "yes" });
+    }
+    const batch = await studio.services.batches.get(batchId);
+    const image = await studio.services.images.get(batchId, imageId);
+    expect(await studio.services.board.packEvidence(batch, image, await studio.services.images.list(batchId))).toEqual({ direct: false, rough: true });
+
     const measured = await run("pack_check", { imageId, at: [512, 900], bg: "E83C28" });
+    if (!measured.ok) throw new Error(measured.error);
     expect(measured.value).toMatchObject({ status: "done", passed: false, line: expect.stringContaining("-5.9%") });
-    expect(studio.pixels.events.at(-1)).toMatchObject({ input: { packKey: PACK, renderKey: expect.stringContaining(`batches/${batchId}/drafts/${imageId}.`), at: [512, 900] } });
+    expect(studio.pixels.events.at(-1)).toMatchObject({ input: { packKey: "products/p/pack.jpg", renderKey: expect.stringContaining(`batches/${batchId}/drafts/${imageId}.`), at: [512, 900] } });
     expect(studio.pixels.events.at(-1)!.outKey).toBeUndefined();
 
-    const looked = await callTool(studio, "checks_save", { ...rules, batchId, imageId, items: [] });
+    const looked = await callTool(studio, "checks_save", { ...v3Rules, batchId, imageId, items: [] });
     expect(looked.value.checks.items).toEqual([{ code: "D11", note: expect.stringContaining("FAIL at 2%"), tool: "pack_check" }]);
     expect(await callTool(studio, "pack_check", { batchId, imageId, noPack: true })).toEqual({
       ok: false,
       error: "This picture already has a pack measure. Measure the pack again, or redo the picture.",
     });
-    const shown = (await studio.services.board.board(batchId)).ideas.find((entry) => entry.idea.id === "idea-1")!.drafts.find((entry) => entry.image.id === imageId);
+    const shown = (await studio.services.board.board(batchId)).ideas.find((entry) => entry.idea.id === "idea-4")!.drafts.find((entry) => entry.image.id === imageId);
     expect(shown?.checks?.items).toEqual([{ code: "D11", note: expect.stringContaining("FAIL at 2%"), tool: "pack_check" }]);
   });
 
