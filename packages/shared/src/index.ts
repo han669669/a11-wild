@@ -1113,7 +1113,7 @@ export type OutreachTier = (typeof OUTREACH_TIERS)[number];
 export const OUTREACH_STAGES = ["new", "no_route", "needs_service_ad", "pick_waits", "pick_made", "ad_waits", "ready", "contacted", "replied", "in_talks", "client", "lost", "parked", "opted_out"] as const;
 export type OutreachStage = (typeof OUTREACH_STAGES)[number];
 
-export type OutreachChannel = "whatsapp" | "email";
+export type OutreachChannel = "whatsapp" | "email" | "instagram";
 export interface ProspectRoute {
   channel: "whatsapp" | "email" | "instagram" | "facebook" | "call";
   to: string;
@@ -1157,6 +1157,8 @@ export interface Prospect {
   dmVerify?: "valid" | "risky" | "invalid" | "unknown";
   dmPhone?: string;
   notes?: string;
+  /** Plain-language person & pitch context for the owner's prospect page (never raw audit jargon). */
+  pitch?: string;
   flags?: ProspectFlag[];
   route?: ProspectRoute;
   second?: ProspectRoute;
@@ -1409,6 +1411,8 @@ export interface ProspectContact {
   bestRoute?: string;
   secondRoute?: string;
   sendTo?: ProspectSendTarget;
+  /** Available sendable channels for this brand, in priority order (WhatsApp, Email, Instagram). */
+  channels?: OutreachChannel[];
   others?: {
     second?: ProspectRoute;
     secondHref?: string;
@@ -1425,6 +1429,8 @@ export interface ProspectPage {
   newestAd?: string;
   sells?: ProspectSells;
   contact: ProspectContact;
+  /** Plain-language person & pitch context for the owner, omitted when opted out. */
+  pitch?: string;
   flags: ProspectFlag[];
   check?: boolean;
   /** Newest first. */

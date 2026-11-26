@@ -39,6 +39,7 @@ const row = z.strictObject({
   dmVerify: z.enum(["valid", "risky", "invalid", "unknown"]).optional(),
   dmPhone: text(100).optional(),
   notes: text(500).optional(),
+  pitch: text(500).optional().describe("Plain-language person and pitch context for the owner's prospect page (never raw audit jargon)."),
   sells: z.enum(["product", "service", "hybrid", ""]).optional(),
   mergedInto: z.number().int().min(1).max(99_999).optional(),
 });

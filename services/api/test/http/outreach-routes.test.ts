@@ -513,6 +513,7 @@ describe("the owner's day", () => {
       linkedin: { text: "www.linkedin.com/in/a-person", href: "https://www.linkedin.com/in/a-person" },
       bestRoute: "WhatsApp",
       sendTo: { channel: "whatsapp", to: "6580000001", direct: false },
+      channels: ["whatsapp", "email", "instagram"],
       others: {
         instagram: { name: "@brand.one", href: "https://www.instagram.com/brand.one/" },
         linkedin: { text: "www.linkedin.com/in/a-person", href: "https://www.linkedin.com/in/a-person" },
@@ -521,6 +522,46 @@ describe("the owner's day", () => {
     expect((await json(await get("/api/outreach/prospects/00002"))).contact).toMatchObject({ instagram: { name: "javascript:alert(1)" }, linkedin: { text: "https://evil.example/in/x" } });
     expect((await json(await get("/api/outreach/prospects/00002"))).contact.instagram.href).toBeUndefined();
     expect((await json(await get("/api/outreach/prospects/00002"))).contact.linkedin.href).toBeUndefined();
+  });
+
+  it("supports Instagram DM as a send channel and shows owner-only pitch context unless opted out", async () => {
+    await ready([
+      row(1, {
+        whatsapp: undefined,
+        email: "hello@example.com",
+        instagram: "madeup.brand",
+        bestRoute: "Instagram DM @madeup.brand",
+        secondRoute: "Email (valid) hello@example.com",
+        pitch: "One-person brand; hiring freelance video editor.",
+      }),
+      row(2, {
+        whatsapp: "+65 8000 0099",
+        email: undefined,
+        instagram: undefined,
+        pitch: "Mentions backup +65 8000 0099",
+      }),
+    ]);
+    const page = await json(await get("/api/outreach/prospects/00001"));
+    expect(page.pitch).toBe("One-person brand; hiring freelance video editor.");
+    expect(page.contact.sendTo).toMatchObject({ channel: "instagram", to: "@madeup.brand" });
+    expect(page.contact.channels).toEqual(["email", "instagram"]);
+    expect(page.contact.others.secondHref).toBe("mailto:hello@example.com");
+    expect(page.message.channel).toBe("instagram");
+    expect(page.message.messages[0].href).toBe("https://www.instagram.com/madeup.brand/");
+    // Switching channel to email and back to instagram works; whatsapp is refused.
+    expect((await on("00001", "channel", { channel: "email" })).status).toBe(200);
+    expect((await on("00001", "channel", { channel: "whatsapp" })).status).toBe(400);
+    expect((await on("00001", "channel", { channel: "instagram" })).status).toBe(200);
+    expect((await on("00001", "sent", { step: 0, title: 0, channel: "instagram", to: "@madeup.brand" })).status).toBe(200);
+    // Opting out hides pitch and instagram handle.
+    expect((await on("00001", "optout")).status).toBe(200);
+    const opted = await json(await get("/api/outreach/prospects/00001"));
+    expect(opted.pitch).toBeUndefined();
+    expect(opted.contact).toEqual({ whatsapp: [] });
+    // Pitch mentioning an opted-out number on another brand is also hidden.
+    await on("00002", "optout");
+    await ready([row(3, { whatsapp: "+65 8000 0003", email: undefined, pitch: "Also linked to +65 8000 0099" })]);
+    expect((await json(await get("/api/outreach/prospects/00003"))).pitch).toBeUndefined();
   });
 });
 
@@ -538,11 +579,11 @@ describe("the list and its numbers", () => {
     const page = await json(await get("/api/outreach/prospects"));
     expect(page.numbers).toEqual({
       prospects: 5,
-      sent: { all: 4, byTier: { "20+": 2, "5-19": 1, "<5": 1 }, byChannel: { whatsapp: 3, email: 1 } },
-      replied: { all: 3, byTier: { "20+": 2, "5-19": 1, "<5": 0 }, byChannel: { whatsapp: 2, email: 1 } },
-      saidMore: { all: 1, byTier: { "20+": 1, "5-19": 0, "<5": 0 }, byChannel: { whatsapp: 1, email: 0 } },
-      optedOut: { all: 1, byTier: { "20+": 0, "5-19": 1, "<5": 0 }, byChannel: { whatsapp: 1, email: 0 } },
-      clients: { all: 1, byTier: { "20+": 1, "5-19": 0, "<5": 0 }, byChannel: { whatsapp: 0, email: 1 } },
+      sent: { all: 4, byTier: { "20+": 2, "5-19": 1, "<5": 1 }, byChannel: { whatsapp: 3, email: 1, instagram: 0 } },
+      replied: { all: 3, byTier: { "20+": 2, "5-19": 1, "<5": 0 }, byChannel: { whatsapp: 2, email: 1, instagram: 0 } },
+      saidMore: { all: 1, byTier: { "20+": 1, "5-19": 0, "<5": 0 }, byChannel: { whatsapp: 1, email: 0, instagram: 0 } },
+      optedOut: { all: 1, byTier: { "20+": 0, "5-19": 1, "<5": 0 }, byChannel: { whatsapp: 1, email: 0, instagram: 0 } },
+      clients: { all: 1, byTier: { "20+": 1, "5-19": 0, "<5": 0 }, byChannel: { whatsapp: 0, email: 1, instagram: 0 } },
     });
     expect(page.sectors).toEqual(["Beauty", "F&B", "Test"]);
     expect(page.rows.map((entry: { brand: string }) => entry.brand)).toEqual(["TEST prospect", "Brand 1", "Brand 2", "Brand 3", "Brand 4", "Brand 5"]);

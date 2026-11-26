@@ -181,10 +181,30 @@ describe("what a prospect needs next", () => {
     const secondary = { channel: "email" as const, to: "person@example.com", direct: true, label: "DM email (valid) person@example.com" };
     const profileWithSocialPrimary = profile(1, {
       email: undefined as never,
-      route: { channel: "instagram", to: "@madeup", direct: false, label: "Instagram DM @madeup" },
+      route: { channel: "facebook", to: "madeup", direct: false, label: "Facebook message madeup" },
       second: secondary,
     });
     expect(sendTarget(file({ profile: profileWithSocialPrimary }))).toMatchObject({ channel: "email", to: "person@example.com", direct: true });
+  });
+
+  it("honours Instagram DM as an explicit best route, and falls back WhatsApp -> Email -> Instagram", () => {
+    const explicit = profile(1, {
+      whatsapp: [],
+      email: "hello@example.com",
+      instagram: "madeup.brand",
+      route: { channel: "instagram", to: "@madeup.brand", direct: false, label: "Instagram DM @madeup.brand" },
+    });
+    expect(sendTarget(file({ profile: explicit }))).toMatchObject({ channel: "instagram", to: "@madeup.brand", direct: false });
+
+    const waFirst = profile(2, { whatsapp: ["6580000002"], email: "two@example.com", instagram: "brand.two" });
+    expect(sendTarget(file({ profile: waFirst }))).toMatchObject({ channel: "whatsapp", to: "6580000002" });
+
+    const emailSecond = profile(3, { whatsapp: [], email: "three@example.com", instagram: "brand.three" });
+    expect(sendTarget(file({ profile: emailSecond }))).toMatchObject({ channel: "email", to: "three@example.com" });
+
+    const igLast = profile(4, { whatsapp: [], email: undefined as never, instagram: "brand.four" });
+    expect(sendTarget(file({ profile: igLast }))).toMatchObject({ channel: "instagram", to: "@brand.four" });
+    expect(sendTarget(file({ profile: igLast }), new Set(["I#@brand.four"]))).toBeUndefined();
   });
 
   it("uses channel preferences only among the current workbook contacts", () => {

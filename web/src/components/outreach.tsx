@@ -27,7 +27,7 @@ export const STAGES: Record<OutreachStage, { label: string; color: "green" | "am
   opted_out: { label: "Opted out", color: "red" },
 };
 export const STEPS: Record<OutreachStep, string> = { 0: "First message", 1: "Follow-up 1", 2: "Follow-up 2" };
-export const CHANNELS: Record<OutreachChannel, string> = { whatsapp: "WhatsApp", email: "Email" };
+export const CHANNELS: Record<OutreachChannel, string> = { whatsapp: "WhatsApp", email: "Email", instagram: "Instagram" };
 export const outreachFlagText = (text: string): string => text.replace(/^(?:AUDIT-FLAG|DUP-CHECK|QA-FLAG):\s*/i, "").trim();
 /** A button large enough for a thumb: the pages are used on a phone first. */
 export const TAP = "min-h-11 sm:min-h-0";
@@ -287,7 +287,7 @@ export function MessageCard({
           {message.href && sendTo && !disabled ? (
             <Button asChild variant="secondary" className={TAP}>
               <a href={message.href} target="_blank" rel="noopener noreferrer">
-                {email ? "Open the mail program" : "Open WhatsApp"}
+                {email ? "Open the mail program" : prospect.channel === "instagram" ? "Open Instagram" : "Open WhatsApp"}
               </a>
             </Button>
           ) : null}

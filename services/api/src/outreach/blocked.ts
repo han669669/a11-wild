@@ -11,6 +11,14 @@ export const numberKey = (value: string): string => {
   return found.length === 8 ? `65${found}` : found;
 };
 
+/** Canonical opt-out key for an Instagram handle or profile URL (`I#@handle`). */
+export const instagramKey = (value: string): string => {
+  const trimmed = value.trim();
+  const urlMatch = trimmed.match(/^https?:\/\/(?:www\.)?instagram\.com\/([A-Za-z0-9._]{1,30})(?:\/|\?|$)/i);
+  const handle = urlMatch ? urlMatch[1]! : trimmed.replace(/^@/, "");
+  return `I#@${handle.toLowerCase()}`;
+};
+
 export const EMAIL_ADDRESS = /^[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}$/i;
 export const EMAIL_IN_TEXT = /[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}/gi;
 

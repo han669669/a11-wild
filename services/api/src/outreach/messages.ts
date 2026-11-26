@@ -62,8 +62,22 @@ export function messagesFor(
   const one = (index: 0 | 1): OutreachMessage => {
     const { title, text } = fill(template, profile.brand, index);
     const channel = typeof target === "string" ? target : target?.channel;
-    const to = typeof target === "string" ? (channel === "whatsapp" ? profile.whatsapp[0] : profile.email) : target?.to;
-    const href = channel === "whatsapp" && to ? whatsappLink(to, title, text) : channel === "email" && to ? mailLink(to, title, text) : undefined;
+    const to =
+      typeof target === "string"
+        ? channel === "whatsapp"
+          ? profile.whatsapp[0]
+          : channel === "email"
+            ? profile.email
+            : profile.instagram
+        : target?.to;
+    const href =
+      channel === "whatsapp" && to
+        ? whatsappLink(to, title, text)
+        : channel === "email" && to
+          ? mailLink(to, title, text)
+          : channel === "instagram" && to
+            ? profileLink("instagram", to)
+            : undefined;
     return { title, text, ...(href ? { href } : {}) };
   };
   return [one(0), one(1)];

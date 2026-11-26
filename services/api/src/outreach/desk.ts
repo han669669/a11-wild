@@ -4,6 +4,7 @@ import type { IdeaFinal } from "../board/service.js";
 import { Refusal } from "../mcp/registry.js";
 import { noteText } from "./candidates.js";
 import type { SpendLedger } from "../spend/ledger.js";
+import { instagramKey } from "./blocked.js";
 import { labelShowsClosed } from "./routes.js";
 import { chosen, sameContact } from "./sequence.js";
 import { adWaits, candidatesWait, kindOf, optedOut, owedNow, stageOf, standingAd, TAKES_NO_AD, wantsAd } from "./stage.js";
@@ -241,6 +242,7 @@ export class OutreachDesk {
       const { profile } = file;
       const openNumber = (number: string | undefined): boolean => Boolean(number && !closed.has(`W#${digitsOf(number)}`));
       const openEmail = (address: string | undefined): boolean => Boolean(address && !closed.has(`E#${address.toLowerCase()}`));
+      const openInstagram = (handle: string | undefined): boolean => Boolean(handle && !closed.has(instagramKey(handle)));
       const openRouteLabel = (value: string | undefined): boolean => {
         const emails = value?.match(/[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}/gi) ?? [];
         return emails.every(openEmail) && !labelShowsClosed(value, closed);
@@ -252,7 +254,9 @@ export class OutreachDesk {
             ? `E#${route.to.toLowerCase()}`
             : route.channel === "whatsapp" || route.channel === "call"
               ? `W#${digitsOf(route.to)}`
-              : `${route.channel === "instagram" ? "I" : "F"}#${route.to.toLowerCase()}`;
+              : route.channel === "instagram"
+                ? instagramKey(route.to)
+                : `F#${route.to.toLowerCase()}`;
         return !closed.has(key) && openRouteLabel(route.label);
       };
       const whatsapp = profile.whatsapp.filter(openNumber);
@@ -274,7 +278,9 @@ export class OutreachDesk {
           linkedin: profile.linkedin,
         }).filter(([, value]) => value !== undefined),
       );
-      return { ...briefOf(file), stage, ...known, ...(whatsapp.length > 0 ? { whatsapp } : {}) };
+      const brief = briefOf(file);
+      if (!openInstagram(brief.instagram)) delete brief.instagram;
+      return { ...brief, stage, ...known, ...(whatsapp.length > 0 ? { whatsapp } : {}) };
     });
     return { prospects, more: listed.length > input.limit };
   }

@@ -1,4 +1,4 @@
-import type { Attention, OwnPictureType, ChangeKind, ChangeStatus, ClientLink, ClientView, Made, OwnerClient, PackComment, PackFormat, ShownComment, UploadTable, OutreachStage, OutreachStep, OutreachTemplates, OutreachTier, ProspectPage, ProspectsPage, TemplatesPage, TodayPage, Board, BrandNote, BrandPage, CanonProposal, CanonScope, ConceptBoard, BrandSummary, CalibrationPage, CanonVersion, ClientRecord, DoneReport, Me, PackSummary, PackView, Pick, SpendSummary, TastePage } from "@a11-wild/shared";
+import type { Attention, OwnPictureType, ChangeKind, ChangeStatus, ClientLink, ClientView, Made, OwnerClient, PackComment, PackFormat, ShownComment, UploadTable, OutreachChannel, OutreachStage, OutreachStep, OutreachTemplates, OutreachTier, ProspectPage, ProspectsPage, TemplatesPage, TodayPage, Board, BrandNote, BrandPage, CanonProposal, CanonScope, ConceptBoard, BrandSummary, CalibrationPage, CanonVersion, ClientRecord, DoneReport, Me, PackSummary, PackView, Pick, SpendSummary, TastePage } from "@a11-wild/shared";
 
 export class ApiError extends Error {
   constructor(
@@ -28,12 +28,12 @@ const send = <T>(path: string, body: unknown) => request<T>(path, { method: "POS
 /** A write on one prospect, by the name of its route. The answer is the prospect as it now stands. */
 export type ProspectWrite =
   | { action: "ad"; body: { ad: number; yes: boolean; ownerSaid?: string } }
-  | { action: "sent"; body: { step: OutreachStep; title: 0 | 1; to?: string; channel?: "whatsapp" | "email" } }
+  | { action: "sent"; body: { step: OutreachStep; title: 0 | 1; to?: string; channel?: OutreachChannel } }
   | { action: "unsent"; body: { step: OutreachStep } }
   | { action: "reply"; body: { reply: "more" | "no" | "other"; text?: string } }
   | { action: "stage"; body: { stage: "in_talks" | "client" | "lost" | "parked" | "auto"; reason?: string } }
   | { action: "note"; body: { text: string } }
-  | { action: "channel"; body: { channel: "whatsapp" | "email" } }
+  | { action: "channel"; body: { channel: OutreachChannel } }
   | { action: "kind"; body: { kind: "product" | "service" } }
   | { action: "pick"; body: { imageId: string } }
   | { action: "none"; body: { ownerSaid: string } }

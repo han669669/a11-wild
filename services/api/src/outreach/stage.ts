@@ -1,6 +1,6 @@
 import type { OutreachAd, OutreachChannel, OutreachEvent, OutreachStage, Prospect, ProspectFile, ProspectRoute, ProspectSendTarget, ProspectSells } from "@a11-wild/shared";
-import { blockedValues, isBlockedTarget, numberKey, type BlockedValues } from "./blocked.js";
-import { EMAIL } from "./messages.js";
+import { blockedValues, instagramKey, isBlockedTarget, numberKey, type BlockedValues } from "./blocked.js";
+import { EMAIL, profileLink } from "./messages.js";
 import { contactKeys } from "./store.js";
 
 /** Two tries at an ad the owner says yes to. After the second no the brand is parked. */
@@ -121,10 +121,10 @@ export function owedAnswer(file: ProspectFile): EventOf<"reply"> | undefined {
 }
 
 const sendable = (route: ProspectRoute | undefined): ProspectSendTarget | undefined =>
-  route && (route.channel === "whatsapp" || route.channel === "email")
+  route && (route.channel === "whatsapp" || route.channel === "email" || (route.channel === "instagram" && Boolean(profileLink("instagram", route.to))))
     ? {
         channel: route.channel,
-        to: route.to,
+        to: route.channel === "instagram" ? `@${route.to.replace(/^@/, "")}` : route.to,
         direct: route.direct,
         ...(route.note ? { note: route.note } : {}),
         ...(route.person ? { person: route.person } : {}),
@@ -132,15 +132,26 @@ const sendable = (route: ProspectRoute | undefined): ProspectSendTarget | undefi
       }
     : undefined;
 
+const instagramTarget = (value: string | undefined): ProspectSendTarget | undefined => {
+  const trimmed = value?.trim();
+  if (!trimmed || !profileLink("instagram", trimmed)) return undefined;
+  const urlMatch = trimmed.match(/^https?:\/\/(?:www\.)?instagram\.com\/([A-Za-z0-9._]{1,30})(?:\/|\?|$)/i);
+  const handle = urlMatch ? urlMatch[1]! : trimmed.replace(/^@/, "");
+  return { channel: "instagram", to: `@${handle}`, direct: false };
+};
+
 export function legacyTargets(profile: Prospect): ProspectSendTarget[] {
   const recipient = {
     ...(profile.decisionMaker ? { person: profile.decisionMaker } : {}),
     ...(profile.dmTitle ? { title: profile.dmTitle } : {}),
   };
+  const ig = instagramTarget(profile.instagram);
+  // Default priority: WhatsApp first, Email second, Instagram DM last.
   return [
     ...(profile.whatsapp[0] ? [{ channel: "whatsapp" as const, to: profile.whatsapp[0], direct: false }] : []),
     ...(profile.dmEmail && profile.dmVerify === "valid" && EMAIL.test(profile.dmEmail) ? [{ channel: "email" as const, to: profile.dmEmail, direct: true, ...recipient }] : []),
     ...(profile.email ? [{ channel: "email" as const, to: profile.email, direct: false }] : []),
+    ...(ig ? [ig] : []),
   ];
 }
 
@@ -164,7 +175,7 @@ export function sendTarget(file: ProspectFile, optOuts?: ReadonlySet<string>): P
 }
 
 export function sendTargetUnavailable(file: ProspectFile, target: ProspectSendTarget, optOuts: ReadonlySet<string>): boolean {
-  const key = target.channel === "email" ? `E#${target.to.toLowerCase()}` : `W#${numberKey(target.to)}`;
+  const key = target.channel === "email" ? `E#${target.to.toLowerCase()}` : target.channel === "instagram" ? instagramKey(target.to) : `W#${numberKey(target.to)}`;
   return isBlockedTarget(blockedValues(file.profile.flags ?? []), target) || file.events.some((event) => event.type === "optout") || optOuts.has(key);
 }
 
