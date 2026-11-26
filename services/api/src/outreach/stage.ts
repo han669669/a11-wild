@@ -126,6 +126,7 @@ const sendable = (route: ProspectRoute | undefined): ProspectSendTarget | undefi
         channel: route.channel,
         to: route.to,
         direct: route.direct,
+        ...(route.note ? { note: route.note } : {}),
         ...(route.person ? { person: route.person } : {}),
         ...(route.title ? { title: route.title } : {}),
       }

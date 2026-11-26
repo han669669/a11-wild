@@ -100,9 +100,14 @@ export function outreachRoutes(
     if (optedOut(file, optOuts)) return { whatsapp: [] };
     const target = sendTarget(file, optOuts);
     const sendTo = target && !sendTargetUnavailable(file, target, optOuts) && routeOpen(target, closed) ? target : undefined;
+    const noteForNumber = (number: string) =>
+      [profile.route, profile.second].find((route) => route?.note && routeOpen(route, closed) && route.to.replace(/\D/g, "") === number.replace(/\D/g, ""))?.note;
     const dmCheck = { valid: "checked", risky: "risky", invalid: "invalid", unknown: "not checked" } as const;
     return {
-      whatsapp: profile.whatsapp.filter(openNumber).map((number) => ({ number, ...link(/^\d{10,15}$/.test(number) ? `https://wa.me/${number}` : undefined) })),
+      whatsapp: profile.whatsapp.filter(openNumber).map((number) => {
+        const note = noteForNumber(number);
+        return { number, ...link(/^\d{10,15}$/.test(number) ? `https://wa.me/${number}` : undefined), ...(note ? { note } : {}) };
+      }),
       ...(openEmail(profile.email) && profile.email ? { email: { address: profile.email, ...link(mailLink(profile.email, "", "")?.split("?")[0]) } } : {}),
       ...(openNumber(profile.phone) && profile.phone ? { phone: profile.phone } : {}),
       ...(profile.instagram ? { instagram: { name: profile.instagram, ...link(profileLink("instagram", profile.instagram)) } } : {}),

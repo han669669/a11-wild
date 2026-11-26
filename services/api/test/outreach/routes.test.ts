@@ -29,6 +29,34 @@ describe("the list's ways to reach a brand", () => {
     expect(routeOf(text)).toEqual({ ...target, label: text });
   });
 
+  it("keeps a short note from a phone route label", () => {
+    const label = "WhatsApp +6580000001 (verified business)";
+    expect(routeOf(label)).toEqual({
+      channel: "whatsapp",
+      to: "6580000001",
+      direct: false,
+      label,
+      note: "verified business",
+    });
+    expect(routeOf("WhatsApp +6580000001 ( verified business )")?.note).toBe("verified business");
+  });
+
+  it("omits a missing or overlong note without losing the number", () => {
+    expect(routeOf("WhatsApp +6580000001")).toEqual({
+      channel: "whatsapp",
+      to: "6580000001",
+      direct: false,
+      label: "WhatsApp +6580000001",
+    });
+    const label = "WhatsApp +6580000001 (12345678901234567890123456789012345678901)";
+    expect(routeOf(label)).toEqual({
+      channel: "whatsapp",
+      to: "6580000001",
+      direct: false,
+      label,
+    });
+  });
+
   it.each(["", "unknown", "source_url", "<UNKNOWN>", "Phone 12", "Email (risky) person@example.com", "Email (invalid) person@example.com", "Email (catch-all) person@example.com", "DM email (valid) not an address"])(
     "does not make a target from %s",
     (text) => expect(routeOf(text)).toBeUndefined(),

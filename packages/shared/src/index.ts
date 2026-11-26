@@ -1119,6 +1119,7 @@ export interface ProspectRoute {
   to: string;
   direct: boolean;
   label: string;
+  note?: string;
   person?: string;
   title?: string;
 }
@@ -1131,6 +1132,7 @@ export interface ProspectSendTarget {
   channel: OutreachChannel;
   to: string;
   direct: boolean;
+  note?: string;
   person?: string;
   title?: string;
 }
@@ -1396,7 +1398,7 @@ export interface ProspectsPage {
 
 /** How to reach a prospect. Only the owner's pages get it. A link is there only when the value passed its check. */
 export interface ProspectContact {
-  whatsapp: { number: string; href?: string }[];
+  whatsapp: { number: string; href?: string; note?: string }[];
   email?: { address: string; href?: string };
   phone?: string;
   instagram?: { name: string; href?: string };

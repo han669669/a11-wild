@@ -413,6 +413,23 @@ describe("the owner's day", () => {
     expect(JSON.stringify(readyPage)).not.toContain("8000 0001");
   });
 
+  it("keeps route notes on matching WhatsApp contacts and the current target", async () => {
+    await loadProspects(studio, [
+      row(1, {
+        whatsapp: "+65 8000 0001; +65 8000 0002",
+        bestRoute: "WhatsApp +6580000001 (verified business)",
+        secondRoute: "WhatsApp +6580000002 (direct line)",
+      }),
+    ]);
+    const page = await json(await get("/api/outreach/prospects/00001"));
+    expect(page.contact.whatsapp).toEqual([
+      { number: "6580000001", href: "https://wa.me/6580000001", note: "verified business" },
+      { number: "6580000002", href: "https://wa.me/6580000002", note: "direct line" },
+    ]);
+    expect(page.contact.sendTo).toMatchObject({ channel: "whatsapp", to: "6580000001", note: "verified business" });
+    expect(page.contact.others.second).toMatchObject({ channel: "whatsapp", to: "6580000002", note: "direct line" });
+  });
+
   it("gives the owner the contact, each link only from a checked value", async () => {
     await loadProspects(studio, [row(1, { phone: "+65 6123 4567", instagram: "@brand.one", decisionMaker: "A Person", dmTitle: "Founder", linkedin: "www.linkedin.com/in/a-person", bestRoute: "WhatsApp" }), row(2, { instagram: "javascript:alert(1)", linkedin: "https://evil.example/in/x" })]);
     expect((await json(await get("/api/outreach/prospects/00001"))).contact).toEqual({

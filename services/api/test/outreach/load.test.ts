@@ -50,6 +50,18 @@ describe("the load of the list", () => {
     expect(file).toMatchObject({ ads: [{ n: 1 }], events: [{ type: "note" }, { type: "kind" }] });
   });
 
+  it("parses a noted second route from its label", async () => {
+    const label = "WhatsApp +6580000001 (verified business)";
+    await loadRows(store, [row(7, { secondRoute: label })], now);
+    expect((await store.get("00007")).second).toEqual({
+      channel: "whatsapp",
+      to: "6580000001",
+      direct: false,
+      label,
+      note: "verified business",
+    });
+  });
+
   it("leaves an opt-out in place", async () => {
     await loadRows(store, [row(1)], now);
     await store.addEvent("00001", { type: "optout" }, "owner");
