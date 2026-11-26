@@ -383,8 +383,11 @@ class Repairs(unittest.TestCase):
                 return cut(path, options, box)
 
             job.cut = record_cut
-            job.plan()
+            path = job.plan()
+            with open(path) as file:
+                planned = json.load(file)["products"]
         self.assertEqual(calls, cutouts)
+        self.assertNotEqual(planned[0]["alpha"], planned[1]["alpha"])
 
     def test_a_plan_of_real_photos_needs_no_pack_and_keeps_their_pixels(self):
         slice_ = np.full((300, 300, 3), 255, np.uint8)
