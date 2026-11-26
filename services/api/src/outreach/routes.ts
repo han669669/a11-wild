@@ -4,7 +4,7 @@ import { address, numbers } from "./load.js";
 
 const EMAIL_IN_NOTE = new RegExp(EMAIL_IN_TEXT.source, EMAIL_IN_TEXT.flags.replace("g", ""));
 const PHONE_IN_NOTE = /\+?\d[\d().\s-]{5,}\d/;
-const PHONE_CANDIDATE = /\+?\d(?:[\d\s-]*|\(\d+\))*\d/g;
+const PHONE_CANDIDATE = /\+?\d(?:[\d\s-]|\(\d+\))*(?:\d|\(\d+\))/g;
 const PHONE_ROUTE_LABEL = /^(DM phone|Phone|WhatsApp)\s+(.+)$/i;
 
 export const trailingBracketGroup = (value: string): { prefix: string; content: string } | undefined => {
@@ -95,7 +95,12 @@ export function labelShowsClosed(label: string | undefined, closed: ReadonlySet<
     if (closed.has(`W#${numberKey(parsed)}`)) return true;
   }
   const bracket = trailingBracketGroup(text);
-  const segments = bracket ? [bracket.prefix, bracket.content] : [text];
+  const segments =
+    bracket && /\p{L}/u.test(bracket.content)
+      ? [bracket.prefix, bracket.content]
+      : bracket
+        ? [text, bracket.prefix, bracket.content]
+        : [text];
   return segments.some((segment) => candidateKeysFrom(segment).some((key) => closed.has(key)));
 }
 
