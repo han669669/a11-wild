@@ -100,6 +100,25 @@ describe("the outreach store", () => {
     expect(stageOf({ profile: second, ads: [], sends: [], events: [] }, optOuts)).toBe("opted_out");
   });
 
+  it("matches each number in an or-separated route label", async () => {
+    await loadRows(store, [
+      row(1, { whatsapp: undefined, phone: "+65 8000 0002" }),
+      row(2, {
+        whatsapp: undefined,
+        phone: undefined,
+        dmPhone: undefined,
+        secondRoute: "WhatsApp +6580000001 or +6580000002",
+      }),
+    ], now);
+    const holder = await store.get("00001");
+    const label = await store.get("00002");
+
+    await store.addEvent(holder.id, { type: "optout" }, "owner");
+    await store.addOptOut(await store.get(holder.id));
+
+    expect(stageOf({ profile: label, ads: [], sends: [], events: [] }, await store.optOuts())).toBe("opted_out");
+  });
+
   it("keeps parenthesised phone routes distinct when one opts out", async () => {
     await loadRows(store, [
       row(1, { whatsapp: undefined, secondRoute: "WhatsApp +65 (8123) 4567 (verified business)" }),

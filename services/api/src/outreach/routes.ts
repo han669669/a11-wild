@@ -52,11 +52,15 @@ export function phoneRouteNumbers(value: string | undefined): string[] {
   if (!phone) return [];
   const bracket = trailingBracketGroup(phone[2]!);
   const prefix = bracket && /\p{L}/u.test(bracket.content) ? bracket.prefix : phone[2]!;
-  try {
-    return numbers(prefix);
-  } catch {
-    return [];
+  const found = new Set<string>();
+  for (const piece of prefix.split(/\s+or\s+|[;,/]/i)) {
+    try {
+      numbers(piece).forEach((number) => found.add(number));
+    } catch {
+      continue;
+    }
   }
+  return [...found];
 }
 
 const numberFrom = (value: string): string | undefined => {
