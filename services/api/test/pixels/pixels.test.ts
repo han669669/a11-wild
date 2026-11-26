@@ -174,6 +174,33 @@ describe("skeleton_make", () => {
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, box: leftBox, cutout: { darkMax: 60 }, pack: 1 });
   });
 
+  it("does not count food photos when numbering packs in a mixed plan", async () => {
+    await start(undefined, fakeNet({ [PACK_TWO_URL]: { body: PNG, headers: { "content-type": "image/png" } } }));
+    const packTwo = await appendPackTwo();
+    const jarBox = [30, 40, 330, 440];
+    const boxBox = [50, 60, 350, 460];
+    const made = await skeleton("idea-1", {
+      plan: {
+        bg: "E83C28",
+        products: [
+          { cx: 0.2, base: 0.9, height: 0.35, photo: "food-1" },
+          { cx: 0.5, base: 0.9, height: 0.45, photo: "pack-1", box: jarBox, cutout: { darkMax: 35 } },
+          { cx: 0.8, base: 0.9, height: 0.5, photo: "pack-2", box: boxBox, cutout: { darkMax: 65 } },
+        ],
+      },
+    });
+    const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
+    const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
+
+    await run("pack_check", { imageId, at: [350, 900], bg: "E83C28", pack: 1, photo: "pack-1" });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box: jarBox, cutout: { darkMax: 35 }, pack: 1 });
+    await run("pack_check", { imageId, at: [700, 900], bg: "E83C28", pack: 2, photo: "pack-2" });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, box: boxBox, cutout: { darkMax: 65 }, pack: 2 });
+    expect(await run("pack_check", { imageId, at: [900, 900], bg: "E83C28", pack: 3 })).toEqual(
+      refused(/This picture's plan has no pack 3\./),
+    );
+  });
+
   it("uses skeleton-wide pack settings for a numbered item with no photo key", async () => {
     await start(undefined, fakeNet({ [PACK_TWO_URL]: { body: PNG, headers: { "content-type": "image/png" } } }));
     await appendPackTwo();

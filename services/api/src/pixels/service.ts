@@ -196,12 +196,13 @@ export class PixelService {
       const product = await brands.product((await batches.get(batchId)).productId);
       const plan = input.plan as { products?: { cx: number; photoKey?: string; cutout?: Record<string, unknown>; box?: number[] }[] } | undefined;
       const items = plan?.products ?? [];
-      const itemsFromLeft = items
+      const packPhotos = product.photos.filter((entry) => entry.kind === "pack");
+      const packItemsFromLeft = items
         .map((entry, index) => ({ entry, index }))
+        .filter(({ entry }) => !entry.photoKey || packPhotos.some((photo) => photo.key === entry.photoKey))
         .sort((one, two) => one.entry.cx - two.entry.cx || one.index - two.index)
         .map(({ entry }) => entry);
       const usesDefault = !plan || items.some((entry) => !entry.photoKey);
-      const packPhotos = product.photos.filter((entry) => entry.kind === "pack");
       const packNameForKey = (key: string) => {
         const index = packPhotos.findIndex((entry) => entry.key === key);
         return index >= 0 ? `pack-${index + 1}` : undefined;
@@ -216,7 +217,7 @@ export class PixelService {
       const defaultPhoto = savedDefault ?? (defaultName ? photoNamed(product, defaultName) : undefined);
 
       if (plan && packNumber !== undefined) {
-        const item = itemsFromLeft[packNumber - 1];
+        const item = packItemsFromLeft[packNumber - 1];
         if (!item) throw new Refusal(`This picture's plan has no pack ${packNumber}.`);
         if (item.photoKey) {
           const itemPhoto = product.photos.find((entry) => entry.key === item.photoKey);
