@@ -31,6 +31,25 @@ const numberFrom = (value: string): string | undefined => {
   }
 };
 
+export function labelNumbers(label: string | undefined): string[] {
+  if (!label) return [];
+  const texts = [label];
+  const bracketContents: string[] = [];
+  let withoutBrackets = label;
+  while (true) {
+    for (const match of withoutBrackets.matchAll(/\(([^()]*)\)/g)) bracketContents.push(match[1]!);
+    const next = withoutBrackets.replace(/\([^()]*\)/g, " ");
+    if (next === withoutBrackets) break;
+    withoutBrackets = next;
+  }
+  texts.push(withoutBrackets, ...bracketContents);
+  const found = new Set<string>();
+  for (const text of texts) {
+    for (const match of text.matchAll(/\+?\d[\d().\s-]{5,}\d/g)) found.add(match[0]);
+  }
+  return [...found];
+}
+
 /** Parses the list's best-route label. A value that is not understood is not a route. */
 export function routeOf(value: string | undefined): ProspectRoute | undefined {
   const label = value?.trim();

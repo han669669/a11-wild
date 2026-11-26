@@ -81,6 +81,18 @@ describe("the outreach store", () => {
     expect(stageOf((await store.all())[1]!, optOuts)).toBe("opted_out");
   });
 
+  it("registers numbers inside ambiguous route labels for opt-outs", async () => {
+    const label = "WhatsApp +6580000001 (9-5)";
+    await loadRows(store, [row(1, { secondRoute: label })], now);
+    const profile = await store.get("00001");
+    expect(profile.second).toBeUndefined();
+    expect(contactKeys(profile)).toContain("W#6580000001");
+
+    await store.addEvent(profile.id, { type: "optout" }, "owner");
+    await store.addOptOut(await store.get(profile.id));
+    expect(await store.optOuts()).toContain("W#6580000001");
+  });
+
   it("removes a test prospect with all its items, and refuses for a prospect of the list", async () => {
     await loadRows(store, [row(1)], now);
     await store.addEvent("00001", { type: "note", text: "kept" }, "owner");

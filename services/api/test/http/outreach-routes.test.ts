@@ -338,6 +338,15 @@ describe("the owner's day", () => {
     expect(JSON.stringify(page)).not.toMatch(/Amelia Lee|6580000001|new@example\.com|old@example\.com|hidden@example\.com|Previous Person/);
   });
 
+  it("omits a second route label when a number in its brackets is opted out", async () => {
+    const label = "WhatsApp +6580000001 (9-5)";
+    await ready([row(1, { whatsapp: "+65 8000 0001" }), row(2, { secondRoute: label })]);
+    await outreach().sequence.optOut("00001");
+
+    const page = await json(await get("/api/outreach/prospects/00002"));
+    expect(page.contact).not.toHaveProperty("secondRoute");
+  });
+
   it("does not expose a test prospect's contact when its number belongs to an opted-out brand", async () => {
     await loadProspects(studio, [row(1, { whatsapp: "+65 8000 0001" })]);
     await outreach().sequence.optOut("00001");
