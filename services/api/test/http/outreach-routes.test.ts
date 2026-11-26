@@ -347,6 +347,15 @@ describe("the owner's day", () => {
     expect(page.contact).not.toHaveProperty("secondRoute");
   });
 
+  it("hides a no-plus country-code route after its number is opted out", async () => {
+    const label = "WhatsApp 6580000001 (9-5)";
+    await ready([row(1, { whatsapp: "+65 8000 0001" }), row(2, { secondRoute: label })]);
+    await outreach().sequence.optOut("00001");
+
+    const page = await json(await get("/api/outreach/prospects/00002"));
+    expect(page.contact).not.toHaveProperty("secondRoute");
+  });
+
   it("omits a second route when its only closed number is inside the brackets", async () => {
     const label = "WhatsApp +6580000002 (+6580000001)";
     await ready([row(1, { whatsapp: "+65 8000 0001" }), row(2, { secondRoute: label })]);

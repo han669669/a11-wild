@@ -53,9 +53,9 @@ export function labelNumbers(label: string | undefined): string[] {
 export function labelContactNumbers(label: string | undefined): string[] {
   return labelNumbers(label).filter((candidate) => {
     const digits = candidate.replace(/\D/g, "");
-    const international = candidate.startsWith("+") && digits.length >= 10 && digits.length <= 15;
+    const countryCode = digits.length >= 10 && digits.length <= 15 && (candidate.startsWith("+") || !candidate.includes("+"));
     const local = !candidate.includes("+") && /^[689]\d{7}$/.test(digits);
-    return international || local;
+    return countryCode || local;
   });
 }
 
