@@ -4,7 +4,7 @@ import type { IdeaFinal } from "../board/service.js";
 import { Refusal } from "../mcp/registry.js";
 import { noteText } from "./candidates.js";
 import type { SpendLedger } from "../spend/ledger.js";
-import { labelNumbers } from "./routes.js";
+import { labelShowsClosed } from "./routes.js";
 import { chosen, sameContact } from "./sequence.js";
 import { adWaits, candidatesWait, kindOf, optedOut, owedNow, stageOf, standingAd, TAKES_NO_AD, wantsAd } from "./stage.js";
 import { contactKeys, type OutreachStore } from "./store.js";
@@ -243,14 +243,7 @@ export class OutreachDesk {
       const openEmail = (address: string | undefined): boolean => Boolean(address && !closed.has(`E#${address.toLowerCase()}`));
       const openRouteLabel = (value: string | undefined): boolean => {
         const emails = value?.match(/[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}/gi) ?? [];
-        const numbers = labelNumbers(value);
-        return (
-          emails.every(openEmail) &&
-          numbers.every((number) => {
-            const digits = digitsOf(number);
-            return Boolean(digits && !closed.has(`W#${digits.length === 8 ? `65${digits}` : digits}`));
-          })
-        );
+        return emails.every(openEmail) && !labelShowsClosed(value, closed);
       };
       const routeOpen = (route: ProspectRoute | undefined): boolean => {
         if (!route) return false;

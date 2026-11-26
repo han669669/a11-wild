@@ -11,7 +11,7 @@ import { filtered, filterOf, numbersOf } from "../outreach/numbers.js";
 import { DAILY, nextStep, sameContact } from "../outreach/sequence.js";
 import { approvedAd, owedAnswer, optedOut, routeCheckUnresolved, sendTarget, sendTargetUnavailable, sellsOf, stageOf } from "../outreach/stage.js";
 import { adView, rowOf, todayPage } from "../outreach/today.js";
-import { labelNumbers, routeOf } from "../outreach/routes.js";
+import { labelShowsClosed, routeOf } from "../outreach/routes.js";
 import { contactKeys } from "../outreach/store.js";
 import { requireOwner, type SessionEnv } from "./guards.js";
 
@@ -94,8 +94,7 @@ export function outreachRoutes(
     const openRouteLabel = (value: string | undefined) => {
       const route = routeOf(value);
       const emails = value?.match(/[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}/gi) ?? [];
-      const numbers = labelNumbers(value);
-      return (!route || routeOpen(route, closed)) && emails.every(openEmail) && numbers.every(openNumber);
+      return (!route || routeOpen(route, closed)) && emails.every(openEmail) && !labelShowsClosed(value, closed);
     };
     const openRouteObject = (route: ProspectRoute | undefined) =>
       Boolean(route && routeOpen(route, closed) && openRouteLabel(route.label));

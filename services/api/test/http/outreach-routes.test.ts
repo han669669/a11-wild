@@ -368,8 +368,8 @@ describe("the owner's day", () => {
     expect(page.contact).not.toHaveProperty("secondRoute");
   });
 
-  it("closes a route whose nested note contains an opted-out number", async () => {
-    const label = "WhatsApp +6580000002 (backup +65 (8000) 0001)";
+  it("uses numbers before nested numeric notes as opt-out keys", async () => {
+    const label = "WhatsApp +6580000002 (backup +6580000001 (12))";
     await ready([row(1, { whatsapp: "+65 8000 0001" }), row(2, { secondRoute: label })]);
     expect(await outreach().store.get("00002")).toMatchObject({ second: { channel: "whatsapp", to: "6580000002" } });
     await outreach().sequence.optOut("00001");
@@ -381,6 +381,21 @@ describe("the owner's day", () => {
 
     const contacts = await outreach().desk.contacts({ prospectId: "00002", after: 0, limit: 1 });
     expect(contacts.prospects[0]).toMatchObject({ stage: "opted_out" });
+    expect(contacts.prospects[0]).not.toHaveProperty("secondRoute");
+    expect(contacts.prospects[0]).not.toHaveProperty("second");
+  });
+
+  it("hides a nested parenthesised number in display without needing to key it", async () => {
+    const label = "WhatsApp +6580000002 (backup +65 (8000) 0001)";
+    await ready([row(1, { whatsapp: "+65 8000 0001" }), row(2, { secondRoute: label })]);
+    await outreach().sequence.optOut("00001");
+
+    const page = await json(await get("/api/outreach/prospects/00002"));
+    expect(page.prospect.stage).not.toBe("opted_out");
+    expect(page.contact).not.toHaveProperty("secondRoute");
+    expect(page.contact).not.toHaveProperty("others.second");
+
+    const contacts = await outreach().desk.contacts({ prospectId: "00002", after: 0, limit: 1 });
     expect(contacts.prospects[0]).not.toHaveProperty("secondRoute");
     expect(contacts.prospects[0]).not.toHaveProperty("second");
   });

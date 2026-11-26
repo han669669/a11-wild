@@ -31,7 +31,26 @@ const numberFrom = (value: string): string | undefined => {
   }
 };
 
-const labelNumberCandidates = (label: string | undefined, includeLabel: boolean): string[] => {
+const withoutBracketGroups = (value: string): string => {
+  let withoutBrackets = value;
+  while (true) {
+    const next = withoutBrackets.replace(/\([^()]*\)/g, " ");
+    if (next === withoutBrackets) return withoutBrackets;
+    withoutBrackets = next;
+  }
+};
+
+export function labelShowsClosed(label: string | undefined, closed: ReadonlySet<string>): boolean {
+  const digits = label?.replace(/\D/g, "") ?? "";
+  for (const key of closed) {
+    if (!key.startsWith("W#")) continue;
+    const number = key.slice(2);
+    if (number && (digits.includes(number) || (/^65\d{8}$/.test(number) && digits.includes(number.slice(2))))) return true;
+  }
+  return false;
+}
+
+export function labelContactNumbers(label: string | undefined): string[] {
   if (!label) return [];
   const bracketContents: string[] = [];
   const openings: number[] = [];
@@ -39,29 +58,15 @@ const labelNumberCandidates = (label: string | undefined, includeLabel: boolean)
     if (label[i] === "(") openings.push(i);
     else if (label[i] === ")" && openings.length > 0) {
       const opening = openings.pop()!;
-      bracketContents.push(label.slice(opening + 1, i).replace(/[()]/g, " "));
+      bracketContents.push(withoutBracketGroups(label.slice(opening + 1, i)));
     }
   }
-  let withoutBrackets = label;
-  while (true) {
-    const next = withoutBrackets.replace(/\([^()]*\)/g, " ");
-    if (next === withoutBrackets) break;
-    withoutBrackets = next;
-  }
-  const texts = includeLabel ? [label, label.replace(/[()]/g, " "), withoutBrackets, ...bracketContents] : [withoutBrackets, ...bracketContents];
+  const texts = [withoutBracketGroups(label), ...bracketContents];
   const found = new Set<string>();
   for (const text of texts) {
     for (const match of text.matchAll(/\+?\d[\d().\s-]{5,}\d/g)) found.add(match[0]);
   }
-  return [...found];
-}
-
-export function labelNumbers(label: string | undefined): string[] {
-  return labelNumberCandidates(label, true);
-}
-
-export function labelContactNumbers(label: string | undefined): string[] {
-  return labelNumberCandidates(label, false).filter((candidate) => {
+  return [...found].filter((candidate) => {
     const digits = candidate.replace(/\D/g, "");
     const countryCode = digits.length >= 10 && digits.length <= 15 && (candidate.startsWith("+") || !candidate.includes("+"));
     const local = !candidate.includes("+") && /^[689]\d{7}$/.test(digits);

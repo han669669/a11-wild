@@ -93,6 +93,13 @@ describe("the outreach store", () => {
     expect(await store.optOuts()).toContain("W#6580000001");
   });
 
+  it("registers numbers before nested numeric notes in route labels", async () => {
+    const label = "WhatsApp +6580000002 (backup +6580000001 (12))";
+    await loadRows(store, [row(1, { whatsapp: undefined, secondRoute: label })], now);
+    const profile = await store.get("00001");
+    expect(contactKeys(profile)).toContain("W#6580000001");
+  });
+
   it("registers country-code numbers without a plus from route labels", async () => {
     const label = "WhatsApp 6580000001 (9-5)";
     await loadRows(store, [row(1, { whatsapp: undefined, secondRoute: label })], now);
