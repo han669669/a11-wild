@@ -31,14 +31,6 @@ const numberFrom = (value: string): string | undefined => {
   }
 };
 
-const completeNumber = (value: string): string | undefined => {
-  const text = value.trim();
-  const digits = text.replace(/\D/g, "");
-  const international = text.startsWith("+") && digits.length >= 10 && digits.length <= 15;
-  const local = !text.includes("+") && /^[3689]\d{7}$/.test(digits);
-  return international || local ? numberFrom(text) : undefined;
-};
-
 /** Parses the list's best-route label. A value that is not understood is not a route. */
 export function routeOf(value: string | undefined): ProspectRoute | undefined {
   const label = value?.trim();
@@ -46,10 +38,33 @@ export function routeOf(value: string | undefined): ProspectRoute | undefined {
   const phone = label.match(/^(DM phone|Phone|WhatsApp)\s+(.+)$/i);
   if (phone) {
     try {
+      // A bracket with letters is a note; a bracket of digits is kept only when the number can't be read two ways.
       const bracket = trailingBracketGroup(phone[2]!);
-      const annotatedNumber = bracket ? completeNumber(bracket.prefix) : undefined;
-      const numberText = annotatedNumber ? bracket!.prefix : phone[2]!;
-      const noteText = annotatedNumber ? bracket!.content : undefined;
+      let to: string | undefined;
+      let noteText: string | undefined;
+      if (bracket && /\p{L}/u.test(bracket.content)) {
+        to = numberFrom(bracket.prefix);
+        noteText = bracket.content;
+      } else {
+        const prefix = bracket?.prefix.trim();
+        const prefixDigits = prefix?.replace(/\D/g, "") ?? "";
+        const prefixNumber = prefix ? numberFrom(prefix) : undefined;
+        const prefixComplete = Boolean(
+          prefixNumber &&
+            (prefix!.startsWith("+")
+              ? prefixDigits.length >= 10 && prefixDigits.length <= 15
+              : !prefix!.includes("+") &&
+                (/^[3689]\d{7}$/.test(prefixDigits) || (prefixDigits.length >= 10 && prefixDigits.length <= 15))),
+        );
+        const whole = numberFrom(phone[2]!);
+        if (prefixComplete) {
+          if (whole && whole !== prefixNumber) return undefined;
+          if (!whole && bracket && numberFrom(bracket.content)) return undefined;
+          to = whole ?? prefixNumber;
+        } else {
+          to = whole;
+        }
+      }
       const note =
         noteText &&
         Array.from(noteText).length <= 40 &&
@@ -58,7 +73,6 @@ export function routeOf(value: string | undefined): ProspectRoute | undefined {
         !EMAIL_IN_NOTE.test(noteText)
           ? noteText
           : undefined;
-      const to = annotatedNumber ?? numbers(numberText)[0];
       if (!to) return undefined;
       const direct = phone[1]!.toLowerCase() === "dm phone";
       const mobile = /^65[89]\d{7}$/.test(to);

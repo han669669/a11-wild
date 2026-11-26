@@ -63,12 +63,35 @@ describe("the list's ways to reach a brand", () => {
     });
   });
 
-  it("strips annotations only after a complete international or local number", () => {
-    for (const annotation of ["9-5", "24/7"]) {
-      const label = `WhatsApp +6580000001 (${annotation})`;
-      expect(routeOf(label)).toMatchObject({ channel: "whatsapp", to: "6580000001", label });
-      expect(routeOf(label)).not.toHaveProperty("note");
-    }
+  it("treats bracket content with letters as an annotation", () => {
+    const noCountryCode = "WhatsApp 6580000001 (front desk)";
+    expect(routeOf(noCountryCode)).toEqual({
+      channel: "whatsapp",
+      to: "6580000001",
+      direct: false,
+      label: noCountryCode,
+      note: "front desk",
+    });
+
+    const twoNumbers = "WhatsApp +6580000001; +6580000002 (front desk)";
+    expect(routeOf(twoNumbers)).toEqual({
+      channel: "whatsapp",
+      to: "6580000001",
+      direct: false,
+      label: twoNumbers,
+      note: "front desk",
+    });
+  });
+
+  it("keeps digit-only brackets only when they cannot change the number", () => {
+    expect(routeOf("WhatsApp +6580000001 (9-5)")).toBeUndefined();
+
+    const hours = "WhatsApp +6580000001 (24/7)";
+    expect(routeOf(hours)).toMatchObject({ channel: "whatsapp", to: "6580000001", label: hours });
+    expect(routeOf(hours)).not.toHaveProperty("note");
+
+    expect(routeOf("Phone +49 30 123456 (78)")).toBeUndefined();
+    expect(routeOf("WhatsApp +6561234567 (+6580000003)")).toBeUndefined();
 
     const label = "WhatsApp 8000 0001 (front desk)";
     expect(routeOf(label)).toEqual({
@@ -81,7 +104,7 @@ describe("the list's ways to reach a brand", () => {
   });
 
   it("drops phone numbers and email addresses from notes without losing the route", () => {
-    const withPhone = "WhatsApp +6580000001 (+6580000003)";
+    const withPhone = "WhatsApp +6580000001 (direct phone +6580000003)";
     expect(routeOf(withPhone)).toMatchObject({ channel: "whatsapp", to: "6580000001", label: withPhone });
     expect(routeOf(withPhone)).not.toHaveProperty("note");
 
