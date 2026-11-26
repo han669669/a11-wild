@@ -401,6 +401,31 @@ describe("brand tools", () => {
     expect([...studio.pictures.files.keys()].sort()).toEqual([...filesBefore].sort());
   });
 
+  it("keeps copied photos when an append fails with an unknown error", async () => {
+    const brand = await savedBrand();
+    const extract = await callTool(studio, "product_extract", { brandId: brand.id, url: PRODUCT_PAGE });
+    const saved = await callTool(studio, "product_save", {
+      brandId: brand.id,
+      extractId: extract.value.extractId,
+      name: "Seaweed crisps",
+      photos: [{ url: PACK, kind: "pack" }],
+    });
+    const filesBefore = new Set(studio.pictures.files.keys());
+    const remove = vi.spyOn(studio.pictures, "remove");
+    vi.spyOn(studio.services.brands, "appendProductPhotos").mockRejectedValue(new Error("Unknown append outcome."));
+
+    await expect(callTool(studio, "product_photos_add", {
+      productId: saved.value.product.id,
+      extractId: extract.value.extractId,
+      photos: [{ url: EXTRA_ONE, kind: "food" }],
+    })).rejects.toThrow();
+
+    expect(remove).not.toHaveBeenCalled();
+    expect([...studio.pictures.files.keys()].filter((key) => !filesBefore.has(key))).toEqual([
+      expect.stringMatching(new RegExp(`^products/${saved.value.product.id}/`)),
+    ]);
+  });
+
   it("does not lose either photo when two additions arrive together", async () => {
     const brand = await savedBrand();
     const extract = await callTool(studio, "product_extract", { brandId: brand.id, url: PRODUCT_PAGE });

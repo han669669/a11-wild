@@ -248,7 +248,9 @@ export function brandTools({ brands, parallel, pictures, net }: BrandToolDeps): 
         try {
           return { product: await brands.appendProductPhotos(productId, stored) };
         } catch (error) {
-          await Promise.allSettled(stored.map((photo) => pictures.remove(photo.key)));
+          if (error instanceof Refusal) {
+            await Promise.allSettled(stored.map((photo) => pictures.remove(photo.key)));
+          }
           throw error;
         }
       },
