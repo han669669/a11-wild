@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { OutreachAd, OutreachEvent, OutreachEventBody, OutreachSend, OutreachStep, Prospect, ProspectFile } from "@a11-wild/shared";
 import { Refusal } from "../mcp/registry.js";
 import { type Item, record, type Table } from "../store/table.js";
-import { labelShowsClosed } from "./routes.js";
+import { phoneRouteNumbers } from "./routes.js";
 
 /**
  * Every outreach item sits in one partition, in order by prospect: the profile, then its ads, then its events, then its sends.
@@ -36,9 +36,8 @@ export const contactKeys = (profile: Prospect, sends: readonly Pick<OutreachSend
   const email = (value: string | undefined) => {
     if (value) keys.add(`E#${value.toLowerCase()}`);
   };
-  const label = (value: string | undefined) => {
-    const digits = value?.replace(/\D/g, "") ?? "";
-    if (digits.length >= 8) keys.add(`L#${digits}`);
+  const routeLabel = (value: string | undefined) => {
+    for (const candidate of phoneRouteNumbers(value)) number(candidate);
   };
   const route = (value: Prospect["route"]) => {
     if (!value?.to.trim()) return;
@@ -53,29 +52,14 @@ export const contactKeys = (profile: Prospect, sends: readonly Pick<OutreachSend
   email(profile.dmEmail);
   route(profile.route);
   route(profile.second);
-  label(profile.bestRoute);
-  label(profile.secondRoute);
+  routeLabel(profile.bestRoute);
+  routeLabel(profile.secondRoute);
   for (const send of sends) {
     if (send.channel === "email") email(send.to);
     else number(send.to);
   }
   return [...keys];
 };
-
-export function inRegister(profile: Prospect, optOuts: ReadonlySet<string>): boolean {
-  const keys = contactKeys(profile);
-  if (keys.some((key) => optOuts.has(key))) return true;
-  const labelDigits = [...optOuts].filter((key) => key.startsWith("L#")).map((key) => key.slice(2));
-  const phoneDigits = keys.filter((key) => key.startsWith("W#")).map((key) => key.slice(2));
-  if (
-    phoneDigits.some((digits) =>
-      labelDigits.some((label) => label.includes(digits) || (/^65\d{8}$/.test(digits) && label.includes(digits.slice(2)))),
-    )
-  ) {
-    return true;
-  }
-  return labelShowsClosed(profile.bestRoute, optOuts) || labelShowsClosed(profile.secondRoute, optOuts);
-}
 
 /** One ad at most for each "more" reply, and two tries at a first ad: the store keeps no more than this for a prospect. */
 const ADS_MAX = 20;

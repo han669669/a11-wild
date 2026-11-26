@@ -338,18 +338,8 @@ describe("the owner's day", () => {
     expect(JSON.stringify(page)).not.toMatch(/Amelia Lee|6580000001|new@example\.com|old@example\.com|hidden@example\.com|Previous Person/);
   });
 
-  it("omits a second route label when a number in its brackets is opted out", async () => {
-    const label = "WhatsApp +6580000001 (9-5)";
-    await ready([row(1, { whatsapp: "+65 8000 0001" }), row(2, { secondRoute: label })]);
-    await outreach().sequence.optOut("00001");
-
-    const page = await json(await get("/api/outreach/prospects/00002"));
-    expect(page.prospect).toMatchObject({ stage: "opted_out" });
-    expect(page.contact).not.toHaveProperty("secondRoute");
-  });
-
   it("hides a no-plus country-code route after its number is opted out", async () => {
-    const label = "WhatsApp 6580000001 (9-5)";
+    const label = "WhatsApp 6580000001 (verified business)";
     await ready([row(1, { whatsapp: "+65 8000 0001" }), row(2, { secondRoute: label })]);
     await outreach().sequence.optOut("00001");
 
@@ -360,52 +350,24 @@ describe("the owner's day", () => {
 
   it("omits a second route when its only closed number is inside the brackets", async () => {
     const label = "WhatsApp +6580000002 (+6580000001)";
-    await ready([row(1, { whatsapp: "+65 8000 0001" }), row(2, { secondRoute: label })]);
+    await ready([row(1, { whatsapp: "+65 8000 0001" }), row(2, { secondRoute: "WhatsApp +6580000002" })]);
+    const profile = await outreach().store.get("00002");
+    await outreach().store.saveProfile({
+      ...profile,
+      secondRoute: label,
+      second: { ...profile.second!, label },
+    });
     await outreach().sequence.optOut("00001");
 
     const page = await json(await get("/api/outreach/prospects/00002"));
-    expect(page.prospect).toMatchObject({ stage: "opted_out" });
+    expect(page.prospect.stage).not.toBe("opted_out");
     expect(page.contact).not.toHaveProperty("secondRoute");
+    expect(page.contact.others).not.toHaveProperty("second");
 
     const contacts = await outreach().desk.contacts({ prospectId: "00002", after: 0, limit: 1 });
-    expect(contacts.prospects[0]).toMatchObject({ stage: "opted_out" });
+    expect(contacts.prospects[0]!.stage).not.toBe("opted_out");
     expect(contacts.prospects[0]).not.toHaveProperty("secondRoute");
     expect(contacts.prospects[0]).not.toHaveProperty("second");
-  });
-
-  it("uses numbers before nested numeric notes as opt-out keys", async () => {
-    const label = "WhatsApp +6580000002 (backup +6580000001 (12))";
-    await ready([row(1, { whatsapp: "+65 8000 0001" }), row(2, { secondRoute: label })]);
-    expect(await outreach().store.get("00002")).toMatchObject({ second: { channel: "whatsapp", to: "6580000002" } });
-    await outreach().sequence.optOut("00001");
-
-    const page = await json(await get("/api/outreach/prospects/00002"));
-    expect(page.prospect).toMatchObject({ stage: "opted_out" });
-    expect(page.contact).not.toHaveProperty("secondRoute");
-    expect(page.contact).not.toHaveProperty("others.second");
-
-    const contacts = await outreach().desk.contacts({ prospectId: "00002", after: 0, limit: 1 });
-    expect(contacts.prospects[0]).toMatchObject({ stage: "opted_out" });
-    expect(contacts.prospects[0]).not.toHaveProperty("secondRoute");
-    expect(contacts.prospects[0]).not.toHaveProperty("second");
-  });
-
-  it("opts out a prospect holding a backup number written with brackets", async () => {
-    const label = "WhatsApp +6580000002 (backup +65 (8000) 0001)";
-    await ready([
-      row(1, { whatsapp: undefined, secondRoute: label }),
-      row(2, { whatsapp: undefined, phone: "+65 (8000) 0001" }),
-    ]);
-    await outreach().sequence.optOut("00001");
-
-    const page = await json(await get("/api/outreach/prospects/00002"));
-    expect(page.prospect).toMatchObject({ stage: "opted_out" });
-    expect(page.contact).toEqual({ whatsapp: [] });
-    expect(JSON.stringify(page)).not.toContain("6580000001");
-
-    const contacts = await outreach().desk.contacts({ prospectId: "00002", after: 0, limit: 1 });
-    expect(contacts.prospects[0]).toMatchObject({ stage: "opted_out" });
-    expect(contacts.prospects[0]).not.toHaveProperty("phone");
   });
 
   it("does not expose a structured route whose label contains an opted-out number", async () => {

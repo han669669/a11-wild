@@ -81,87 +81,23 @@ describe("the outreach store", () => {
     expect(stageOf((await store.all())[1]!, optOuts)).toBe("opted_out");
   });
 
-  it("registers the digit stream of an ambiguous route label for opt-outs", async () => {
-    const label = "WhatsApp +6580000001 (9-5)";
-    await loadRows(store, [row(1, { whatsapp: undefined, secondRoute: label })], now);
-    const profile = await store.get("00001");
-    expect(profile.second).toBeUndefined();
-    expect(contactKeys(profile)).toContain("L#658000000195");
-
-    await store.addEvent(profile.id, { type: "optout" }, "owner");
-    await store.addOptOut(await store.get(profile.id));
-    expect(await store.optOuts()).toContain("L#658000000195");
-  });
-
-  it("registers all label digits without parsing nested numeric notes", async () => {
-    const label = "WhatsApp +6580000002 (backup +6580000001 (12))";
-    await loadRows(store, [row(1, { whatsapp: undefined, secondRoute: label })], now);
-    const profile = await store.get("00001");
-    expect(contactKeys(profile)).toContain("L#6580000002658000000112");
-  });
-
-  it("registers the digit stream of backup numbers written with digit-only brackets", async () => {
-    const label = "WhatsApp +6580000002 (backup +65 (8000) 0001)";
-    await loadRows(store, [row(1, { whatsapp: undefined, secondRoute: label })], now);
-    const profile = await store.get("00001");
-    expect(contactKeys(profile)).toContain("W#6580000002");
-    expect(contactKeys(profile)).toContain("L#65800000026580000001");
-  });
-
-  it("registers the digit stream of route labels with multiple segments", async () => {
-    const label = "+6580000002; +65 (8000) 0001 (backup)";
-    await loadRows(store, [row(1, { whatsapp: undefined, secondRoute: label })], now);
-    const profile = await store.get("00001");
-    expect(contactKeys(profile)).toContain("L#65800000026580000001");
-  });
-
-  it("registers country-code digits without parsing a route label", async () => {
-    const label = "WhatsApp 6580000001 (9-5)";
-    await loadRows(store, [row(1, { whatsapp: undefined, secondRoute: label })], now);
-    const profile = await store.get("00001");
-    expect(profile.second).toBeUndefined();
-    expect(contactKeys(profile)).toContain("L#658000000195");
-
-    await store.addEvent(profile.id, { type: "optout" }, "owner");
-    await store.addOptOut(await store.get(profile.id));
-    expect(await store.optOuts()).toContain("L#658000000195");
-  });
-
-  it.each([
-    {
-      label: "WhatsApp +6580000002 (backup +65 (8000) 0001 (9-5))",
-      number: "+6580000001",
-      optedOut: true,
-    },
-    {
-      label: "WhatsApp +6580000002 (backup (+6580000001))",
-      number: "+6580000001",
-      optedOut: true,
-    },
-    {
-      label: "WhatsApp +6580000002 (backup 8000 0001 (9-5; weekdays))",
-      number: "8000 0001",
-      optedOut: true,
-    },
-    {
-      label: "Phone 6561 2345 (9-5)",
-      number: "+6580000003",
-      optedOut: false,
-    },
-  ])("matches opt-outs against number substrings in route labels: $label", async ({ label, number, optedOut }) => {
+  it("registers every exact number from a valid phone route list", async () => {
     await loadRows(store, [
-      row(1, { whatsapp: undefined, secondRoute: label }),
-      row(2, { whatsapp: undefined, phone: number }),
+      row(1, { whatsapp: undefined, secondRoute: "WhatsApp +6580000001; +6580000002" }),
+      row(2, { whatsapp: undefined, phone: "+65 8000 0002" }),
     ], now);
     const first = await store.get("00001");
     const second = await store.get("00002");
-    expect(contactKeys(first)).toContain(`L#${label.replace(/\D/g, "")}`);
+    expect(contactKeys(first)).toContain("W#6580000001");
+    expect(contactKeys(first)).toContain("W#6580000002");
 
     await store.addEvent(first.id, { type: "optout" }, "owner");
     await store.addOptOut(await store.get(first.id));
 
-    const stage = stageOf({ profile: second, ads: [], sends: [], events: [] }, await store.optOuts());
-    expect(stage === "opted_out").toBe(optedOut);
+    const optOuts = await store.optOuts();
+    expect(optOuts).toContain("W#6580000001");
+    expect(optOuts).toContain("W#6580000002");
+    expect(stageOf({ profile: second, ads: [], sends: [], events: [] }, optOuts)).toBe("opted_out");
   });
 
   it("keeps parenthesised phone routes distinct when one opts out", async () => {
@@ -177,21 +113,6 @@ describe("the outreach store", () => {
     await store.addEvent(first.id, { type: "optout" }, "owner");
     await store.addOptOut(await store.get(first.id));
     const optOuts = await store.optOuts();
-    expect(stageOf({ profile: second, ads: [], sends: [], events: [] }, optOuts)).toBe("new");
-  });
-
-  it("does not opt out different numbers because route labels share a date note", async () => {
-    await loadRows(store, [
-      row(1, { whatsapp: undefined, secondRoute: "WhatsApp +6580000001 (checked 30-11-2026)" }),
-      row(2, { whatsapp: undefined, secondRoute: "WhatsApp +6580000002 (checked 30-11-2026)" }),
-    ], now);
-    const first = await store.get("00001");
-    const second = await store.get("00002");
-    await store.addEvent(first.id, { type: "optout" }, "owner");
-    await store.addOptOut(await store.get(first.id));
-    const optOuts = await store.optOuts();
-
-    expect(optOuts).not.toContain("W#30112026");
     expect(stageOf({ profile: second, ads: [], sends: [], events: [] }, optOuts)).toBe("new");
   });
 

@@ -4,8 +4,9 @@ import { address, numbers } from "./load.js";
 
 const EMAIL_IN_NOTE = new RegExp(EMAIL_IN_TEXT.source, EMAIL_IN_TEXT.flags.replace("g", ""));
 const PHONE_IN_NOTE = /\+?\d[\d().\s-]{5,}\d/;
+const PHONE_ROUTE_LABEL = /^(DM phone|Phone|WhatsApp)\s+(.+)$/i;
 
-const trailingBracketGroup = (value: string): { prefix: string; content: string } | undefined => {
+export const trailingBracketGroup = (value: string): { prefix: string; content: string } | undefined => {
   if (!value.endsWith(")")) return undefined;
   let depth = 0;
   let opening = -1;
@@ -22,6 +23,41 @@ const trailingBracketGroup = (value: string): { prefix: string; content: string 
   if (opening <= 0 || !/\s/.test(value[opening - 1]!)) return undefined;
   return { prefix: value.slice(0, opening).trimEnd(), content: value.slice(opening + 1, -1).trim() };
 };
+
+export function hasBracketGroup(value: string): boolean {
+  let depth = 0;
+  for (const character of value) {
+    if (character === "(") depth += 1;
+    else if (character === ")" && depth > 0) {
+      depth -= 1;
+      if (depth === 0) return true;
+    }
+  }
+  return false;
+}
+
+export function hasUnsafePhoneRouteNote(value: string | undefined): boolean {
+  const phone = value?.trim().match(PHONE_ROUTE_LABEL);
+  if (!phone) return false;
+  const bracket = trailingBracketGroup(phone[2]!);
+  return Boolean(
+    bracket &&
+      /\p{L}/u.test(bracket.content) &&
+      (PHONE_IN_NOTE.test(bracket.content) || EMAIL_IN_NOTE.test(bracket.content)),
+  );
+}
+
+export function phoneRouteNumbers(value: string | undefined): string[] {
+  const phone = value?.trim().match(PHONE_ROUTE_LABEL);
+  if (!phone) return [];
+  const bracket = trailingBracketGroup(phone[2]!);
+  const prefix = bracket && /\p{L}/u.test(bracket.content) ? bracket.prefix : phone[2]!;
+  try {
+    return numbers(prefix);
+  } catch {
+    return [];
+  }
+}
 
 const numberFrom = (value: string): string | undefined => {
   try {
@@ -45,7 +81,7 @@ export function labelShowsClosed(label: string | undefined, closed: ReadonlySet<
 export function routeOf(value: string | undefined): ProspectRoute | undefined {
   const label = value?.trim();
   if (!label || label.length > 64) return undefined;
-  const phone = label.match(/^(DM phone|Phone|WhatsApp)\s+(.+)$/i);
+  const phone = label.match(PHONE_ROUTE_LABEL);
   if (phone) {
     try {
       // A bracket with letters is a note; a bracket of digits is kept only when the number can't be read two ways.

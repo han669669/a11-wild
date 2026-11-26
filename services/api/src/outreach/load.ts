@@ -3,7 +3,7 @@ import { OUTREACH_TIERS, type OutreachTier, type Prospect, type ProspectFlag, ty
 import { Refusal } from "../mcp/registry.js";
 import { blockedValues, EMAIL_IN_TEXT, isBlockedTarget, numberKey } from "./blocked.js";
 import { EMAIL } from "./messages.js";
-import { routeOf } from "./routes.js";
+import { hasBracketGroup, hasUnsafePhoneRouteNote, routeOf } from "./routes.js";
 import { sendTarget, stageOf } from "./stage.js";
 import { type OutreachStore, prospectId } from "./store.js";
 
@@ -100,6 +100,14 @@ const optional = <K extends string>(key: K, value: string | undefined): Partial<
 const routeLabel = (field: "bestRoute" | "secondRoute", value: string | undefined): string | undefined => {
   const text = plain(value);
   if (text && text.length > 64) throw new RowError(field, "the route label is longer than 64 characters");
+  if (text && /^(?:DM phone|Phone|WhatsApp)(?:\s|$)/i.test(text)) {
+    if (!routeOf(text) && hasBracketGroup(text)) {
+      throw new RowError(field, "the route can't be read as one number; write a note in words in brackets after it");
+    }
+    if (hasUnsafePhoneRouteNote(text)) {
+      throw new RowError(field, "a route note can't hold a number or address; put it in Second route or Notes");
+    }
+  }
   return text;
 };
 
