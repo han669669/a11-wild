@@ -63,6 +63,23 @@ describe("the list's ways to reach a brand", () => {
     });
   });
 
+  it("strips annotations only after a complete international or local number", () => {
+    for (const annotation of ["9-5", "24/7"]) {
+      const label = `WhatsApp +6580000001 (${annotation})`;
+      expect(routeOf(label)).toMatchObject({ channel: "whatsapp", to: "6580000001", label });
+      expect(routeOf(label)).not.toHaveProperty("note");
+    }
+
+    const label = "WhatsApp 8000 0001 (front desk)";
+    expect(routeOf(label)).toEqual({
+      channel: "whatsapp",
+      to: "6580000001",
+      direct: false,
+      label,
+      note: "front desk",
+    });
+  });
+
   it("drops phone numbers and email addresses from notes without losing the route", () => {
     const withPhone = "WhatsApp +6580000001 (+6580000003)";
     expect(routeOf(withPhone)).toMatchObject({ channel: "whatsapp", to: "6580000001", label: withPhone });

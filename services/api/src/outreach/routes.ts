@@ -31,6 +31,14 @@ const numberFrom = (value: string): string | undefined => {
   }
 };
 
+const completeNumber = (value: string): string | undefined => {
+  const text = value.trim();
+  const digits = text.replace(/\D/g, "");
+  const international = text.startsWith("+") && digits.length >= 10 && digits.length <= 15;
+  const local = !text.includes("+") && /^[3689]\d{7}$/.test(digits);
+  return international || local ? numberFrom(text) : undefined;
+};
+
 /** Parses the list's best-route label. A value that is not understood is not a route. */
 export function routeOf(value: string | undefined): ProspectRoute | undefined {
   const label = value?.trim();
@@ -39,12 +47,9 @@ export function routeOf(value: string | undefined): ProspectRoute | undefined {
   if (phone) {
     try {
       const bracket = trailingBracketGroup(phone[2]!);
-      const noteCandidate = bracket && /\p{L}/u.test(bracket.content) ? bracket : undefined;
-      const numberLikeSuffix = bracket && PHONE_IN_NOTE.test(bracket.content) ? bracket : undefined;
-      const split = noteCandidate ?? numberLikeSuffix;
-      const notedNumber = split ? numberFrom(split.prefix) : undefined;
-      const numberText = notedNumber ? split!.prefix : phone[2]!;
-      const noteText = noteCandidate && notedNumber ? noteCandidate.content : undefined;
+      const annotatedNumber = bracket ? completeNumber(bracket.prefix) : undefined;
+      const numberText = annotatedNumber ? bracket!.prefix : phone[2]!;
+      const noteText = annotatedNumber ? bracket!.content : undefined;
       const note =
         noteText &&
         Array.from(noteText).length <= 40 &&
@@ -53,7 +58,7 @@ export function routeOf(value: string | undefined): ProspectRoute | undefined {
         !EMAIL_IN_NOTE.test(noteText)
           ? noteText
           : undefined;
-      const to = notedNumber ?? numbers(numberText)[0];
+      const to = annotatedNumber ?? numbers(numberText)[0];
       if (!to) return undefined;
       const direct = phone[1]!.toLowerCase() === "dm phone";
       const mobile = /^65[89]\d{7}$/.test(to);
