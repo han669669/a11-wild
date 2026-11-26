@@ -10,6 +10,13 @@ describe("house rules", () => {
     );
   });
 
+  it("tells v3 drafts to record rough-only packs when no pack is shown", () => {
+    expect(RULES_VERSION).toBe("2026-11-26.3");
+    expect(rulesFor("main", "v3").find((rule) => rule.id === "v3-drafts")?.text).toContain(
+      "when the pack came only from the concept rough and the picture shows no pack, record it with pack_check noPack: true; otherwise measure the pack.",
+    );
+  });
+
   it("publishes the v1 and v2 redo rule with the current house rules version", () => {
     expect(RULES_VERSION).toBe("2026-11-26.3");
     for (const kind of ["v1", "v2"] as const) {

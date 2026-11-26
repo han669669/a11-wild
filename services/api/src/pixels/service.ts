@@ -210,6 +210,9 @@ export class PixelService {
     const image = await this.rendered(input.batchId, input.imageId);
     if (input.noPack) {
       const { batches, images, checks, board, now } = this.deps;
+      if ((await checks.measuredBy(input.batchId, image.id)).includes(PACK_CHECK)) {
+        throw new Refusal("This picture already has a pack measure. Measure the pack again, or redo the picture.");
+      }
       const batch = await batches.get(input.batchId);
       const evidence = await board.packEvidence(batch, image, await images.list(input.batchId));
       if (evidence.direct) throw new Refusal("This picture was built with a pack photo, so measure its pack.");

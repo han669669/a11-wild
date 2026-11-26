@@ -275,6 +275,10 @@ describe("a draft that shows the food alone", () => {
           expect(noPack.value.state).not.toBeUndefined();
           expect(noPack.value.stillMissing ?? []).not.toContain(`pack_check for picture ${imageId}`);
           expect(await studio.services.checks.measuredBy(batchId, imageId)).toEqual(["pack_check"]);
+          expect(await callTool(studio, "pack_check", { batchId, imageId, noPack: true })).toEqual({
+            ok: false,
+            error: "This picture already has a pack measure. Measure the pack again, or redo the picture.",
+          });
           expect((await studio.services.checks.get(batchId, imageId))!.items).toEqual([]);
           expect(studio.pixels.events).toHaveLength(workerCallsBefore);
           expect(studio.fal.submits()).toHaveLength(falCallsBefore);
@@ -349,6 +353,38 @@ describe("a draft that shows the food alone", () => {
     });
 
     await callTool(studio, "pick_save", { batchId, ideaId: "idea-4", imageId: foodOnlyDraftId, ownerSaid: "this one" });
+    studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
+    const packShowingFinalSent = await callTool(studio, "render_submit", {
+      ...rules,
+      batchId,
+      ideaId: "idea-4",
+      kind: "final",
+      fromId: foodOnlyDraftId,
+      prompt: SCENE,
+      references: ["food-1", "pack-1"],
+    });
+    if (!packShowingFinalSent.ok) throw new Error(packShowingFinalSent.error);
+    const packShowingFinalRendered = await callTool(studio, "render_status", { batchId, renderId: packShowingFinalSent.value.id });
+    if (!packShowingFinalRendered.ok) throw new Error(packShowingFinalRendered.error);
+    const packShowingFinalId = packShowingFinalRendered.value.image.id as string;
+    if ((await callTool(studio, "batch_get", { batchId })).value.batch.state === "waiting_spend") {
+      await callTool(studio, "spend_approve", { ...rules, batchId, ownerSaid: "yes" });
+    }
+    const batch = await studio.services.batches.get(batchId);
+    const allImages = await studio.services.images.list(batchId);
+    expect(await studio.services.board.packEvidence(batch, await studio.services.images.get(batchId, foodOnlyDraftId), allImages)).toEqual({ direct: false, rough: true });
+    expect((await studio.services.board.packEvidence(batch, await studio.services.images.get(batchId, packShowingFinalId), allImages)).direct).toBe(true);
+    expect(await callTool(studio, "pack_check", { batchId, imageId: packShowingFinalId, noPack: true })).toEqual({
+      ok: false,
+      error: "This picture was built with a pack photo, so measure its pack.",
+    });
+    const packMeasure = await callTool(studio, "pack_check", { batchId, imageId: packShowingFinalId, at: [500, 800], bg: "FFD21E" });
+    if (!packMeasure.ok) throw new Error(packMeasure.error);
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: "products/p/pack.jpg" });
+    expect((await callTool(studio, "pixel_status", { batchId, jobId: packMeasure.value.id })).value.status).toBe("done");
+    expect(await studio.services.checks.measuredBy(batchId, packShowingFinalId)).toEqual(["pack_check"]);
+
+    studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
     const sent = await callTool(studio, "render_submit", {
       ...rules,
       batchId,

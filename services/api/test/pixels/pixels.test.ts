@@ -638,6 +638,12 @@ describe("pack_check and cap_check", () => {
 
     const looked = await callTool(studio, "checks_save", { ...rules, batchId, imageId, items: [] });
     expect(looked.value.checks.items).toEqual([{ code: "D11", note: expect.stringContaining("FAIL at 2%"), tool: "pack_check" }]);
+    expect(await callTool(studio, "pack_check", { batchId, imageId, noPack: true })).toEqual({
+      ok: false,
+      error: "This picture already has a pack measure. Measure the pack again, or redo the picture.",
+    });
+    const shown = (await studio.services.board.board(batchId)).ideas.find((entry) => entry.idea.id === "idea-1")!.drafts.find((entry) => entry.image.id === imageId);
+    expect(shown?.checks?.items).toEqual([{ code: "D11", note: expect.stringContaining("FAIL at 2%"), tool: "pack_check" }]);
   });
 
   it("cuts the pack out for a check and a repair the same way as for the skeleton", async () => {
