@@ -38,8 +38,11 @@ const IG_RESERVED = new Set([
   "challenge",
   "session",
 ]);
-export const IG_URL_IN_TEXT = /https?:\/\/(?:www\.)?instagram\.com\/[^\s<>()[\]"',;]+/gi;
+export const IG_URL_IN_TEXT = /(?:^|[^A-Za-z0-9.-])((?:https?:\/\/)?(?:www\.)?instagram\.com\/[^\s<>()[\]"',;]+)/gi;
 export const IG_HANDLE_IN_TEXT = /(?:^|[^A-Za-z0-9._%+-])@([A-Za-z0-9._]{1,30})(?=$|[^A-Za-z0-9._])/g;
+
+const trimUrlPunctuation = (value: string): string => value.replace(/[.,;!?]+$/, "");
+const trimHandleDots = (value: string): string => value.replace(/\.+$/, "");
 
 /** Extracts a canonical Instagram handle (without leading `@`) from a bare handle or single-profile URL. Rejects post/reel/multi-segment links. */
 export const instagramHandle = (value: string | undefined): string | undefined => {
@@ -88,14 +91,46 @@ export const isInstagramClosed = (value: string, closed: ReadonlySet<string>): b
 /** True when free text mentions an opted-out Instagram handle (`@handle`) or profile URL (`instagram.com/handle`). */
 export const textShowsClosedInstagram = (text: string, closed: ReadonlySet<string>): boolean => {
   if (!text || closed.size === 0) return false;
-  for (const url of text.match(IG_URL_IN_TEXT) ?? []) {
-    if (isInstagramClosed(url, closed)) return true;
+  for (const match of text.matchAll(IG_URL_IN_TEXT)) {
+    const url = trimUrlPunctuation(match[1] ?? "");
+    if (url && isInstagramClosed(url, closed)) return true;
   }
   for (const match of text.matchAll(IG_HANDLE_IN_TEXT)) {
-    const handle = match[1];
-    if (handle && isInstagramClosed(handle, closed)) return true;
+    const raw = match[1];
+    const trimmed = raw ? trimHandleDots(raw) : "";
+    if ((raw && isInstagramClosed(raw, closed)) || (trimmed && isInstagramClosed(trimmed, closed))) return true;
   }
   return false;
+};
+
+/** Removes any Instagram profile URL or `@handle` matching `hidden` from a text segment. */
+export const scrubInstagramText = (segment: string, hidden: ReadonlySet<string>): string => {
+  if (!segment || hidden.size === 0) return segment;
+  return segment
+    .replace(IG_URL_IN_TEXT, (match, rawUrl: string) => {
+      const url = trimUrlPunctuation(rawUrl);
+      const suffix = rawUrl.slice(url.length);
+      if (!url || !isInstagramClosed(url, hidden)) return match;
+      return match.slice(0, match.length - rawUrl.length) + suffix;
+    })
+    .replace(IG_HANDLE_IN_TEXT, (match, raw: string) => {
+      const trimmed = trimHandleDots(raw);
+      const dots = raw.slice(trimmed.length);
+      const closed = isInstagramClosed(raw, hidden) || (trimmed !== "" && isInstagramClosed(trimmed, hidden));
+      if (!closed) return match;
+      return match.slice(0, match.indexOf("@")) + (isInstagramClosed(raw, hidden) ? "" : dots);
+    })
+    .replace(/\s{2,}/g, " ")
+    .trim();
+};
+
+/** Scrubs quarantined Instagram mentions from a surviving non-social route's label and note. */
+export const scrubRouteInstagram = (route: ProspectRoute, hidden: ReadonlySet<string>): ProspectRoute => {
+  if (hidden.size === 0) return route;
+  const label = scrubInstagramText(route.label, hidden).replace(/\(\s*\)/g, "").replace(/\s{2,}/g, " ").trim() || route.label;
+  const note = route.note ? scrubInstagramText(route.note, hidden) || undefined : undefined;
+  const { note: _oldNote, ...rest } = route;
+  return { ...rest, label, ...(note ? { note } : {}) };
 };
 
 export const EMAIL_ADDRESS = /^[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}$/i;
@@ -115,12 +150,12 @@ export function blockedValues(flags: ProspectFlag[]): BlockedValues {
       const key = numberKey(found);
       if (key.length >= 8) numbers.add(key);
     }
-    for (const url of flag.text.match(IG_URL_IN_TEXT) ?? []) {
-      const handle = instagramHandle(url);
+    for (const match of flag.text.matchAll(IG_URL_IN_TEXT)) {
+      const handle = instagramHandle(trimUrlPunctuation(match[1] ?? ""));
       if (handle) instagram.add(`I#@${handle.toLowerCase()}`);
     }
     for (const match of flag.text.matchAll(IG_HANDLE_IN_TEXT)) {
-      const handle = instagramHandle(match[1]);
+      const handle = instagramHandle(trimHandleDots(match[1] ?? ""));
       if (handle) instagram.add(`I#@${handle.toLowerCase()}`);
     }
   }

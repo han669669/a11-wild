@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { OUTREACH_TIERS, type OutreachTier, type Prospect, type ProspectFlag, type ProspectRoute, type ProspectSells } from "@a11-wild/shared";
 import { Refusal } from "../mcp/registry.js";
-import { blockedValues, EMAIL_IN_TEXT, IG_HANDLE_IN_TEXT, IG_URL_IN_TEXT, instagramKey, isBlockedTarget, numberKey, textShowsClosedInstagram } from "./blocked.js";
+import { blockedValues, EMAIL_IN_TEXT, instagramKey, isBlockedTarget, numberKey, scrubInstagramText, textShowsClosedInstagram } from "./blocked.js";
 import { EMAIL } from "./messages.js";
 import { hasUnbalancedBrackets, hasUnsafePhoneRouteNote, routeOf, trailingBracketGroup } from "./routes.js";
 import { sendTarget, stageOf } from "./stage.js";
@@ -162,11 +162,12 @@ function removeBlocked(profile: Prospect): Prospect {
   const isRouteBlocked = (value: ProspectRoute | undefined) =>
     value !== undefined && isBlockedTarget(blocked, value);
   const stripSegment = (segment: string): string =>
-    segment
-      .replace(EMAIL_IN_TEXT, (email) => (blocked.emails.has(email.toLowerCase()) ? "" : email))
-      .replace(/\+?\d[\d().\s-]{5,}\d/g, (number) => (blocked.numbers.has(numberKey(number)) ? "" : number))
-      .replace(IG_URL_IN_TEXT, (url) => (blocked.instagram.has(instagramKey(url)) ? "" : url))
-      .replace(IG_HANDLE_IN_TEXT, (match, handle: string) => (blocked.instagram.has(instagramKey(handle)) ? match.slice(0, match.indexOf("@")) : match))
+    scrubInstagramText(
+      segment
+        .replace(EMAIL_IN_TEXT, (email) => (blocked.emails.has(email.toLowerCase()) ? "" : email))
+        .replace(/\+?\d[\d().\s-]{5,}\d/g, (number) => (blocked.numbers.has(numberKey(number)) ? "" : number)),
+      blocked.instagram,
+    )
       .replace(/\s{2,}/g, " ")
       .trim();
   const stripRoute = (value: string | undefined): string | undefined => {

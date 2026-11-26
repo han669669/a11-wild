@@ -610,6 +610,57 @@ describe("the owner's day", () => {
     const socialQuarantined = await json(await get("/api/outreach/prospects/00007"));
     expect(socialQuarantined.contact.sendTo).toMatchObject({ channel: "email", to: "sales!@sample.brand" });
     expect(socialQuarantined.contact.others?.second).toBeUndefined();
+    // Pitch ending with an opted-out Instagram handle followed by a full stop is hidden.
+    await ready([
+      row(8, {
+        whatsapp: undefined,
+        email: "ok8@example.com",
+        pitch: "Sister brand of @madeup.brand.",
+      }),
+    ]);
+    expect((await json(await get("/api/outreach/prospects/00008"))).pitch).toBeUndefined();
+    // Scheme-less Instagram profile URLs are quarantined by audit flags and linked consistently when open.
+    await ready([
+      row(9, {
+        whatsapp: undefined,
+        email: undefined,
+        instagram: "instagram.com/sample.flag/",
+        notes: "AUDIT-FLAG: instagram.com/sample.flag/ — do not send",
+      }),
+      row(10, {
+        whatsapp: undefined,
+        email: undefined,
+        instagram: "instagram.com/open.brand/",
+      }),
+    ]);
+    const schemelessFlagged = await json(await get("/api/outreach/prospects/00009"));
+    expect(schemelessFlagged.contact.sendTo).toBeUndefined();
+    expect(schemelessFlagged.contact.instagram).toBeUndefined();
+    const schemelessOpen = await json(await get("/api/outreach/prospects/00010"));
+    expect(schemelessOpen.contact.sendTo).toMatchObject({ channel: "instagram", to: "@open.brand" });
+    expect(schemelessOpen.contact.instagram?.href).toBe("https://www.instagram.com/open.brand/");
+    // A pre-existing stored phone fallback with a quarantined Instagram handle in its note keeps the number on both surfaces.
+    const saved = (await outreach().store.all()).find((entry) => entry.profile.id === "00006")!;
+    await outreach().store.saveProfile({
+      ...saved.profile,
+      second: {
+        channel: "call",
+        to: "6560000001",
+        direct: false,
+        label: "Phone 60000001 (ask for sales @sample.brand)",
+        note: "ask for sales @sample.brand",
+      },
+    });
+    expect((await json(await get("/api/outreach/prospects/00006"))).contact.others?.second).toMatchObject({
+      channel: "call",
+      to: "6560000001",
+      note: "ask for sales",
+    });
+    expect((await outreach().desk.contacts({ prospectId: "00006", after: 0, limit: 10 })).prospects[0]?.second).toMatchObject({
+      channel: "call",
+      to: "6560000001",
+      note: "ask for sales",
+    });
   });
 });
 

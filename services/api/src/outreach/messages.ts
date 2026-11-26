@@ -1,5 +1,6 @@
 import type { OutreachChannel, OutreachMessage, OutreachTemplate, Prospect, ProspectSendTarget } from "@a11-wild/shared";
 import { Refusal } from "../mcp/registry.js";
+import { instagramHandle } from "./blocked.js";
 
 /** The only placeholder of a message. */
 export const BRAND = "{Brand}";
@@ -86,7 +87,10 @@ export function messagesFor(
 /** An Instagram or LinkedIn value as a link, only when it is an https address on that site or a plain Instagram name. Else it is shown as text. */
 export function profileLink(kind: "instagram" | "linkedin", value: string | undefined): string | undefined {
   if (!value) return undefined;
-  if (kind === "instagram" && /^@?[A-Za-z0-9._]{1,30}$/.test(value)) return `https://www.instagram.com/${value.replace(/^@/, "")}/`;
+  if (kind === "instagram") {
+    const handle = instagramHandle(value);
+    if (handle) return `https://www.instagram.com/${handle}/`;
+  }
   let url: URL;
   try {
     // The list gives LinkedIn pages without "https://".

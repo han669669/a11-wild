@@ -9,7 +9,7 @@ import { makeTestProspect } from "../outreach/load.js";
 import { BRAND, mailLink, messagesFor, profileLink } from "../outreach/messages.js";
 import { filtered, filterOf, numbersOf } from "../outreach/numbers.js";
 import { DAILY, nextStep, sameContact } from "../outreach/sequence.js";
-import { blockedValues, instagramHandle, isInstagramClosed, textShowsClosedInstagram } from "../outreach/blocked.js";
+import { blockedValues, instagramHandle, isInstagramClosed, scrubRouteInstagram, textShowsClosedInstagram } from "../outreach/blocked.js";
 import { approvedAd, owedAnswer, optedOut, routeCheckUnresolved, sendTarget, sendTargetUnavailable, sellsOf, stageOf, targetForChannel } from "../outreach/stage.js";
 import { adView, rowOf, todayPage } from "../outreach/today.js";
 import { labelShowsClosed, routeOf } from "../outreach/routes.js";
@@ -95,13 +95,16 @@ export function outreachRoutes(
     const openNumber = (value: string | undefined) => Boolean(value && !closed.has(numberKey(value)));
     const openEmail = (value: string | undefined) => Boolean(value && !closed.has(`E#${value.toLowerCase()}`));
     const openInstagram = (value: string | undefined) => Boolean(value && !isInstagramClosed(value, hidden));
-    const openRouteLabel = (value: string | undefined) => {
+    const openRouteLabel = (value: string | undefined, instagramClosed: ReadonlySet<string> = hidden) => {
       const route = routeOf(value);
       const emails = value?.match(/[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}/gi) ?? [];
-      return (!route || routeOpen(route, hidden)) && emails.every(openEmail) && !labelShowsClosed(value, closed) && (!value || !textShowsClosedInstagram(value, hidden));
+      return (!route || routeOpen(route, hidden)) && emails.every(openEmail) && !labelShowsClosed(value, closed) && (!value || !textShowsClosedInstagram(value, instagramClosed));
     };
-    const openRouteObject = (route: ProspectRoute | undefined) =>
-      Boolean(route && routeOpen(route, hidden) && openRouteLabel(route.label));
+    const cleanOpenRoute = (route: ProspectRoute | undefined): ProspectRoute | undefined => {
+      if (!route || !routeOpen(route, hidden)) return undefined;
+      const scrubbed = route.channel === "instagram" || route.channel === "facebook" ? route : scrubRouteInstagram(route, blocked.instagram);
+      return openRouteLabel(scrubbed.label, closed) ? scrubbed : undefined;
+    };
     if (optedOut(file, optOuts)) return { whatsapp: [] };
     const target = sendTarget(file, optOuts);
     const sendTo = target && !sendTargetUnavailable(file, target, optOuts) && routeOpen(target, closed) ? target : undefined;
@@ -109,20 +112,20 @@ export function outreachRoutes(
       const candidate = targetForChannel(file, channel);
       return Boolean(candidate && !sendTargetUnavailable(file, candidate, optOuts) && routeOpen(candidate, closed));
     });
+    const openRoutes = [cleanOpenRoute(profile.route), cleanOpenRoute(profile.second)].filter((route): route is ProspectRoute => Boolean(route));
     const noteForNumber = (number: string) =>
-      [profile.route, profile.second].find((route) => route?.note && openRouteObject(route) && numberKey(route.to) === numberKey(number))?.note;
+      openRoutes.find((route) => route.note && numberKey(route.to) === numberKey(number))?.note;
     const phoneKey = profile.phone ? numberKey(profile.phone) : undefined;
     const phoneNote =
       phoneKey && openNumber(profile.phone)
-        ? [profile.route, profile.second].find(
+        ? openRoutes.find(
             (route) =>
-              route?.channel === "call" &&
+              route.channel === "call" &&
               route.note &&
-              openRouteObject(route) &&
               numberKey(route.to) === phoneKey,
           )?.note
         : undefined;
-    const second = openRouteObject(profile.second) ? profile.second : undefined;
+    const second = cleanOpenRoute(profile.second);
     const secondHref =
       second?.channel === "whatsapp" && /^\d{10,15}$/.test(second.to)
         ? link(`https://wa.me/${second.to}`).href

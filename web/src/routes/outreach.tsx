@@ -121,7 +121,7 @@ function Lines({ lines, done, children }: { lines: TodayLine[]; done: () => void
 function RouteCheck({ line, done }: { line: TodayLine; done: () => void }) {
   const { write, busy, error } = useWrite(line.prospect.id, done);
   const target = line.routeCheckTo ?? line.sendTo;
-  const channel = target?.channel === "email" ? "Email" : "WhatsApp";
+  const channel = target ? CHANNELS[target.channel] : "WhatsApp";
   const recipient = target?.direct && target.person ? `${target.person}${target.title ? `, ${target.title}` : ""}` : "the brand";
   const address = target ? (target.channel === "whatsapp" && /^\d+$/.test(target.to) ? `+${target.to}` : target.to) : undefined;
   return (
