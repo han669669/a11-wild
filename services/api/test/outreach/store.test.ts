@@ -81,6 +81,119 @@ describe("the outreach store", () => {
     expect(stageOf((await store.all())[1]!, optOuts)).toBe("opted_out");
   });
 
+  it("registers every exact number from a valid phone route list", async () => {
+    await loadRows(store, [
+      row(1, { whatsapp: undefined, secondRoute: "WhatsApp +6580000001; +6580000002" }),
+      row(2, { whatsapp: undefined, phone: "+65 8000 0002" }),
+    ], now);
+    const first = await store.get("00001");
+    const second = await store.get("00002");
+    expect(contactKeys(first)).toContain("W#6580000001");
+    expect(contactKeys(first)).toContain("W#6580000002");
+
+    await store.addEvent(first.id, { type: "optout" }, "owner");
+    await store.addOptOut(await store.get(first.id));
+
+    const optOuts = await store.optOuts();
+    expect(optOuts).toContain("W#6580000001");
+    expect(optOuts).toContain("W#6580000002");
+    expect(stageOf({ profile: second, ads: [], sends: [], events: [] }, optOuts)).toBe("opted_out");
+  });
+
+  it("matches each number in an or-separated route label", async () => {
+    await loadRows(store, [
+      row(1, { whatsapp: undefined, phone: "+65 8000 0002" }),
+      row(2, {
+        whatsapp: undefined,
+        phone: undefined,
+        dmPhone: undefined,
+        secondRoute: "WhatsApp +6580000001 or +6580000002",
+      }),
+    ], now);
+    const holder = await store.get("00001");
+    const label = await store.get("00002");
+
+    await store.addEvent(holder.id, { type: "optout" }, "owner");
+    await store.addOptOut(await store.get(holder.id));
+
+    expect(stageOf({ profile: label, ads: [], sends: [], events: [] }, await store.optOuts())).toBe("opted_out");
+  });
+
+  it("does not split a formatted phone label into a false contact key", async () => {
+    await loadRows(store, [
+      row(1, {
+        whatsapp: undefined,
+        phone: undefined,
+        dmPhone: undefined,
+        secondRoute: "Phone +49 30 / 8123 4567",
+      }),
+    ], now);
+    const profile = await store.get("00001");
+
+    expect(contactKeys(profile)).not.toContain("W#6581234567");
+  });
+
+  it("keeps valid numbers from a semicolon list even when another entry is malformed", async () => {
+    await loadRows(store, [
+      row(1, {
+        whatsapp: undefined,
+        phone: undefined,
+        dmPhone: undefined,
+        secondRoute: "WhatsApp +6580000001; not-a-number",
+      }),
+      row(2, { whatsapp: undefined, phone: "+65 8000 0001" }),
+    ], now);
+    const first = await store.get("00001");
+    const second = await store.get("00002");
+
+    await store.addEvent(first.id, { type: "optout" }, "owner");
+    await store.addOptOut(await store.get(first.id));
+
+    expect(stageOf({ profile: second, ads: [], sends: [], events: [] }, await store.optOuts())).toBe("opted_out");
+  });
+
+  it("does not spread opt-outs from a quarantined number in a route label, while keeping sent contacts", async () => {
+    await loadRows(store, [
+      row(1, {
+        whatsapp: undefined,
+        phone: undefined,
+        dmPhone: undefined,
+        email: "brand1@example.com",
+        bestRoute: "Email (valid) brand1@example.com",
+        secondRoute: "Phone +65 8000 0001 (9-5 hours)",
+        notes: "AUDIT-FLAG: +65 8000 0001 do not use",
+      }),
+      row(2, { whatsapp: undefined, phone: "+65 8000 0001" }),
+    ], now);
+    const first = await store.get("00001");
+    const second = await store.get("00002");
+
+    expect(first.secondRoute).toBe("Phone (9-5 hours)");
+    expect(contactKeys(first)).not.toContain("W#6580000001");
+    expect(contactKeys(first, [{ channel: "whatsapp", to: "6580000001" }])).toContain("W#6580000001");
+
+    await store.addEvent(first.id, { type: "optout" }, "owner");
+    await store.addOptOut(await store.get(first.id));
+
+    expect(stageOf({ profile: second, ads: [], sends: [], events: [] }, await store.optOuts())).toBe("new");
+  });
+
+  it("keeps parenthesised phone routes distinct when one opts out", async () => {
+    await loadRows(store, [
+      row(1, { whatsapp: undefined, secondRoute: "WhatsApp +65 (8123) 4567 (verified business)" }),
+      row(2, { whatsapp: undefined, secondRoute: "WhatsApp +65 (9123) 4567 (verified business)" }),
+    ], now);
+    const first = await store.get("00001");
+    const second = await store.get("00002");
+    expect(contactKeys(first)).toContain("W#6581234567");
+    expect(contactKeys(second)).toContain("W#6591234567");
+
+    await store.addEvent(first.id, { type: "optout" }, "owner");
+    await store.addOptOut(await store.get(first.id));
+    const optOuts = await store.optOuts();
+    expect(stageOf({ profile: second, ads: [], sends: [], events: [] }, optOuts)).toBe("new");
+  });
+
   it("removes a test prospect with all its items, and refuses for a prospect of the list", async () => {
     await loadRows(store, [row(1)], now);
     await store.addEvent("00001", { type: "note", text: "kept" }, "owner");

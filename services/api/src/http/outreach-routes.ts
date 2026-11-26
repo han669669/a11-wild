@@ -11,7 +11,7 @@ import { filtered, filterOf, numbersOf } from "../outreach/numbers.js";
 import { DAILY, nextStep, sameContact } from "../outreach/sequence.js";
 import { approvedAd, owedAnswer, optedOut, routeCheckUnresolved, sendTarget, sendTargetUnavailable, sellsOf, stageOf } from "../outreach/stage.js";
 import { adView, rowOf, todayPage } from "../outreach/today.js";
-import { routeOf } from "../outreach/routes.js";
+import { labelShowsClosed, routeOf } from "../outreach/routes.js";
 import { contactKeys } from "../outreach/store.js";
 import { requireOwner, type SessionEnv } from "./guards.js";
 
@@ -94,17 +94,37 @@ export function outreachRoutes(
     const openRouteLabel = (value: string | undefined) => {
       const route = routeOf(value);
       const emails = value?.match(/[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}/gi) ?? [];
-      const numbers = value?.match(/\+?\d[\d().\s-]{5,}\d/g) ?? [];
-      return (!route || routeOpen(route, closed)) && emails.every(openEmail) && numbers.every(openNumber);
+      return (!route || routeOpen(route, closed)) && emails.every(openEmail) && !labelShowsClosed(value, closed);
     };
+    const openRouteObject = (route: ProspectRoute | undefined) =>
+      Boolean(route && routeOpen(route, closed) && openRouteLabel(route.label));
     if (optedOut(file, optOuts)) return { whatsapp: [] };
     const target = sendTarget(file, optOuts);
     const sendTo = target && !sendTargetUnavailable(file, target, optOuts) && routeOpen(target, closed) ? target : undefined;
+    const noteForNumber = (number: string) =>
+      [profile.route, profile.second].find((route) => route?.note && openRouteObject(route) && numberKey(route.to) === numberKey(number))?.note;
+    const phoneKey = profile.phone ? numberKey(profile.phone) : undefined;
+    const phoneNote =
+      phoneKey && openNumber(profile.phone)
+        ? [profile.route, profile.second].find(
+            (route) =>
+              route?.channel === "call" &&
+              route.note &&
+              openRouteObject(route) &&
+              numberKey(route.to) === phoneKey,
+          )?.note
+        : undefined;
+    const second = openRouteObject(profile.second) ? profile.second : undefined;
+    const secondHref =
+      second?.channel === "whatsapp" && /^\d{10,15}$/.test(second.to) ? link(`https://wa.me/${second.to}`).href : undefined;
     const dmCheck = { valid: "checked", risky: "risky", invalid: "invalid", unknown: "not checked" } as const;
     return {
-      whatsapp: profile.whatsapp.filter(openNumber).map((number) => ({ number, ...link(/^\d{10,15}$/.test(number) ? `https://wa.me/${number}` : undefined) })),
+      whatsapp: profile.whatsapp.filter(openNumber).map((number) => {
+        const note = noteForNumber(number);
+        return { number, ...link(/^\d{10,15}$/.test(number) ? `https://wa.me/${number}` : undefined), ...(note ? { note } : {}) };
+      }),
       ...(openEmail(profile.email) && profile.email ? { email: { address: profile.email, ...link(mailLink(profile.email, "", "")?.split("?")[0]) } } : {}),
-      ...(openNumber(profile.phone) && profile.phone ? { phone: profile.phone } : {}),
+      ...(openNumber(profile.phone) && profile.phone ? { phone: profile.phone, ...(phoneNote ? { phoneNote } : {}) } : {}),
       ...(profile.instagram ? { instagram: { name: profile.instagram, ...link(profileLink("instagram", profile.instagram)) } } : {}),
       ...(profile.decisionMaker ? { decisionMaker: profile.decisionMaker } : {}),
       ...(profile.dmTitle ? { dmTitle: profile.dmTitle } : {}),
@@ -113,7 +133,8 @@ export function outreachRoutes(
       ...(profile.secondRoute && openRouteLabel(profile.secondRoute) ? { secondRoute: profile.secondRoute } : {}),
       ...(sendTo ? { sendTo } : {}),
       others: {
-        ...(routeOpen(profile.second, closed) ? { second: profile.second } : {}),
+        ...(second ? { second } : {}),
+        ...(secondHref ? { secondHref } : {}),
         ...(openEmail(profile.dmEmail) && profile.dmEmail ? { dmEmail: { address: profile.dmEmail, check: dmCheck[profile.dmVerify ?? "unknown"] } } : {}),
         ...(openNumber(profile.dmPhone) && profile.dmPhone ? { dmPhone: profile.dmPhone } : {}),
         ...(profile.instagram ? { instagram: { name: profile.instagram, ...link(profileLink("instagram", profile.instagram)) } } : {}),

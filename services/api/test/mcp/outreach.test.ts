@@ -121,6 +121,14 @@ describe("only outreach_contacts returns a contact", () => {
 });
 
 describe("outreach_contacts", () => {
+  it("keeps a noted second route in the contact list", async () => {
+    await loadProspects(studio, [row(1, { secondRoute: "WhatsApp +6580000001 (verified business)" })]);
+    const answer = await callTool(studio, "outreach_contacts", { prospectId: "00001" });
+    expect(answer.value.prospects[0]).toMatchObject({
+      second: { channel: "whatsapp", to: "6580000001", note: "verified business" },
+    });
+  });
+
   it("gives the owner's session every contact of a prospect", async () => {
     await callTool(studio, "outreach_load", { rows: [row(1, { ...PRIVATE, bestRoute: "WhatsApp", instagram: "brand1" })] });
     const answer = await callTool(studio, "outreach_contacts", { prospectId: "00001" });

@@ -4,6 +4,7 @@ import type { IdeaFinal } from "../board/service.js";
 import { Refusal } from "../mcp/registry.js";
 import { noteText } from "./candidates.js";
 import type { SpendLedger } from "../spend/ledger.js";
+import { labelShowsClosed } from "./routes.js";
 import { chosen, sameContact } from "./sequence.js";
 import { adWaits, candidatesWait, kindOf, optedOut, owedNow, stageOf, standingAd, TAKES_NO_AD, wantsAd } from "./stage.js";
 import { contactKeys, type OutreachStore } from "./store.js";
@@ -240,6 +241,10 @@ export class OutreachDesk {
       const { profile } = file;
       const openNumber = (number: string | undefined): boolean => Boolean(number && !closed.has(`W#${digitsOf(number)}`));
       const openEmail = (address: string | undefined): boolean => Boolean(address && !closed.has(`E#${address.toLowerCase()}`));
+      const openRouteLabel = (value: string | undefined): boolean => {
+        const emails = value?.match(/[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}/gi) ?? [];
+        return emails.every(openEmail) && !labelShowsClosed(value, closed);
+      };
       const routeOpen = (route: ProspectRoute | undefined): boolean => {
         if (!route) return false;
         const key =
@@ -248,13 +253,13 @@ export class OutreachDesk {
             : route.channel === "whatsapp" || route.channel === "call"
               ? `W#${digitsOf(route.to)}`
               : `${route.channel === "instagram" ? "I" : "F"}#${route.to.toLowerCase()}`;
-        return !closed.has(key);
+        return !closed.has(key) && openRouteLabel(route.label);
       };
       const whatsapp = profile.whatsapp.filter(openNumber);
       const known = Object.fromEntries(
         Object.entries({
-          bestRoute: profile.bestRoute,
-          secondRoute: profile.secondRoute,
+          bestRoute: openRouteLabel(profile.bestRoute) ? profile.bestRoute : undefined,
+          secondRoute: openRouteLabel(profile.secondRoute) ? profile.secondRoute : undefined,
           sells: profile.sells,
           dmVerify: openEmail(profile.dmEmail) ? profile.dmVerify : undefined,
           dmEmail: openEmail(profile.dmEmail) ? profile.dmEmail : undefined,

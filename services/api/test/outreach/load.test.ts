@@ -50,6 +50,82 @@ describe("the load of the list", () => {
     expect(file).toMatchObject({ ads: [{ n: 1 }], events: [{ type: "note" }, { type: "kind" }] });
   });
 
+  it("parses a noted second route from its label", async () => {
+    const label = "WhatsApp +6580000001 (verified business)";
+    await loadRows(store, [row(7, { secondRoute: label })], now);
+    expect((await store.get("00007")).second).toEqual({
+      channel: "whatsapp",
+      to: "6580000001",
+      direct: false,
+      label,
+      note: "verified business",
+    });
+  });
+
+  it.each([
+    {
+      label: "WhatsApp +6580000001 (9-5)",
+      why: "the route can't be read as one number; write a note in words in brackets after it",
+    },
+    {
+      label: "WhatsApp +6580000002 (backup +6580000001)",
+      why: "a route note can't hold a number or address; put it in Second route or Notes",
+    },
+    {
+      label: "WhatsApp +49 30 123456 (78)",
+      why: "the route can't be read as one number; write a note in words in brackets after it",
+    },
+    {
+      label: "Phone 6891 2345 (9-5)",
+      why: "the route can't be read as one number; write a note in words in brackets after it",
+    },
+    {
+      label: "Phone +65 6123 4567 (verified contact person@example.com)",
+      why: "a route note can't hold a number or address; put it in Second route or Notes",
+    },
+    {
+      label: "WhatsApp +6580000001 (verified business",
+      why: "the route can't be read as one number; write a note in words in brackets after it",
+    },
+    {
+      label: "WhatsApp +65 (8123 4567",
+      why: "the route can't be read as one number; write a note in words in brackets after it",
+    },
+    {
+      label: "WhatsApp +6580000001 (checked 30-11-2026)",
+      why: "a route note can't hold a number or address; put it in Second route or Notes",
+    },
+  ])("refuses unsafe bracketed phone labels without repeating the value", async ({ label, why }) => {
+    const result = await loadRows(store, [row(7, { secondRoute: label })], now);
+    expect(result).toEqual({
+      added: 0,
+      updated: 0,
+      merged: 0,
+      blocked: 0,
+      refused: [{ row: 7, field: "secondRoute", why }],
+    });
+    expect(JSON.stringify(result.refused)).not.toContain(label);
+    expect(await store.all()).toEqual([]);
+  });
+
+  it.each([
+    "WhatsApp +6580000001 (verified business)",
+    "WhatsApp +6580000001; +6580000002",
+    "WhatsApp +65 (8123) 4567",
+  ])("accepts a clear phone route label", async (label) => {
+    const result = await loadRows(store, [row(7, { secondRoute: label })], now);
+    expect(result).toMatchObject({ added: 1, refused: [] });
+    expect((await store.get("00007")).second).toBeDefined();
+  });
+
+  it("keeps an unreadable unbracketed phone label as text", async () => {
+    const result = await loadRows(store, [row(7, { bestRoute: "Phone 12" })], now);
+    expect(result).toMatchObject({ added: 1, refused: [] });
+    const profile = await store.get("00007");
+    expect(profile.bestRoute).toBe("Phone 12");
+    expect(profile.route).toBeUndefined();
+  });
+
   it("leaves an opt-out in place", async () => {
     await loadRows(store, [row(1)], now);
     await store.addEvent("00001", { type: "optout" }, "owner");

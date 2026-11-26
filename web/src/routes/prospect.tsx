@@ -51,6 +51,10 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
   const routeBusy = (busy as string | undefined) === "route";
   const routeError = (failed as string | undefined) === "route" ? error : undefined;
   const routeName = (channel: string) => ({ whatsapp: "WhatsApp", email: "Email", instagram: "Instagram", facebook: "Facebook", call: "Phone" })[channel] ?? "another way";
+  const second = contact.others?.second;
+  const secondNumber =
+    second && (second.channel === "whatsapp" || second.channel === "call") && /^\d+$/.test(second.to) ? `+${second.to}` : second?.to;
+  const secondHref = contact.others?.secondHref;
   const checkTarget = () => {
     const target = contact.sendTo;
     if (!target) return "the brand";
@@ -187,13 +191,13 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
         <Fold title="How to reach it" open>
           <dl className="grid gap-x-6 gap-y-2 text-body sm:grid-cols-[10rem_1fr]">
             {contact.whatsapp.map((entry) => (
-              <Line key={entry.number} name="WhatsApp" text={`+${entry.number}`} href={entry.href} />
+              <Line key={entry.number} name="WhatsApp" text={`+${entry.number}`} href={entry.href} note={entry.note} />
             ))}
             {contact.email ? <Line name="Email" text={contact.email.address} href={contact.email.href} /> : null}
-            {contact.phone ? <Line name="Phone" text={contact.phone} /> : null}
-            {contact.sendTo ? <Line name="Current choice" text={`${contact.sendTo.person ?? "The brand"}${contact.sendTo.title ? `, ${contact.sendTo.title}` : ""} · ${CHANNELS[contact.sendTo.channel]}`} /> : null}
+            {contact.phone ? <Line name="Phone" text={contact.phone} note={contact.phoneNote} /> : null}
+            {contact.sendTo ? <Line name="Current choice" text={`${contact.sendTo.person ?? "The brand"}${contact.sendTo.title ? `, ${contact.sendTo.title}` : ""} · ${CHANNELS[contact.sendTo.channel]}`} note={contact.sendTo.note} /> : null}
             {contact.decisionMaker ? <Line name="Person" text={`${contact.decisionMaker}${contact.dmTitle ? `, ${contact.dmTitle}` : ""}`} /> : null}
-            {contact.others?.second ? <Line name="Another way" text={routeName(contact.others.second.channel)} /> : null}
+            {second ? <Line name="Another way" text={`${routeName(second.channel)}${secondNumber ? ` · ${secondNumber}` : ""}`} href={secondHref} note={second.note} /> : null}
             {contact.others?.dmEmail ? <Line name="Direct email" text={`${contact.others.dmEmail.address} · ${contact.others.dmEmail.check}`} /> : null}
             {contact.others?.dmPhone ? <Line name="Direct phone" text={contact.others.dmPhone} /> : null}
             {contact.others?.instagram || contact.instagram ? <Line name="Instagram" text={(contact.others?.instagram ?? contact.instagram)!.name} href={(contact.others?.instagram ?? contact.instagram)?.href} /> : null}
@@ -374,12 +378,15 @@ function OwnPicture({ id, done }: { id: string; done: (page: ProspectPage) => vo
   );
 }
 
-function Line({ name, text, href }: { name: string; text: string; href?: string | undefined }) {
+function Line({ name, text, href, note }: { name: string; text: string; href?: string | undefined; note?: string | undefined }) {
   return (
     <>
       <dt className="text-caption text-muted-foreground">{name}</dt>
       {/* A value of the list is shown as text. It is a link only when the server checked it. */}
-      <dd className="min-w-0 break-words">{href ? <OutLink href={href}>{text}</OutLink> : text}</dd>
+      <dd className="min-w-0 break-words">
+        {href ? <OutLink href={href}>{text}</OutLink> : text}
+        {note ? <span className="text-muted-foreground">{" · "}{note}</span> : null}
+      </dd>
     </>
   );
 }

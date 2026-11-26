@@ -338,6 +338,55 @@ describe("the owner's day", () => {
     expect(JSON.stringify(page)).not.toMatch(/Amelia Lee|6580000001|new@example\.com|old@example\.com|hidden@example\.com|Previous Person/);
   });
 
+  it("hides a no-plus country-code route after its number is opted out", async () => {
+    const label = "WhatsApp 6580000001 (verified business)";
+    await ready([row(1, { whatsapp: "+65 8000 0001" }), row(2, { secondRoute: label })]);
+    await outreach().sequence.optOut("00001");
+
+    const page = await json(await get("/api/outreach/prospects/00002"));
+    expect(page.prospect).toMatchObject({ stage: "opted_out" });
+    expect(page.contact).not.toHaveProperty("secondRoute");
+  });
+
+  it("omits a second route when its only closed number is inside the brackets", async () => {
+    const label = "WhatsApp +6580000002 (+6580000001)";
+    await ready([row(1, { whatsapp: "+65 8000 0001" }), row(2, { secondRoute: "WhatsApp +6580000002" })]);
+    const profile = await outreach().store.get("00002");
+    await outreach().store.saveProfile({
+      ...profile,
+      secondRoute: label,
+      second: { ...profile.second!, label },
+    });
+    await outreach().sequence.optOut("00001");
+
+    const page = await json(await get("/api/outreach/prospects/00002"));
+    expect(page.prospect.stage).not.toBe("opted_out");
+    expect(page.contact).not.toHaveProperty("secondRoute");
+    expect(page.contact.others).not.toHaveProperty("second");
+
+    const contacts = await outreach().desk.contacts({ prospectId: "00002", after: 0, limit: 1 });
+    expect(contacts.prospects[0]!.stage).not.toBe("opted_out");
+    expect(contacts.prospects[0]).not.toHaveProperty("secondRoute");
+    expect(contacts.prospects[0]).not.toHaveProperty("second");
+  });
+
+  it("does not expose a structured route whose label contains an opted-out number", async () => {
+    await ready([row(1, { whatsapp: "+65 8000 0001" }), row(2, { secondRoute: "WhatsApp +6580000002 (direct line)" })]);
+    const profile = await outreach().store.get("00002");
+    await outreach().store.saveProfile({
+      ...profile,
+      second: { ...profile.second!, label: "WhatsApp +6580000002 (backup +65 (8000) 0001)" },
+    });
+    await outreach().sequence.optOut("00001");
+
+    const page = await json(await get("/api/outreach/prospects/00002"));
+    expect(page.prospect.stage).not.toBe("opted_out");
+    expect(page.contact.others).not.toHaveProperty("second");
+
+    const contacts = await outreach().desk.contacts({ prospectId: "00002", after: 0, limit: 1 });
+    expect(contacts.prospects[0]).not.toHaveProperty("second");
+  });
+
   it("does not expose a test prospect's contact when its number belongs to an opted-out brand", async () => {
     await loadProspects(studio, [row(1, { whatsapp: "+65 8000 0001" })]);
     await outreach().sequence.optOut("00001");
@@ -411,6 +460,45 @@ describe("the owner's day", () => {
     expect(readyPage.message.messages[0].href).toBeUndefined();
     expect(JSON.stringify(readyPage)).not.toContain("6580000001");
     expect(JSON.stringify(readyPage)).not.toContain("8000 0001");
+  });
+
+  it("keeps route notes on matching WhatsApp contacts and the current target", async () => {
+    await loadProspects(studio, [
+      row(1, {
+        whatsapp: "+65 8000 0001; +65 8000 0002",
+        bestRoute: "WhatsApp +6580000001 (verified business)",
+        secondRoute: "WhatsApp +6580000002 (direct line)",
+      }),
+    ]);
+    const page = await json(await get("/api/outreach/prospects/00001"));
+    expect(page.contact.whatsapp).toEqual([
+      { number: "6580000001", href: "https://wa.me/6580000001", note: "verified business" },
+      { number: "6580000002", href: "https://wa.me/6580000002", note: "direct line" },
+    ]);
+    expect(page.contact.sendTo).toMatchObject({ channel: "whatsapp", to: "6580000001", note: "verified business" });
+    expect(page.contact.others.second).toMatchObject({ channel: "whatsapp", to: "6580000002", note: "direct line" });
+  });
+
+  it.each(["bestRoute", "secondRoute"] as const)("keeps an open call-route note from %s beside the matching phone", async (field) => {
+    await loadProspects(studio, [row(1, { phone: "+65 6123 4567", [field]: "Phone +65 6123 4567 (front desk)" })]);
+    const page = await json(await get("/api/outreach/prospects/00001"));
+    expect(page.contact).toMatchObject({ phone: "+65 6123 4567", phoneNote: "front desk" });
+  });
+
+  it("matches a local phone to the country-coded call route note", async () => {
+    await loadProspects(studio, [row(1, { phone: "6123 4567", bestRoute: "Phone +65 6123 4567 (front desk)" })]);
+    const page = await json(await get("/api/outreach/prospects/00001"));
+    expect(page.contact).toMatchObject({ phone: "6123 4567", phoneNote: "front desk" });
+  });
+
+  it("provides a checked link for an open second WhatsApp route absent from the WhatsApp list", async () => {
+    await loadProspects(studio, [row(1, { whatsapp: "", secondRoute: "WhatsApp +6580000002 (direct line)" })]);
+    const page = await json(await get("/api/outreach/prospects/00001"));
+    expect(page.contact.whatsapp).toEqual([]);
+    expect(page.contact.others).toMatchObject({
+      second: { channel: "whatsapp", to: "6580000002" },
+      secondHref: "https://wa.me/6580000002",
+    });
   });
 
   it("gives the owner the contact, each link only from a checked value", async () => {

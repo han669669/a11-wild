@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { loadRows, type LoadRow } from "../../src/outreach/load.js";
-import { routeOf } from "../../src/outreach/routes.js";
+import { labelShowsClosed, routeOf } from "../../src/outreach/routes.js";
 import { sendTarget } from "../../src/outreach/stage.js";
 import { OutreachStore } from "../../src/outreach/store.js";
 import { MemoryTable } from "../helpers/memory-table.js";
@@ -29,10 +29,135 @@ describe("the list's ways to reach a brand", () => {
     expect(routeOf(text)).toEqual({ ...target, label: text });
   });
 
+  it("keeps a short note from a phone route label", () => {
+    const label = "WhatsApp +6580000001 (verified business)";
+    expect(routeOf(label)).toEqual({
+      channel: "whatsapp",
+      to: "6580000001",
+      direct: false,
+      label,
+      note: "verified business",
+    });
+    expect(routeOf("WhatsApp +6580000001 ( verified business )")?.note).toBe("verified business");
+  });
+
+  it("uses the last bracket group after a number with parentheses", () => {
+    const label = "WhatsApp +65 (8123) 4567 (verified business)";
+    expect(routeOf(label)).toEqual({
+      channel: "whatsapp",
+      to: "6581234567",
+      direct: false,
+      label,
+      note: "verified business",
+    });
+  });
+
+  it("keeps nested parentheses inside a trailing note", () => {
+    const label = "WhatsApp +6580000001 (front desk (weekdays))";
+    expect(routeOf(label)).toEqual({
+      channel: "whatsapp",
+      to: "6580000001",
+      direct: false,
+      label,
+      note: "front desk (weekdays)",
+    });
+  });
+
+  it("treats bracket content with letters as an annotation", () => {
+    const noCountryCode = "WhatsApp 6580000001 (front desk)";
+    expect(routeOf(noCountryCode)).toEqual({
+      channel: "whatsapp",
+      to: "6580000001",
+      direct: false,
+      label: noCountryCode,
+      note: "front desk",
+    });
+
+    const twoNumbers = "WhatsApp +6580000001; +6580000002 (front desk)";
+    expect(routeOf(twoNumbers)).toEqual({
+      channel: "whatsapp",
+      to: "6580000001",
+      direct: false,
+      label: twoNumbers,
+      note: "front desk",
+    });
+  });
+
+  it("keeps digit-only brackets only when they cannot change the number", () => {
+    expect(routeOf("WhatsApp +6580000001 (9-5)")).toBeUndefined();
+
+    const hours = "WhatsApp +6580000001 (24/7)";
+    expect(routeOf(hours)).toMatchObject({ channel: "whatsapp", to: "6580000001", label: hours });
+    expect(routeOf(hours)).not.toHaveProperty("note");
+
+    expect(routeOf("Phone +49 30 123456 (78)")).toBeUndefined();
+    expect(routeOf("WhatsApp +6561234567 (+6580000003)")).toBeUndefined();
+
+    const label = "WhatsApp 8000 0001 (front desk)";
+    expect(routeOf(label)).toEqual({
+      channel: "whatsapp",
+      to: "6580000001",
+      direct: false,
+      label,
+      note: "front desk",
+    });
+  });
+
+  it("drops phone numbers and email addresses from notes without losing the route", () => {
+    const withPhone = "WhatsApp +6580000001 (direct phone +6580000003)";
+    expect(routeOf(withPhone)).toMatchObject({ channel: "whatsapp", to: "6580000001", label: withPhone });
+    expect(routeOf(withPhone)).not.toHaveProperty("note");
+
+    const withEmail = "Phone +65 6123 4567 (verified contact person@example.com)";
+    expect(routeOf(withEmail)).toMatchObject({ channel: "call", to: "6561234567", label: withEmail });
+    expect(routeOf(withEmail)).not.toHaveProperty("note");
+  });
+
+  it("treats a digits-only final bracket group as part of the phone number", () => {
+    const shortLabel = "Phone +65 6123 (4567)";
+    expect(routeOf(shortLabel)).toEqual({ channel: "call", to: "6561234567", direct: false, label: shortLabel });
+
+    const label = "Phone +65 (6123) 45 (67)";
+    expect(routeOf(label)).toEqual({ channel: "call", to: "6561234567", direct: false, label });
+  });
+
+  it("omits a missing or overlong note without losing the number", () => {
+    expect(routeOf("WhatsApp +6580000001")).toEqual({
+      channel: "whatsapp",
+      to: "6580000001",
+      direct: false,
+      label: "WhatsApp +6580000001",
+    });
+    const label = "WhatsApp +6580000001 (12345678901234567890123456789012345678901)";
+    expect(routeOf(label)).toEqual({
+      channel: "whatsapp",
+      to: "6580000001",
+      direct: false,
+      label,
+    });
+  });
+
   it.each(["", "unknown", "source_url", "<UNKNOWN>", "Phone 12", "Email (risky) person@example.com", "Email (invalid) person@example.com", "Email (catch-all) person@example.com", "DM email (valid) not an address"])(
     "does not make a target from %s",
     (text) => expect(routeOf(text)).toBeUndefined(),
   );
+
+  it("checks complete normalised numbers when deciding if a route label shows a closed contact", () => {
+    const closed = new Set(["W#6580000001"]);
+    expect(labelShowsClosed("WhatsApp +6580000001 (verified business)", closed)).toBe(true);
+    expect(labelShowsClosed("Phone 8000 0001 (front desk)", closed)).toBe(true);
+    expect(labelShowsClosed("WhatsApp +6580000002 (backup +6580000001)", closed)).toBe(true);
+    expect(labelShowsClosed("Call +65 8000 (0001)", closed)).toBe(true);
+    expect(labelShowsClosed("Call +65 (8000 0001)", closed)).toBe(true);
+    expect(labelShowsClosed("Call +65.8000.0001", closed)).toBe(true);
+    expect(labelShowsClosed("Call +65 8000 0001 (123) daily", closed)).toBe(true);
+    expect(labelShowsClosed("Call +65 (8000) 0001 (9-5) daily", closed)).toBe(true);
+    expect(labelShowsClosed("Call 24 (8000 0001) daily", closed)).toBe(true);
+    expect(labelShowsClosed("WhatsApp +44 20 8000 0001 (verified business)", closed)).toBe(false);
+    expect(labelShowsClosed("WhatsApp +44 (20) 8000 0001", closed)).toBe(false);
+    expect(labelShowsClosed("WhatsApp +65 8111 2222; +65 3333 4444", new Set(["W#6522223333"]))).toBe(false);
+    expect(labelShowsClosed(`Phone +65${" ".repeat(31)}(6123 4567) (front desk)`, closed)).toBe(false);
+  });
 });
 
 describe("loading the additional list fields", () => {

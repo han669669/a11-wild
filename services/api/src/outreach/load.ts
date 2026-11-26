@@ -3,7 +3,7 @@ import { OUTREACH_TIERS, type OutreachTier, type Prospect, type ProspectFlag, ty
 import { Refusal } from "../mcp/registry.js";
 import { blockedValues, EMAIL_IN_TEXT, isBlockedTarget, numberKey } from "./blocked.js";
 import { EMAIL } from "./messages.js";
-import { routeOf } from "./routes.js";
+import { hasUnbalancedBrackets, hasUnsafePhoneRouteNote, routeOf, trailingBracketGroup } from "./routes.js";
 import { sendTarget, stageOf } from "./stage.js";
 import { type OutreachStore, prospectId } from "./store.js";
 
@@ -100,6 +100,14 @@ const optional = <K extends string>(key: K, value: string | undefined): Partial<
 const routeLabel = (field: "bestRoute" | "secondRoute", value: string | undefined): string | undefined => {
   const text = plain(value);
   if (text && text.length > 64) throw new RowError(field, "the route label is longer than 64 characters");
+  if (text && /^(?:DM phone|Phone|WhatsApp)(?:\s|$)/i.test(text)) {
+    if (hasUnbalancedBrackets(text) || (!routeOf(text) && /[()]/.test(text))) {
+      throw new RowError(field, "the route can't be read as one number; write a note in words in brackets after it");
+    }
+    if (hasUnsafePhoneRouteNote(text)) {
+      throw new RowError(field, "a route note can't hold a number or address; put it in Second route or Notes");
+    }
+  }
   return text;
 };
 
@@ -151,14 +159,22 @@ function removeBlocked(profile: Prospect): Prospect {
   const isNumberBlocked = (value: string | undefined) => value !== undefined && blocked.numbers.has(numberKey(value));
   const isRouteBlocked = (value: ProspectRoute | undefined) =>
     value !== undefined && isBlockedTarget(blocked, value);
-  const stripRoute = (value: string | undefined): string | undefined => {
-    if (!value) return undefined;
-    const clean = value
+  const stripSegment = (segment: string): string =>
+    segment
       .replace(EMAIL_IN_TEXT, (email) => (blocked.emails.has(email.toLowerCase()) ? "" : email))
       .replace(/\+?\d[\d().\s-]{5,}\d/g, (number) => (blocked.numbers.has(numberKey(number)) ? "" : number))
       .replace(/\s{2,}/g, " ")
       .trim();
-    return clean || undefined;
+  const stripRoute = (value: string | undefined): string | undefined => {
+    if (!value) return undefined;
+    const bracket = trailingBracketGroup(value);
+    if (bracket && /\p{L}/u.test(bracket.content)) {
+      const prefix = stripSegment(bracket.prefix);
+      const note = stripSegment(bracket.content);
+      const clean = [prefix, note ? `(${note})` : ""].filter(Boolean).join(" ").trim();
+      return clean || undefined;
+    }
+    return stripSegment(value) || undefined;
   };
   const saved: Prospect = {
     ...profile,

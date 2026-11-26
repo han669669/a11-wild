@@ -31,6 +31,70 @@ describe("Prospect page", () => {
     expect(screen.getByText("A Person, Founder")).toBeInTheDocument();
   });
 
+  it("shows route notes beside numbers and links the second WhatsApp route", async () => {
+    stubApi({
+      [GET]: () => ({
+        body: prospectPage({
+          contact: {
+            whatsapp: [
+              { number: "6580000001", href: "https://wa.me/6580000001", note: "verified business" },
+              { number: "6580000002", href: "https://wa.me/6580000002", note: "direct line" },
+            ],
+            sendTo: { channel: "whatsapp", to: "6580000001", direct: false, note: "verified business" },
+            others: {
+              second: { channel: "whatsapp", to: "6580000002", direct: false, label: "WhatsApp +6580000002 (direct line)", note: "direct line" },
+              secondHref: "https://wa.me/6580000002",
+            },
+          },
+        }),
+      }),
+    });
+    open();
+
+    const firstRow = (await screen.findByRole("link", { name: "+6580000001" })).closest("dd")!;
+    expect(within(firstRow).getByText(/verified business/)).toHaveClass("text-muted-foreground");
+    const currentChoice = screen.getByText("Current choice").nextElementSibling!;
+    expect(currentChoice).toHaveTextContent("The brand · WhatsApp · verified business");
+
+    const secondRow = screen.getByText("Another way").nextElementSibling as HTMLElement;
+    expect(secondRow).toHaveTextContent("WhatsApp · +6580000002 · direct line");
+    const secondLink = secondRow.querySelector("a");
+    expect(secondLink).toHaveAttribute("href", "https://wa.me/6580000002");
+    expect(secondLink).toHaveTextContent("WhatsApp · +6580000002");
+    expect(within(secondRow).getByText(/direct line/)).toHaveClass("text-muted-foreground");
+    expect(secondLink).toHaveAttribute("href", screen.getByRole("link", { name: "+6580000002" }).getAttribute("href"));
+  });
+
+  it("links the second WhatsApp route when it is the only WhatsApp contact", async () => {
+    stubApi({
+      [GET]: () => ({
+        body: prospectPage({
+          contact: {
+            whatsapp: [],
+            others: {
+              second: { channel: "whatsapp", to: "6580000002", direct: false, label: "WhatsApp +6580000002 (direct line)" },
+              secondHref: "https://wa.me/6580000002",
+            },
+          },
+        }),
+      }),
+    });
+    open();
+
+    const anotherWay = (await screen.findByText("Another way")).nextElementSibling as HTMLElement;
+    expect(anotherWay).toHaveTextContent("WhatsApp · +6580000002");
+    expect(within(anotherWay).getByRole("link", { name: "WhatsApp · +6580000002" })).toHaveAttribute("href", "https://wa.me/6580000002");
+  });
+
+  it("shows a call-route note beside the open phone", async () => {
+    stubApi({ [GET]: () => ({ body: prospectPage({ contact: { whatsapp: [], phone: "+65 6123 4567", phoneNote: "front desk" } }) }) });
+    open();
+
+    const phone = (await screen.findByText("Phone")).nextElementSibling as HTMLElement;
+    expect(phone).toHaveTextContent("+65 6123 4567 · front desk");
+    expect(within(phone).getByText(/front desk/)).toHaveClass("text-muted-foreground");
+  });
+
   it("starts contact and owner controls expanded, and lets each fold collapse", async () => {
     stubApi({ [GET]: () => ({ body: prospectPage() }) });
     open();
