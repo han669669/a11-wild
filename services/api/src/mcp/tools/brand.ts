@@ -228,6 +228,12 @@ export function brandTools({ brands, parallel, pictures, net }: BrandToolDeps): 
           }
         }
         const product = await brands.product(productId);
+        if (new Set(photos.map((photo) => photo.url)).size !== photos.length) {
+          throw new Refusal("A picture is repeated in this call.");
+        }
+        if (!product.photos.some((photo) => photo.kind === "pack") && photos.some((photo) => photo.kind === "pack")) {
+          throw new Refusal("This product has no pack photo, so adding one would change what its batches must measure. Save the product again with product_save and its pack photo.");
+        }
         if (photos.some((photo) => product.photos.some((existing) => existing.sourceUrl === photo.url))) {
           throw new Refusal("A picture is already on this product.");
         }
@@ -239,7 +245,12 @@ export function brandTools({ brands, parallel, pictures, net }: BrandToolDeps): 
           const copy = await copyPicture({ url: photo.url, folder: `products/${productId}`, what: "The picture" }, net, pictures);
           stored.push({ key: copy.key, sourceUrl: copy.sourceUrl, kind: photo.kind, ...(photo.what ? { what: photo.what } : {}) });
         }
-        return { product: await brands.appendProductPhotos(productId, stored) };
+        try {
+          return { product: await brands.appendProductPhotos(productId, stored) };
+        } catch (error) {
+          await Promise.allSettled(stored.map((photo) => pictures.remove(photo.key)));
+          throw error;
+        }
       },
     }),
   ];

@@ -201,6 +201,39 @@ describe("render_submit", () => {
     expect(criticDrafts).not.toContain(first.imageId);
   });
 
+  it("lets a rejected v1 draft be redone when three legacy drafts already exist", async () => {
+    const first = await doneDraft();
+    await doneDraft();
+    const third = await studio.services.images.add({
+      batchId,
+      kind: "draft",
+      key: `batches/${batchId}/drafts/legacy-third.png`,
+      ideaId: "idea-1",
+    });
+    const legacy = await studio.services.renders.create({
+      batchId,
+      ideaId: "idea-1",
+      kind: "draft",
+      prompt: SCENE,
+      usd: 0.009,
+      imageId: third.id,
+      fal: { requestId: "legacy", statusUrl: "https://queue.example/status", responseUrl: "https://queue.example/response" },
+      reservation: { month: "2026-11", sk: "SPEND#legacy", batchId, micro: 9000 },
+      stageCount: 2,
+    });
+    await studio.services.renders.end(legacy, { status: "done", imageId: third.id });
+    await callTool(studio, "checks_save", {
+      rulesVersion: RULES_VERSION,
+      batchId,
+      imageId: first.imageId,
+      items: [{ code: "D11", note: "The pouch is too tall." }],
+    });
+
+    const sent = await draft({ redo: first.renderId });
+
+    expect(sent.ok).toBe(true);
+  });
+
   it("refuses to make a v1 draft again when its checks do not reject it", async () => {
     const first = await doneDraft();
     expect(await draft({ redo: first.renderId })).toEqual(refused(/made again once, and only when its checks reject it/));

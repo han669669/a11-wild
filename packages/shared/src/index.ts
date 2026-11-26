@@ -893,6 +893,8 @@ export interface BatchImage {
   fromId?: string;
   /** The draft or the final that a repair, a finish or a food crop stands for. */
   rootId?: string;
+  /** The product photo name used for this skeleton, for example "pack-2". */
+  pack?: string;
   /** For a picture with the words set on it: the version of the approved words it carries. */
   wordsVersion?: number;
   createdAt: string;

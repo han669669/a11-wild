@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { HOME, wongiNet } from "../brand/extract.test.js";
+import { Refusal } from "../../src/mcp/registry.js";
 import { approvedClient, callTool, createStudio, type Studio } from "../helpers/deps.js";
 import { fakeNet } from "../helpers/net.js";
 import { extractReply } from "../helpers/parallel.js";
@@ -312,6 +313,28 @@ describe("brand tools", () => {
     expect(appended.value.product.photos[0].key).toBe(before[0].key);
   });
 
+  it("refuses to add the first pack photo to a saved product", async () => {
+    const brand = await savedBrand();
+    const extract = await callTool(studio, "product_extract", { brandId: brand.id, url: PRODUCT_PAGE });
+    const saved = await callTool(studio, "product_save", {
+      brandId: brand.id,
+      extractId: extract.value.extractId,
+      name: "Seaweed crisps",
+      photos: [{ url: EXTRA_ONE, kind: "food" }],
+    });
+    const before = studio.pictures.files.size;
+
+    expect(await callTool(studio, "product_photos_add", {
+      productId: saved.value.product.id,
+      extractId: extract.value.extractId,
+      photos: [{ url: PACK, kind: "pack" }],
+    })).toEqual({
+      ok: false,
+      error: "This product has no pack photo, so adding one would change what its batches must measure. Save the product again with product_save and its pack photo.",
+    });
+    expect(studio.pictures.files.size).toBe(before);
+  });
+
   it("refuses non-candidates, duplicate photos, unknown products and a product over the photo limit", async () => {
     const brand = await savedBrand();
     const extract = await callTool(studio, "product_extract", { brandId: brand.id, url: PRODUCT_PAGE });
@@ -334,6 +357,12 @@ describe("brand tools", () => {
     })).toEqual({ ok: false, error: expect.stringMatching(/not a product extract/) });
     expect(await callTool(studio, "product_photos_add", { ...args, photos: [{ url: PACK, kind: "pack" }] }))
       .toEqual({ ok: false, error: expect.stringMatching(/already on this product/) });
+    const copiedBefore = studio.pictures.files.size;
+    expect(await callTool(studio, "product_photos_add", {
+      ...args,
+      photos: [{ url: EXTRA_ONE, kind: "food" }, { url: EXTRA_ONE, kind: "prop" }],
+    })).toEqual({ ok: false, error: expect.stringMatching(/picture is repeated in this call/) });
+    expect(studio.pictures.files.size).toBe(copiedBefore);
     expect(await callTool(studio, "product_photos_add", { ...args, productId: "unknown-product", photos: [{ url: EXTRA_ONE, kind: "food" }] }))
       .toEqual({ ok: false, error: expect.stringMatching(/There is no product/) });
 
@@ -348,6 +377,28 @@ describe("brand tools", () => {
     });
     expect(await callTool(studio, "product_photos_add", { ...args, photos: [{ url: EXTRA_ONE, kind: "food" }] }))
       .toEqual({ ok: false, error: expect.stringMatching(/at most 16 photos/) });
+  });
+
+  it("removes copied photos when a conditional append refuses them", async () => {
+    const brand = await savedBrand();
+    const extract = await callTool(studio, "product_extract", { brandId: brand.id, url: PRODUCT_PAGE });
+    const saved = await callTool(studio, "product_save", {
+      brandId: brand.id,
+      extractId: extract.value.extractId,
+      name: "Seaweed crisps",
+      photos: [{ url: PACK, kind: "pack" }],
+    });
+    const filesBefore = new Set(studio.pictures.files.keys());
+    const remove = vi.spyOn(studio.pictures, "remove");
+    vi.spyOn(studio.services.brands, "appendProductPhotos").mockRejectedValue(new Refusal("The product's photos changed while they were being added. Run product_photos_add again."));
+
+    expect(await callTool(studio, "product_photos_add", {
+      productId: saved.value.product.id,
+      extractId: extract.value.extractId,
+      photos: [{ url: EXTRA_ONE, kind: "food" }],
+    })).toEqual({ ok: false, error: expect.stringMatching(/photos changed while they were being added/) });
+    expect(remove).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`^products/${saved.value.product.id}/`)));
+    expect([...studio.pictures.files.keys()].sort()).toEqual([...filesBefore].sort());
   });
 
   it("does not lose either photo when two additions arrive together", async () => {

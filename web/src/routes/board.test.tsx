@@ -32,7 +32,7 @@ const board = (overrides: Partial<BoardData> = {}): BoardData => ({
   ideas: [
     {
       idea: idea(1),
-      drafts: [draft("idea-1", 1), draft("idea-1", 2, { imageId: "idea-1-d2", items: [{ code: "D11", note: "The pouch is 5% wider than the packshot.", tool: "pack_check" }], looked: true, savedAt: at }), draft("idea-1", 3)],
+      drafts: [draft("idea-1", 1), draft("idea-1", 2, { imageId: "idea-1-d2", items: [{ code: "D11", note: "The pouch is 5% wider than the packshot.", tool: "pack_check" }, { code: "F6", note: "Seven things to look at." }], looked: true, savedAt: at }), draft("idea-1", 3)],
       pick: null,
       rank: null,
       finals: [],
@@ -93,6 +93,8 @@ describe("Pick board", () => {
     show(board());
     const second = (await screen.findByAltText("Rock 1, draft 2")).closest("li")!;
     expect(within(second).getByText("D11")).toBeInTheDocument();
+    expect(within(second).getByText("D11").parentElement).toHaveStyle({ backgroundColor: "var(--accent)" });
+    expect(within(second).getByText("F6").parentElement).toHaveStyle({ backgroundColor: "var(--accent)" });
     expect(within(second).getByText(/5% wider than the packshot/)).toBeInTheDocument();
     expect(within(second).getByText("(measured)")).toBeInTheDocument();
   });

@@ -59,7 +59,7 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
     defineTool({
       name: "skeleton_make",
       description:
-        "Makes a skeleton: the real pack, cut from the product's pack photo, on a blank 4:5 canvas at its true proportions. Free. Use it before every v2 draft of a product that has a pack photo (and in v1 or v3 when locking a pack or combining more than four photos), and give its picture id to render_submit as fromId: a model keeps what is already in its picture, so the pack's shape is right by construction. Each draft of an idea needs its own skeleton, with another place, scale or crop. Give either one pack (height, cx, base, count) or a plan with each pack's place, side and small turn, and flat shapes for a surface. Leave clear stage round each thing, a third of a pack's width or more: the model draws things a little larger than the skeleton, and a pack that touches its neighbour or its food cannot be measured alone. Only a skeleton made from a plan can be reprinted later. The pack photo needs a plain backdrop or its own transparency. The reply is a job: pixel_status gives the picture.",
+        "Makes a skeleton: the real pack, cut from the product's pack photo, on a blank 4:5 canvas at its true proportions. Free. Use it before every v2 draft of a product that has a pack photo (and in v1 or v3 when locking a pack or combining more than four photos), and give its picture id to render_submit as fromId: a model keeps what is already in its picture, so the pack's shape is right by construction. Name the clean pack photo (for example, pack-2) to use in skeleton_make and in references, so pack checks and repairs use the same photo. Each draft of an idea needs its own skeleton, with another place, scale or crop. Give either one pack (height, cx, base, count) or a plan with each pack's place, side and small turn, and flat shapes for a surface. Leave clear stage round each thing, a third of a pack's width or more: the model draws things a little larger than the skeleton, and a pack that touches its neighbour or its food cannot be measured alone. Only a skeleton made from a plan can be reprinted later. The pack photo needs a plain backdrop or its own transparency. The reply is a job: pixel_status gives the picture.",
       input: {
         batchId: id,
         ideaId: id,
@@ -67,6 +67,7 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
         height: z.number().min(0.05).max(1).default(0.5).describe("The pack's height as a share of the canvas height."),
         cx: fraction.default(0.5).describe("The pack's centre, as a share of the width."),
         base: fraction.default(0.9).describe("Where the pack's base is, as a share of the height."),
+        pack: z.string().regex(/^pack-\d{1,2}$/).optional().describe('The pack photo to use by name, for example "pack-2". Leave it out to use the first pack photo.'),
         count: z.number().int().min(1).max(6).default(1),
         gap: z.number().min(0).max(2).default(0.18).describe("The gap between packs, as a share of one pack's width."),
         plan: plan
@@ -84,17 +85,18 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
       },
       writes: true,
       needsRules: true,
-      handler: ({ batchId, ideaId, plan: layout, vary, bg, box: packBox, cutout: tuning, ...one }) =>
+      handler: ({ batchId, ideaId, pack, plan: layout, vary, bg, box: packBox, cutout: tuning, ...one }) =>
         pixels.skeleton({
           batchId,
           ideaId,
+          ...(pack ? { pack } : {}),
           placement: { ...(layout ? { plan: layout, ...(vary ? { vary } : {}) } : { ...one, bg }), ...(packBox ? { box: packBox } : {}), ...(tuning ? { cutout: tuning } : {}) },
         }),
     }),
     defineTool({
       name: "pack_check",
       description:
-        "Measures whether the pack in a picture is as tall and as wide as the real pack, within 2%. Free. Run it on every draft and every final that shows the pack of a product with a pack photo: the batch does not move on without it. A concept ad (v3) that shows the food alone, and whose render named no pack photo, needs none. The real pack is the product's first pack photo, or the pack photo the picture's render named when the model drew it with no skeleton. The pack needs a plain stage of one colour round it, apart from every other pack and thing, and seen from the front: a pack that touches another, or lies in steep perspective, cannot be measured. When it stands on something, give a box that ends at its base. When it is turned in the plane (it lies on the stage at an angle), send tilted. A fail is saved on the picture as D11, and only a later pass of this tool on the same pack of the same picture clears it. A picture with more than one pack: measure each, with its pack number. The reply is a job: pixel_status gives the measure.",
+        "Measures whether the pack in a picture is as tall and as wide as the real pack, within 2%. Free. Run it on every draft and every final that shows the pack of a product with a pack photo: the batch does not move on without it. A concept ad (v3) that shows the food alone, and whose render named no pack photo, needs none. For a skeleton-based picture, the real pack is the photo named in skeleton_make; an older skeleton without a name uses the first pack photo. Without a skeleton, it is the pack photo the render named, or the first pack photo. The pack needs a plain stage of one colour round it, apart from every other pack and thing, and seen from the front: a pack that touches another, or lies in steep perspective, cannot be measured. When it stands on something, give a box that ends at its base. When it is turned in the plane (it lies on the stage at an angle), send tilted. A fail is saved on the picture as D11, and only a later pass of this tool on the same pack of the same picture clears it. A picture with more than one pack: measure each, with its pack number. The reply is a job: pixel_status gives the measure.",
       input: {
         batchId: id,
         imageId,

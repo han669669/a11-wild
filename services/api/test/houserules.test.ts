@@ -63,6 +63,7 @@ describe("house rules", () => {
     expect(v1.find((rule) => rule.id === "v1-wild")?.text).toContain("Each idea must answer 'why did we make this ad' at first glance");
     expect(v1.find((rule) => rule.id === "v1-critic")?.text).toMatch(/five things, first why this ad/);
     expect(v1.find((rule) => rule.id === "real-photos-first")?.text).toContain("A pack photo is the pack alone");
+    expect(v1.find((rule) => rule.id === "real-photos-first")?.text).toContain("Name the clean pack photo in skeleton_make and in references");
     expect(v1.find((rule) => rule.id === "drafts")?.text).toMatch(/In v1, make two drafts.*In v2, make three drafts/);
     expect(v1.find((rule) => rule.id === "owner-board")?.text).toContain("Mark no draft with a pass or fail colour");
     const v2 = rulesFor("main", "v2");

@@ -3,18 +3,24 @@ import { RULES_VERSION } from "../../src/houserules.js";
 import type { PixelEvent } from "../../src/pixels/runner.js";
 import { batchAtTruth, judgeIdeas, v1Ideas } from "../helpers/batch.js";
 import { approvedClient, callTool, createStudio, type Studio } from "../helpers/deps.js";
+import { fakeNet } from "../helpers/net.js";
+import { PNG } from "../helpers/pictures.js";
 
 const SCENE = "The pouch stands on a wet black rock at dusk, low camera, a wave about to break behind it.";
 const refused = (pattern: RegExp) => ({ ok: false, error: expect.stringMatching(pattern) });
 const rules = { rulesVersion: RULES_VERSION };
 const PACK = "products/p/pack.png";
+const PACK_TWO_URL = "https://cdn.wongi.example/clean-pack.png";
 
 let studio: Studio;
 let batchId: string;
 
 /** A v1 batch with five ideas whose product has a pack photo. */
-async function start(pixels?: (event: PixelEvent) => ReturnType<NonNullable<Parameters<typeof createStudio>[0]>["pixels"] & object>) {
-  studio = await createStudio(pixels ? { pixels } : {});
+async function start(
+  pixels?: (event: PixelEvent) => ReturnType<NonNullable<Parameters<typeof createStudio>[0]>["pixels"] & object>,
+  net?: NonNullable<Parameters<typeof createStudio>[0]>["net"],
+) {
+  studio = await createStudio({ ...(pixels ? { pixels } : {}), ...(net ? { net } : {}) });
   await approvedClient(studio);
   const made = await batchAtTruth(studio);
   batchId = made.batchId;
@@ -44,6 +50,7 @@ beforeEach(() => start());
 describe("skeleton_make", () => {
   it("sends the real pack photo by its key, and saves the skeleton as a picture of the batch", async () => {
     const made = await skeleton("idea-1", { bg: "#E83C28", height: 0.6 });
+    expect(made.value.image.pack).toBe("pack-1");
     expect(made.value).toMatchObject({ tool: "skeleton", status: "done", image: { kind: "skeleton", ideaId: "idea-1", viewUrl: expect.stringContaining("signed=1") } });
     const [event] = studio.pixels.events;
     expect(event).toMatchObject({ tool: "skeleton", batchId, input: { packKey: PACK, bg: "#E83C28", height: 0.6 } });
@@ -52,6 +59,34 @@ describe("skeleton_make", () => {
     // The draft of this idea can now be built round it.
     const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
     expect(sent.ok).toBe(true);
+  });
+
+  it("uses the pack-2 photo that product_photos_add appended", async () => {
+    await start(undefined, fakeNet({ [PACK_TWO_URL]: { body: PNG, headers: { "content-type": "image/png" } } }));
+    const batch = await studio.services.batches.get(batchId);
+    const extract = await studio.services.brands.offer({
+      kind: "product",
+      url: "https://wongi.example/products/seaweed-crisps",
+      pageUrl: "https://wongi.example/products/seaweed-crisps",
+      logos: [],
+      photos: [PACK_TWO_URL],
+      productPages: [],
+      colours: [],
+    });
+    const added = await callTool(studio, "product_photos_add", {
+      productId: batch.productId,
+      extractId: extract.id,
+      photos: [{ url: PACK_TWO_URL, kind: "pack" }],
+    });
+    const packTwo = added.value.product.photos.find((photo: { sourceUrl: string }) => photo.sourceUrl === PACK_TWO_URL);
+    const made = await skeleton("idea-1", { bg: "E83C28", pack: "pack-2" });
+    expect(made.value.image).toMatchObject({ kind: "skeleton", pack: "pack-2" });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key });
+
+    const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
+    const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
+    await run("pack_check", { imageId, at: [512, 900], bg: "E83C28" });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key });
   });
 
   it("lets no agent name a file: a key in its input is refused", async () => {

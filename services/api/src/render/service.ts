@@ -238,7 +238,7 @@ export class RenderService {
         }
       }
       const perIdea = draftsPerIdea(batch.kind);
-      if (mine.length - (redoOf ? 1 : 0) >= perIdea) {
+      if (!redoOf && mine.length >= perIdea) {
         throw new Refusal(`Idea ${idea.id} has its ${perIdea} drafts. A failed render can be sent again; a finished draft can be made again once with redo only if its checks reject it.`);
       }
       const hasPack = product.photos.some((photo) => photo.kind === "pack");

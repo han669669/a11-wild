@@ -28,7 +28,7 @@ export function criticTools({ critic, calibration }: { critic: CriticService; ca
     defineTool({
       name: "critic_pick",
       description:
-        `The blind critic's judgement of the batch's ${IDEAS_PER_BATCH} v1 ideas: keep or cut for each, with a reason. It needs the ticket of critic_open with step "ideas". All ${IDEAS_PER_BATCH} kept: the batch is judged and its drafts can be made. One cut: the batch stays at its ideas, and the main agent writes another in its place.`,
+        `The blind critic's judgement of the batch's ${IDEAS_PER_BATCH} v1 ideas: keep or cut for each, with a reason. It needs the ticket of critic_open with step "ideas". In a client v1 batch, the critic advises and the batch moves to judged even with cuts. In an outreach batch, one kept idea is enough; with none, another round is needed.`,
       input: {
         batchId: id,
         ticket,

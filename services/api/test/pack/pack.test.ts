@@ -15,6 +15,7 @@ const text = (headline = "The skin, done right") => ({
   cta: "Order Now",
 });
 const WHY = ["idea-1", "idea-2", "idea-3"].map((ideaId) => ({ ideaId, why: "Buyers say the skin is what they come back for; the ad says so." }));
+const WHY5 = ["idea-1", "idea-2", "idea-3", "idea-4", "idea-5"].map((ideaId) => ({ ideaId, why: "Buyers say the skin is what they come back for; the ad says so." }));
 const PLAN = ["Put all three ads in one ad set.", "Run them for 72 hours.", "Stop an ad that is under the account's usual CTR after 72 hours."];
 const LOGO_URL = "https://wongi.example/logo.png";
 const REAL_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=", "base64");
@@ -123,6 +124,28 @@ describe("pack_publish", () => {
     const { ads } = (await publish()).value.version;
     expect(ads[0].adName).toBe("a11_W47_wongi_b02_wild_c1_v1");
     expect(ads[0].words).toBeUndefined();
+  });
+
+  it("publishes all five picked ideas in a v1 batch", async () => {
+    await setUp("v1");
+    await approve();
+    const extra = await callTool(studio, "meta_save", {
+      ...rules,
+      batchId,
+      ads: ["idea-4", "idea-5"].map((ideaId) => ({ ideaId, variants: [text(), text("Skin first")] })),
+    });
+    await callTool(studio, "meta_approve", {
+      ...rules,
+      batchId,
+      ads: extra.value.saved.map(({ ideaId, version }: { ideaId: string; version: number }) => ({ ideaId, version, ownerSaid: "yes" })),
+    });
+    delivered = Object.fromEntries(["idea-1", "idea-2", "idea-3", "idea-4", "idea-5"].map((ideaId) => [ideaId, `${ideaId}-final`]));
+    await state("done");
+
+    const made = await callTool(studio, "pack_publish", { ...rules, batchId, why: WHY5, launchPlan: PLAN });
+
+    expect(made.ok).toBe(true);
+    expect(made.value.version.ads).toHaveLength(5);
   });
 
   it("keeps completed v1 finals and packs deliverable after a later logo save", async () => {

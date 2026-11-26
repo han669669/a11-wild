@@ -70,11 +70,12 @@ const seedOf = (imageId: string) => createHash("sha256").update(imageId).digest(
 export class PixelService {
   constructor(private readonly deps: Deps) {}
 
-  private async packKey(batchId: string): Promise<string> {
+  private async packKey(batchId: string, name?: string): Promise<string> {
     const { batches, brands } = this.deps;
     const product = await brands.product((await batches.get(batchId)).productId);
-    const pack = product.photos.find((photo) => photo.kind === "pack");
+    const pack = name ? photoNamed(product, name) : product.photos.find((photo) => photo.kind === "pack");
     if (!pack) throw new Refusal("This product has no pack photo. Save one with product_photos_save first: the tool needs the real pack.");
+    if (pack.kind !== "pack") throw new Refusal(`Photo ${name} is not a pack photo.`);
     return pack.key;
   }
 
@@ -110,20 +111,29 @@ export class PixelService {
   /** The draft or final a picture stands for. */
   private root = (image: BatchImage) => image.rootId ?? image.id;
 
-  async skeleton(input: { batchId: string; ideaId: string; placement: Record<string, unknown> }): Promise<PixelView> {
+  async skeleton(input: { batchId: string; ideaId: string; placement: Record<string, unknown>; pack?: string }): Promise<PixelView> {
     const { batches } = this.deps;
     const batch = await batches.get(input.batchId);
     if (!SKELETON_STATES.includes(batch.state)) throw new Refusal(`A skeleton is made before a draft. This batch is at "${batch.state}".`);
     if (!(await batches.ideas(batch.id)).some((idea) => idea.id === input.ideaId)) throw new Refusal(`This batch has no idea ${input.ideaId}.`);
     if (!input.placement.plan && !input.placement.bg) throw new Refusal("A skeleton needs the canvas colour (bg), or a plan that has one.");
     const placement = input.placement.plan ? { ...input.placement, plan: await this.planPhotos(batch.productId, planColours(input.placement.plan)) } : input.placement;
-    const pack = (await this.deps.brands.product(batch.productId)).photos.find((photo) => photo.kind === "pack");
+    const product = await this.deps.brands.product(batch.productId);
+    const firstPack = product.photos.find((photo) => photo.kind === "pack");
+    const packName = input.pack ?? (firstPack ? "pack-1" : undefined);
+    const pack = packName ? photoNamed(product, packName) : undefined;
+    if (input.pack && pack?.kind !== "pack") throw new Refusal(`This product has no pack photo named ${input.pack}.`);
     // A product with no pack (a cake, a dish) is still built from real photos: each item of the plan names one.
     const named = (input.placement.plan as { products?: { photo?: string }[] } | undefined)?.products?.every((entry) => entry.photo);
     if (!pack && !named) {
       throw new Refusal('Real photos first: this product has no pack photo, so the skeleton is a plan in which each item names a saved real photo of the product ("food-1", "prop-1"). Save the photos with product_save.');
     }
-    return this.start("skeleton", batch.id, { ...placement, ...(pack ? { packKey: pack.key } : {}) }, { out: { kind: "skeleton", ideaId: input.ideaId } });
+    return this.start(
+      "skeleton",
+      batch.id,
+      { ...placement, ...(pack ? { packKey: pack.key } : {}) },
+      { out: { kind: "skeleton", ideaId: input.ideaId, ...(pack && packName ? { pack: packName } : {}) } },
+    );
   }
 
   /** A plan product that names another real photo of the product ("food-2", "prop-1") gets that photo's key. An agent never types a key. */
@@ -159,13 +169,14 @@ export class PixelService {
     const { images, jobs } = this.deps;
     let at: BatchImage | undefined = image;
     for (let step = 0; at && at.kind !== "skeleton" && step < 6; step += 1) at = at.fromId ? await images.get(batchId, at.fromId) : undefined;
-    return at ? (await jobs.get(batchId, at.id)).input : {};
+    return at ? { ...(await jobs.get(batchId, at.id)).input, ...(at.pack ? { pack: at.pack } : {}) } : {};
   }
 
   /** The pack photo, cut out the same way as for the picture's skeleton: its tuning and its box are carried to each later tool. */
   private async packOf(batchId: string, image: BatchImage): Promise<Record<string, unknown>> {
-    const { cutout, box } = await this.skeletonOf(batchId, image);
-    return { packKey: (await this.drawnFrom(batchId, image)) ?? (await this.packKey(batchId)), ...(cutout ? { cutout } : {}), ...(box ? { box } : {}) };
+    const { cutout, box, pack } = await this.skeletonOf(batchId, image);
+    const packKey = typeof pack === "string" ? await this.packKey(batchId, pack) : (await this.drawnFrom(batchId, image)) ?? (await this.packKey(batchId));
+    return { packKey, ...(cutout ? { cutout } : {}), ...(box ? { box } : {}) };
   }
 
   /** The pack photo the model drew a picture from, when the picture has no skeleton: the pack its render named. */
@@ -406,8 +417,8 @@ export class PixelService {
         const line = String(result.line ?? "").slice(0, 600);
         // What the job made or measured is saved before the job ends, so a read that stops half way is done again by the next one. Each write gives the same row again.
         if (job.out) {
-          const { key, kind, ideaId, fromId, rootId, wordsVersion } = job.out;
-          await images.add({ id: job.id, batchId, kind, key, ...(ideaId ? { ideaId } : {}), ...(fromId ? { fromId } : {}), ...(rootId ? { rootId } : {}), ...(wordsVersion ? { wordsVersion } : {}) });
+          const { key, kind, ideaId, fromId, rootId, pack, wordsVersion } = job.out;
+          await images.add({ id: job.id, batchId, kind, key, ...(ideaId ? { ideaId } : {}), ...(fromId ? { fromId } : {}), ...(rootId ? { rootId } : {}), ...(pack ? { pack } : {}), ...(wordsVersion ? { wordsVersion } : {}) });
         } else if (job.imageId) {
           // D11 is the product drawn wrong: the pack's shape, and where the cap sits. Each pack of a picture keeps its own result.
           const pack = typeof job.input.pack === "number" ? job.input.pack : 1;

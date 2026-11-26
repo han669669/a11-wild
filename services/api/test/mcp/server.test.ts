@@ -46,6 +46,8 @@ describe("MCP server", () => {
     const tools = Object.fromEntries(body.result.tools.map((tool: { name: string }) => [tool.name, tool]));
     expect(Object.keys(tools)).toEqual(expect.arrayContaining(["rules_get", "whoami", "studio_status", "brand_logo_save", "product_photos_add"]));
     expect(tools.product_photos_add.description).toMatch(/adds real photos to a saved product without making a new one.*existing photo names stay the same/i);
+    expect(tools.critic_pick.description).toMatch(/client v1.*critic advises.*moves to judged even with cuts/i);
+    expect(tools.critic_pick.description).toMatch(/outreach.*one kept idea is enough/i);
     expect(tools.rules_get.inputSchema).toMatchObject({
       type: "object",
       required: ["role", "kind"],
