@@ -264,9 +264,9 @@ describe("skeleton_make", () => {
     });
     await studio.pictures.put(final.key, JPEG_WIDTH_1536, "image/jpeg");
 
-    await run("pack_check", { imageId: final.id, at: [768, 960], bg: "E83C28" });
+    expect(await run("pack_check", { imageId: final.id, at: [768, 960], bg: "E83C28" })).toMatchObject({ ok: true });
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box: upperBox, cutout: { darkMax: 30 } });
-    await run("product_swap", { imageId: final.id, old: [600, 936, 760, 1160] });
+    expect(await run("product_swap", { imageId: final.id, old: [600, 936, 760, 1160] })).toMatchObject({ ok: true });
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box: upperBox, cutout: { darkMax: 30 } });
   });
 
