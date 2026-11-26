@@ -120,7 +120,7 @@ export function pixelTools({ pixels }: { pixels: PixelService }): ToolDefinition
         imageId,
         box: box.describe("X0,Y0,X1,Y1 in pixels: the bottle with some plain stage on both sides, ending at its base above any contact shadow."),
         split: px.describe("Y in pixels: the first row below the cap and the neck (the top of any shoulder)."),
-        pack: defaultPackNumber,
+        pack: defaultPackNumber.describe(packNumberDescription),
       },
       writes: true,
       handler: (input) => pixels.capCheck(input),

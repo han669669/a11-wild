@@ -97,13 +97,13 @@ describe("skeleton_make", () => {
 
     const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
     const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
-    await run("pack_check", { imageId, at: [512, 900], bg: "E83C28" });
+    await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", pack: 1 });
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, cutout: { darkMax: 45, edges: "left" }, pack: 1 });
     await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", pack: 1 });
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, cutout: { darkMax: 45, edges: "left" }, pack: 1 });
-    await run("product_swap", { imageId, old: [400, 620, 500, 1100] });
+    await run("product_swap", { imageId, old: [400, 620, 500, 1100], pack: 1 });
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, cutout: { darkMax: 45, edges: "left" }, pack: 1 });
-    await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", photo: "pack-2" });
+    await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", photo: "pack-2", pack: 1 });
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, cutout: { darkMax: 45, edges: "left" }, pack: 1 });
   });
 
@@ -149,7 +149,7 @@ describe("skeleton_make", () => {
     const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
 
     await run("pack_check", { imageId, at: [700, 900], bg: "E83C28", item: 2 });
-    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box: secondBox, cutout: { darkMax: 60 }, pack: 1 });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box: secondBox, cutout: { darkMax: 60 }, pack: 2 });
   });
 
   it("refuses different plan crops without an item selector", async () => {
@@ -166,12 +166,13 @@ describe("skeleton_make", () => {
     const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
     const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
 
-    expect(await run("pack_check", { imageId, at: [700, 900], bg: "E83C28" })).toEqual(
+    expect(await run("pack_check", { imageId, at: [700, 900], bg: "E83C28", pack: 1 })).toEqual(
       refused(/Packs of this plan use different photos or crops: give item/),
     );
     expect(await run("product_reprint", { imageId, face: [100, 100, 200, 200] })).toEqual(
-      refused(/Product reprint needs a plan with one shared pack photo and crop/),
+      refused(/A reprint works on a plan built round the default pack photo; repair this picture with product_swap/),
     );
+    expect(studio.pixels.events.some((event) => event.tool === "reprint")).toBe(false);
   });
 
   it("accepts identical plan references without an item selector", async () => {
@@ -190,7 +191,10 @@ describe("skeleton_make", () => {
     const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
     const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
 
-    await run("pack_check", { imageId, at: [700, 900], bg: "E83C28" });
+    expect(await run("pack_check", { imageId, at: [700, 900], bg: "E83C28" })).toEqual(
+      refused(/This picture shows more than one pack: give pack, its number from the left/),
+    );
+    await run("pack_check", { imageId, at: [700, 900], bg: "E83C28", pack: 1 });
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box, cutout, pack: 1 });
   });
 
@@ -209,10 +213,29 @@ describe("skeleton_make", () => {
     const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
     const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
 
-    await run("pack_check", { imageId, at: [700, 900], bg: "E83C28" });
+    await run("pack_check", { imageId, at: [700, 900], bg: "E83C28", pack: 1 });
     const input = studio.pixels.events.at(-1)!.input;
     expect(input).toMatchObject({ packKey: PACK, box, pack: 1 });
     expect(input).not.toHaveProperty("cutout");
+  });
+
+  it("treats cutout edge order as equivalent", async () => {
+    await start();
+    const box = [10, 20, 110, 220];
+    const made = await skeleton("idea-1", {
+      plan: {
+        bg: "E83C28",
+        products: [
+          { cx: 0.35, base: 0.9, height: 0.45, photo: "pack-1", box, cutout: { edges: "left,right" } },
+          { cx: 0.65, base: 0.9, height: 0.45, photo: "pack-1", box, cutout: { edges: "right,left" } },
+        ],
+      },
+    });
+    const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
+    const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
+
+    await run("pack_check", { imageId, at: [700, 900], bg: "E83C28", pack: 1 });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box, pack: 1 });
   });
 
   it("refuses different effective cutout thresholds without an item selector", async () => {
@@ -230,7 +253,7 @@ describe("skeleton_make", () => {
     const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
     const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
 
-    expect(await run("pack_check", { imageId, at: [700, 900], bg: "E83C28" })).toEqual(
+    expect(await run("pack_check", { imageId, at: [700, 900], bg: "E83C28", pack: 1 })).toEqual(
       refused(/Packs of this plan use different photos or crops: give item/),
     );
   });
@@ -271,8 +294,8 @@ describe("skeleton_make", () => {
     const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
     const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
 
-    await run("product_swap", { imageId, old: [600, 760, 620, 1100], item: 2, pack: 3 });
-    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box: secondBox, cutout: { darkMax: 60 }, pack: 3 });
+    await run("product_swap", { imageId, old: [600, 760, 620, 1100], item: 2 });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box: secondBox, cutout: { darkMax: 60 }, pack: 2 });
   });
 
   it("counts every plan product when selecting an item", async () => {
@@ -357,6 +380,40 @@ describe("skeleton_make", () => {
 
     await run("pack_check", { imageId, at: [700, 900], bg: "E83C28", item: 2 });
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, box: packBox, cutout: packCutout, pack: 1 });
+  });
+
+  it("uses a unique pack photo to infer the result label and keep another pack's failure", async () => {
+    await start(
+      (event) => event.tool === "pack_check"
+        ? { ok: true, passed: event.input.pack === 2, line: event.input.pack === 2 ? "PASS at 2%" : "difference -10.2%; FAIL at 2%" }
+        : { ok: true },
+      fakeNet({ [PACK_TWO_URL]: { body: PNG, headers: { "content-type": "image/png" } } }),
+    );
+    const packTwo = await appendPackTwo();
+    const jarBox = [30, 40, 330, 440];
+    const boxBox = [50, 60, 350, 460];
+    const made = await skeleton("idea-1", {
+      plan: {
+        bg: "E83C28",
+        products: [
+          { cx: 0.35, base: 0.9, height: 0.45, photo: "pack-1", box: jarBox },
+          { cx: 0.65, base: 0.9, height: 0.5, photo: "pack-2", box: boxBox },
+        ],
+      },
+    });
+    const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
+    const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
+
+    await run("pack_check", { imageId, at: [350, 900], bg: "E83C28", pack: 1, photo: "pack-1" });
+    expect((await studio.services.checks.get(batchId, imageId))!.items).toEqual([
+      { code: "D11", note: "difference -10.2%; FAIL at 2%", tool: "pack_check" },
+    ]);
+    await run("pack_check", { imageId, at: [700, 900], bg: "E83C28", photo: "pack-2" });
+
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: packTwo.key, box: boxBox, pack: 2 });
+    expect((await studio.services.checks.get(batchId, imageId))!.items).toEqual([
+      { code: "D11", note: "difference -10.2%; FAIL at 2%", tool: "pack_check" },
+    ]);
   });
 
   it("uses skeleton-wide pack settings for an explicitly selected default item", async () => {
@@ -538,7 +595,7 @@ describe("pack_check and cap_check", () => {
     const imageId = await draft();
     await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", box: [300, 600, 724, 1100] });
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ around: [300, 600, 724, 1100] });
-    await run("pack_check", { imageId, at: [512, 900], bg: "E83C28" });
+    await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", pack: 1 });
     expect(studio.pixels.events.at(-1)!.input).not.toHaveProperty("around");
   });
 
@@ -569,7 +626,7 @@ describe("pack_check and cap_check", () => {
     });
     await run("pack_check", { imageId, at: [512, 900], bg: "E83C28", pack: 2 });
     pass = true;
-    await run("pack_check", { imageId, at: [200, 900], bg: "E83C28" });
+    await run("pack_check", { imageId, at: [200, 900], bg: "E83C28", pack: 1 });
     await run("pack_check", { imageId, at: [820, 900], bg: "E83C28", pack: 3 });
     const { checks } = studio.services;
     expect((await checks.get(batchId, imageId))!.items).toEqual([{ code: "D11", note: "Pack 2: difference -10.2%; FAIL at 2%", tool: "pack_check" }]);

@@ -91,11 +91,36 @@ describe("checks", () => {
     expect((await studio.services.checks.measure(batchId, first!, PACK_CHECK, null)).items).toEqual([]);
   });
 
-  it("asks for the pack measure only on v1 drafts that show the pack, not food-only drafts", async () => {
-    const product = await studio.services.brands.product((await studio.services.batches.get(batchId)).productId);
+  it("does not require pack_check for a food-only skeleton draft", async () => {
+    const made = await batchAtTruth(studio);
+    batchId = made.batchId;
+    const product = await studio.services.brands.product(made.product.id);
     await studio.services.brands.saveProduct({ ...product, photos: [...product.photos, { key: "products/p/pack.png", sourceUrl: "https://cdn.wongi.example/pack.png", kind: "pack" }] });
-    // Food-only v1 drafts (no pack reference or skeleton) do not require pack_check.
-    await checkAll();
+    await callTool(studio, "ideas_save", { ...rules, batchId, ideas: v1Ideas() });
+    await judgeIdeas(studio, batchId);
+    const skeletonJob = await callTool(studio, "skeleton_make", {
+      ...rules,
+      batchId,
+      ideaId: "idea-1",
+      plan: { bg: "E83C28", products: [{ cx: 0.5, base: 0.85, height: 0.3, photo: "food-1" }] },
+    });
+    const skeleton = await callTool(studio, "pixel_status", { batchId, jobId: skeletonJob.value.id });
+    const imageIds: string[] = [];
+    let foodOnlyDraft: string | undefined;
+    for (const ideaId of IDEA_IDS) {
+      for (let n = 0; n < draftsPerIdea("v1"); n += 1) {
+        studio.clock.now = new Date(studio.clock.now.getTime() + 1000);
+        const fromId = ideaId === "idea-1" && n === 0 ? skeleton.value.image.id : undefined;
+        const rendered = await render(ideaId, "draft", fromId);
+        const imageId = rendered.value.image.id as string;
+        imageIds.push(imageId);
+        if (fromId) foodOnlyDraft = imageId;
+      }
+    }
+    const firstCheck = await check(foodOnlyDraft!);
+    expect(firstCheck.value.stillMissing).not.toContain(`pack_check for picture ${foodOnlyDraft}`);
+    for (const imageId of imageIds.filter((id) => id !== foodOnlyDraft)) await check(imageId);
+    await rankDrafts(studio, batchId);
     expect(await state()).toBe("checked");
     expect((await callTool(studio, "board_show", { batchId })).value.batch.state).toBe("waiting_pick");
   });

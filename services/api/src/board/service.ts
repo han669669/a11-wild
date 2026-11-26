@@ -9,6 +9,8 @@ import type { CriticStore } from "../critic/store.js";
 import type { DirectionStore } from "../direction/store.js";
 import type { ImageStore } from "../images/store.js";
 import { Refusal } from "../mcp/registry.js";
+import { planShowsPack } from "../pixels/plan.js";
+import type { JobStore } from "../pixels/store.js";
 import type { PickStore } from "../picks/store.js";
 import type { Pictures } from "../pictures/store.js";
 import { draftsPerIdea, type FinalRule } from "../render/service.js";
@@ -31,6 +33,7 @@ interface Deps {
   truth: TruthStore;
   images: ImageStore;
   renders: RenderStore;
+  jobs: JobStore;
   checks: CheckStore;
   picks: PickStore;
   critic: CriticStore;
@@ -175,24 +178,24 @@ export class BoardService implements FinalRule {
     };
   }
 
-  /**
-   * Whether a picture shows the pack, so that the pack measure is owed. A v1 wild ad or a v3 concept ad may show the food alone:
-   * the model drew its draft from the real photos its render named, and a render that named no pack photo has no pack to measure.
-   * Every other picture is built round a skeleton, and counts as showing the pack.
-   */
+  /** Whether a picture shows a pack, based on its render references or skeleton plan. */
   private async showsPack(batch: Batch, image: BatchImage): Promise<boolean> {
     if (batch.kind !== "v3" && batch.kind !== "v1") return true;
-    const { images, renders } = this.deps;
+    const { brands, images, jobs, renders } = this.deps;
+    const product = await brands.product(batch.productId);
+    const packPhotos = product.photos.filter((photo) => photo.kind === "pack");
+    const packKeys = new Set(packPhotos.map((photo) => photo.key));
+    const packNames = new Set(packPhotos.map((_, index) => `pack-${index + 1}`));
     const all = await renders.list(batch.id);
     let at: BatchImage | undefined = image.rootId ? await images.get(batch.id, image.rootId) : image;
-    // A final is made from its draft, and a repair from its picture: the first one the model drew alone names the pack.
+    // A final is made from its draft, and a repair from its picture: a render reference or its skeleton plan can show the pack.
     for (let step = 0; at && step < 6; step += 1) {
       const render = all.find((other) => other.id === at!.id);
       if (!render) return true;
-      if (render.pack !== undefined) return true;
+      if ([...(render.packPhotos ?? []), ...(render.pack ? [render.pack] : [])].some((name) => packNames.has(name))) return true;
       if (!render.fromId) return false;
       at = await images.get(batch.id, render.fromId);
-      if (at.kind === "skeleton") return true;
+      if (at.kind === "skeleton") return planShowsPack((await jobs.get(batch.id, at.id)).input.plan, packKeys);
     }
     return true;
   }

@@ -15,6 +15,7 @@ import type { Pictures } from "../pictures/store.js";
 import type { PickStore } from "../picks/store.js";
 import type { RenderStore } from "../render/store.js";
 import type { PixelRunner } from "./runner.js";
+import { planShowsPack } from "./plan.js";
 import { lockupLayout } from "../direction/lockup.js";
 import type { DirectionStore } from "../direction/store.js";
 import { type JobStore, jobView, type StoredJob } from "./store.js";
@@ -24,6 +25,8 @@ const JOB_MINUTES = 10;
 const RESULT_BYTES = 20_000;
 const RENDERED: ImageKind[] = ["draft", "final", ...REPAIR_KINDS];
 const SKELETON_STATES = ["ideas", "judged", "worded", "directed", "priced", "waiting_spend", "drafting"];
+const cutoutEdges = (cutout?: Record<string, unknown>) =>
+  typeof cutout?.edges === "string" ? cutout.edges : "top,bottom,left,right";
 const effectiveCutout = (cutout?: Record<string, unknown>) => ({
   darkMax: cutout?.darkMax ?? 48,
   lightSat: cutout?.lightSat ?? 0.17,
@@ -32,7 +35,7 @@ const effectiveCutout = (cutout?: Record<string, unknown>) => ({
   smooth: cutout?.smooth ?? 0,
   erode: cutout?.erode ?? 1,
   outline: cutout?.outline ?? 12,
-  edges: cutout?.edges ?? "top,bottom,left,right",
+  edges: [...new Set(cutoutEdges(cutout).split(",").map((edge) => edge.trim()))].sort().join(","),
 });
 
 interface Deps {
@@ -198,7 +201,7 @@ export class PixelService {
     const { number, ...reference } = await this.packRef(input.batchId, image, {
       ...(photo !== undefined ? { photo } : {}),
       ...(item !== undefined ? { item } : {}),
-      pack: pack ?? 1,
+      ...(pack !== undefined ? { pack } : {}),
     });
     return this.start("pack_check", input.batchId, { ...rest, pack: number, ...(around ? { around } : {}), ...reference, renderKey: image.key }, { imageId: image.id });
   }
@@ -242,14 +245,13 @@ export class PixelService {
     image: BatchImage,
     options: { photo?: string; pack?: number; item?: number } = {},
     context?: SkeletonContext,
-    ambiguityMessage?: string,
   ): Promise<PackReference> {
     const { batches, brands } = this.deps;
     const product = await brands.product((await batches.get(batchId)).productId);
     const productPacks = product.photos.filter((entry) => entry.kind === "pack");
+    const productPackKeys = new Set(productPacks.map((entry) => entry.key));
     const skeletonContext = context ?? await this.skeletonContext(batchId, image);
     const { skeleton, input, lineagePacks } = skeletonContext;
-    const number = options.pack ?? 1;
     const packNameForKey = (key: string) => {
       const index = productPacks.findIndex((entry) => entry.key === key);
       return index >= 0 ? `pack-${index + 1}` : undefined;
@@ -267,7 +269,16 @@ export class PixelService {
     const packItems = planItems
       .filter(isPackItem)
       .sort((left, right) => left.item.cx - right.item.cx || left.index - right.index);
-    const itemRef = ({ item }: typeof packItems[number]): PackReference => {
+    const numberFor = (selected?: typeof packItems[number]) => {
+      if (options.pack !== undefined) return options.pack;
+      if (selected) return packItems.findIndex(({ index }) => index === selected.index) + 1;
+      if (packItems.length > 1) {
+        throw new Refusal("This picture shows more than one pack: give pack, its number from the left.");
+      }
+      return 1;
+    };
+    const itemRef = (entry: typeof packItems[number], number = numberFor(entry)): PackReference => {
+      const { item } = entry;
       const selected = item.photoKey ? productPacks.find((entry) => entry.key === item.photoKey) : defaultPhoto ?? firstProductPack;
       if (!selected) throw new Refusal("This product has no pack photo. Save one with product_photos_save first: the tool needs the real pack.");
       const cutout = item.photoKey ? item.cutout : input.cutout as Record<string, unknown> | undefined;
@@ -285,7 +296,7 @@ export class PixelService {
       if (!selectedItem || !isPackItem(selectedItem)) {
         throw new Refusal(`This picture's plan has no pack at item ${options.item}.`);
       }
-      const reference = itemRef(selectedItem);
+      const reference = itemRef(selectedItem, numberFor(selectedItem));
       if (options.photo !== undefined && (selectedPhoto?.kind !== "pack" || selectedPhoto.key !== reference.packKey)) {
         throw new Refusal(`This picture's pack at item ${options.item} does not use pack photo ${options.photo}.`);
       }
@@ -298,7 +309,8 @@ export class PixelService {
         })
       : options.photo === undefined ? packItems : [];
     if (candidates.length > 0) {
-      const references = candidates.map(itemRef);
+      const number = numberFor(candidates.length === 1 ? candidates[0] : undefined);
+      const references = candidates.map((candidate) => itemRef(candidate, number));
       const firstReference = references[0]!;
       const sameReference = references.every((reference) =>
         reference.packKey === firstReference.packKey
@@ -306,29 +318,31 @@ export class PixelService {
         && isDeepStrictEqual(reference.box, firstReference.box),
       );
       if (!sameReference) {
-        throw new Refusal(ambiguityMessage ?? "Packs of this plan use different photos or crops: give item, the pack's place in the skeleton plan (1 for the first).");
+        throw new Refusal("Packs of this plan use different photos or crops: give item, the pack's place in the skeleton plan (1 for the first).");
       }
       return firstReference;
     }
 
     if (options.photo !== undefined) {
-      if (selectedPhoto?.kind === "pack" && lineagePackNames.includes(options.photo)) return { packKey: selectedPhoto.key, number };
+      if (selectedPhoto?.kind === "pack" && lineagePackNames.includes(options.photo)) return { packKey: selectedPhoto.key, number: numberFor() };
       throw new Refusal(`This picture did not use pack photo ${options.photo}.`);
     }
 
-    if (plan) throw new Refusal("This picture's plan has no pack 1.");
+    if (!planShowsPack(plan, productPackKeys) && lineagePackNames.length === 0) {
+      throw new Refusal("This picture's plan has no pack 1.");
+    }
     if (skeleton && defaultPhoto) {
       return {
         packKey: defaultPhoto.key,
         ...(input.cutout ? { cutout: input.cutout as Record<string, unknown> } : {}),
         ...(input.box ? { box: input.box as number[] } : {}),
-        number,
+        number: numberFor(),
       };
     }
     const firstLineagePack = lineagePackNames[0] ? photoNamed(product, lineagePackNames[0]) : undefined;
     const fallback = firstLineagePack?.kind === "pack" ? firstLineagePack : firstProductPack;
     if (!fallback) throw new Refusal("This product has no pack photo. Save one with product_photos_save first: the tool needs the real pack.");
-    return { packKey: fallback.key, number };
+    return { packKey: fallback.key, number: numberFor() };
   }
 
   private async planOf(batchId: string, image: BatchImage, context?: SkeletonContext): Promise<unknown> {
@@ -341,12 +355,15 @@ export class PixelService {
     const image = await this.rendered(input.batchId, input.imageId);
     const context = await this.skeletonContext(input.batchId, image);
     const plan = await this.planOf(input.batchId, image, context);
+    const products = (plan as { products?: { photoKey?: unknown }[] }).products ?? [];
+    if (products.some(({ photoKey }) => photoKey !== undefined)) {
+      throw new Refusal("A reprint works on a plan built round the default pack photo; repair this picture with product_swap.");
+    }
     const { number, ...reference } = await this.packRef(
       input.batchId,
       image,
-      {},
+      { pack: 1 },
       context,
-      "Product reprint needs a plan with one shared pack photo and crop.",
     );
     return this.start(
       "reprint",
@@ -362,7 +379,7 @@ export class PixelService {
     const { number, ...reference } = await this.packRef(input.batchId, image, {
       ...(photo !== undefined ? { photo } : {}),
       ...(item !== undefined ? { item } : {}),
-      pack: pack ?? 1,
+      ...(pack !== undefined ? { pack } : {}),
     });
     return this.start(
       "swap",
