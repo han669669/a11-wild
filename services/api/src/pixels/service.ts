@@ -24,6 +24,16 @@ const JOB_MINUTES = 10;
 const RESULT_BYTES = 20_000;
 const RENDERED: ImageKind[] = ["draft", "final", ...REPAIR_KINDS];
 const SKELETON_STATES = ["ideas", "judged", "worded", "directed", "priced", "waiting_spend", "drafting"];
+const effectiveCutout = (cutout?: Record<string, unknown>) => ({
+  darkMax: cutout?.darkMax ?? 48,
+  lightSat: cutout?.lightSat ?? 0.17,
+  lightMin: cutout?.lightMin ?? 150,
+  open: cutout?.open ?? 3,
+  smooth: cutout?.smooth ?? 0,
+  erode: cutout?.erode ?? 1,
+  outline: cutout?.outline ?? 12,
+  edges: cutout?.edges ?? "top,bottom,left,right",
+});
 
 interface Deps {
   batches: BatchStore;
@@ -232,6 +242,7 @@ export class PixelService {
     image: BatchImage,
     options: { photo?: string; pack?: number; item?: number } = {},
     context?: SkeletonContext,
+    ambiguityMessage?: string,
   ): Promise<PackReference> {
     const { batches, brands } = this.deps;
     const product = await brands.product((await batches.get(batchId)).productId);
@@ -291,11 +302,11 @@ export class PixelService {
       const firstReference = references[0]!;
       const sameReference = references.every((reference) =>
         reference.packKey === firstReference.packKey
-        && isDeepStrictEqual(reference.cutout, firstReference.cutout)
+        && isDeepStrictEqual(effectiveCutout(reference.cutout), effectiveCutout(firstReference.cutout))
         && isDeepStrictEqual(reference.box, firstReference.box),
       );
       if (!sameReference) {
-        throw new Refusal("Packs of this plan use different photos or crops: give item, the pack's place in the skeleton plan (1 for the first).");
+        throw new Refusal(ambiguityMessage ?? "Packs of this plan use different photos or crops: give item, the pack's place in the skeleton plan (1 for the first).");
       }
       return firstReference;
     }
@@ -330,7 +341,13 @@ export class PixelService {
     const image = await this.rendered(input.batchId, input.imageId);
     const context = await this.skeletonContext(input.batchId, image);
     const plan = await this.planOf(input.batchId, image, context);
-    const { number, ...reference } = await this.packRef(input.batchId, image, {}, context);
+    const { number, ...reference } = await this.packRef(
+      input.batchId,
+      image,
+      {},
+      context,
+      "Product reprint needs a plan with one shared pack photo and crop.",
+    );
     return this.start(
       "reprint",
       input.batchId,

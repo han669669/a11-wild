@@ -169,6 +169,9 @@ describe("skeleton_make", () => {
     expect(await run("pack_check", { imageId, at: [700, 900], bg: "E83C28" })).toEqual(
       refused(/Packs of this plan use different photos or crops: give item/),
     );
+    expect(await run("product_reprint", { imageId, face: [100, 100, 200, 200] })).toEqual(
+      refused(/Product reprint needs a plan with one shared pack photo and crop/),
+    );
   });
 
   it("accepts identical plan references without an item selector", async () => {
@@ -189,6 +192,47 @@ describe("skeleton_make", () => {
 
     await run("pack_check", { imageId, at: [700, 900], bg: "E83C28" });
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box, cutout, pack: 1 });
+  });
+
+  it("accepts omitted and explicit default cutout settings without an item selector", async () => {
+    await start();
+    const box = [10, 20, 110, 220];
+    const made = await skeleton("idea-1", {
+      plan: {
+        bg: "E83C28",
+        products: [
+          { cx: 0.35, base: 0.9, height: 0.45, photo: "pack-1", box },
+          { cx: 0.65, base: 0.9, height: 0.45, photo: "pack-1", box, cutout: { darkMax: 48 } },
+        ],
+      },
+    });
+    const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
+    const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
+
+    await run("pack_check", { imageId, at: [700, 900], bg: "E83C28" });
+    const input = studio.pixels.events.at(-1)!.input;
+    expect(input).toMatchObject({ packKey: PACK, box, pack: 1 });
+    expect(input).not.toHaveProperty("cutout");
+  });
+
+  it("refuses different effective cutout thresholds without an item selector", async () => {
+    await start();
+    const box = [10, 20, 110, 220];
+    const made = await skeleton("idea-1", {
+      plan: {
+        bg: "E83C28",
+        products: [
+          { cx: 0.35, base: 0.9, height: 0.45, photo: "pack-1", box },
+          { cx: 0.65, base: 0.9, height: 0.45, photo: "pack-1", box, cutout: { darkMax: 49 } },
+        ],
+      },
+    });
+    const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
+    const imageId = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image.id;
+
+    expect(await run("pack_check", { imageId, at: [700, 900], bg: "E83C28" })).toEqual(
+      refused(/Packs of this plan use different photos or crops: give item/),
+    );
   });
 
   it("refuses an item that does not use the requested photo", async () => {
