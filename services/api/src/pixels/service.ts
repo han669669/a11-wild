@@ -254,12 +254,14 @@ export class PixelService {
   }
 
   private async imageWidth(image: BatchImage, context: SkeletonContext): Promise<number> {
+    const bytes = await this.deps.pictures.read(image.key, MAX_PICTURE_BYTES);
+    const width = bytes && jpegWidth(bytes);
+    if (width) return width;
     const plan = context.input.plan as { size?: unknown } | undefined;
     for (const size of [context.input.size, plan?.size]) {
       if (Array.isArray(size) && typeof size[0] === "number" && Number.isFinite(size[0]) && size[0] > 0) return size[0];
     }
-    const bytes = await this.deps.pictures.read(image.key, MAX_PICTURE_BYTES);
-    return (bytes && jpegWidth(bytes)) || 1024;
+    return 1024;
   }
 
   private async packRef(

@@ -12,6 +12,7 @@ const rules = { rulesVersion: RULES_VERSION };
 const PACK = "products/p/pack.png";
 const PACK_TWO_URL = "https://cdn.wongi.example/clean-pack.png";
 const JPEG_WIDTH_512 = new Uint8Array([0xff, 0xd8, 0xff, 0xc0, 0, 17, 8, 0, 2, 2, 0, 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0]);
+const JPEG_WIDTH_1536 = new Uint8Array([0xff, 0xd8, 0xff, 0xc0, 0, 17, 8, 0, 2, 6, 0, 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0]);
 
 let studio: Studio;
 let batchId: string;
@@ -215,6 +216,36 @@ describe("skeleton_make", () => {
 
     await run("pack_check", { imageId: image.id, at: [350, 900], bg: "E83C28" });
     expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box: [30, 40, 330, 440], cutout: { darkMax: 60 }, pack: 1 });
+  });
+
+  it("uses a final's width instead of the skeleton canvas for pack selection", async () => {
+    await start();
+    const leftBox = [10, 20, 110, 220];
+    const rightBox = [30, 40, 330, 440];
+    const made = await skeleton("idea-1", {
+      plan: {
+        bg: "E83C28",
+        products: [
+          { cx: 0.45, base: 0.9, height: 0.45, photo: "pack-1", box: leftBox, cutout: { darkMax: 30 } },
+          { cx: 0.75, base: 0.9, height: 0.45, photo: "pack-1", box: rightBox, cutout: { darkMax: 60 } },
+        ],
+      },
+    });
+    const sent = await callTool(studio, "render_submit", { ...rules, batchId, ideaId: "idea-1", kind: "draft", prompt: SCENE, fromId: made.value.image.id });
+    const draft = (await callTool(studio, "render_status", { batchId, renderId: sent.value.id })).value.image;
+    const final = await studio.services.images.add({
+      batchId,
+      kind: "final",
+      key: `batches/${batchId}/finals/f.jpg`,
+      ideaId: "idea-1",
+      fromId: draft.id,
+    });
+    await studio.pictures.put(final.key, JPEG_WIDTH_1536, "image/jpeg");
+
+    await run("pack_check", { imageId: final.id, at: [691, 1500], bg: "E83C28" });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box: leftBox, cutout: { darkMax: 30 } });
+    await run("product_swap", { imageId: final.id, old: [600, 783, 1300, 1800] });
+    expect(studio.pixels.events.at(-1)!.input).toMatchObject({ packKey: PACK, box: leftBox, cutout: { darkMax: 30 } });
   });
 
   it("accepts a count-based skeleton's pack 3 as the saved result label", async () => {
