@@ -55,11 +55,21 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
   const secondNumber =
     second && (second.channel === "whatsapp" || second.channel === "call") && /^\d+$/.test(second.to) ? `+${second.to}` : second?.to;
   const secondHref = contact.others?.secondHref;
+  const targetValue = (target: NonNullable<ProspectPage["contact"]["sendTo"]>) =>
+    target.channel === "whatsapp" && /^\d+$/.test(target.to) ? `+${target.to}` : target.to;
+  const switchChannels = (
+    contact.channels ?? [
+      ...(contact.whatsapp.length > 0 ? (["whatsapp"] as const) : []),
+      ...(contact.email ? (["email"] as const) : []),
+    ]
+  ).filter((channel) => channel !== (contact.sendTo?.channel ?? prospect.channel));
+  const linkedin = contact.others?.linkedin ?? contact.linkedin;
+  const instagram = contact.others?.instagram ?? contact.instagram;
   const checkTarget = () => {
     const target = contact.sendTo;
     if (!target) return "the brand";
     const recipient = target.direct && target.person ? `${target.person}${target.title ? `, ${target.title}` : ""}` : "the brand";
-    const value = target.channel === "whatsapp" && /^\d+$/.test(target.to) ? `+${target.to}` : target.to;
+    const value = targetValue(target);
     return `${routeName(target.channel)} to ${recipient} (${value})`;
   };
 
@@ -73,6 +83,25 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
           {page.newestAd ? ` · newest ad ${dayName(page.newestAd)}` : ""}
           {page.sells ? ` · sells a ${page.sells}` : ""}
         </p>
+        {!out && contact.decisionMaker ? (
+          <p className="text-body">
+            <span className="text-muted-foreground">Person: </span>
+            <span className="font-medium">{contact.decisionMaker}</span>
+            {contact.dmTitle ? <span className="text-muted-foreground">, {contact.dmTitle}</span> : null}
+            {linkedin?.href ? (
+              <>
+                {" · "}
+                <OutLink href={linkedin.href}>LinkedIn</OutLink>
+              </>
+            ) : null}
+          </p>
+        ) : null}
+        {!out && page.pitch ? (
+          <div className="rounded-lg border border-border bg-muted/30 px-3 py-2.5">
+            <p className="text-caption text-muted-foreground">Pitch context</p>
+            <p className="mt-1 text-body break-words whitespace-pre-wrap">{page.pitch}</p>
+          </div>
+        ) : null}
         {page.flags.length > 0 ? (
           <div className="grid gap-2">
             <div className="flex flex-wrap gap-1.5">
@@ -190,25 +219,33 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
       <div className="mt-10">
         <Fold title="How to reach it" open>
           <dl className="grid gap-x-6 gap-y-2 text-body sm:grid-cols-[10rem_1fr]">
+            {contact.sendTo ? (
+              <Line
+                name="Primary route"
+                text={`${CHANNELS[contact.sendTo.channel]} · ${targetValue(contact.sendTo)}${contact.sendTo.person ? ` (${contact.sendTo.person}${contact.sendTo.title ? `, ${contact.sendTo.title}` : ""})` : ""}`}
+                note={contact.sendTo.note}
+              />
+            ) : null}
+            {second ? <Line name="Another way" text={`${routeName(second.channel)}${secondNumber ? ` · ${secondNumber}` : ""}`} href={secondHref} note={second.note} /> : null}
             {contact.whatsapp.map((entry) => (
               <Line key={entry.number} name="WhatsApp" text={`+${entry.number}`} href={entry.href} note={entry.note} />
             ))}
             {contact.email ? <Line name="Email" text={contact.email.address} href={contact.email.href} /> : null}
-            {contact.phone ? <Line name="Phone" text={contact.phone} note={contact.phoneNote} /> : null}
-            {contact.sendTo ? <Line name="Current choice" text={`${contact.sendTo.person ?? "The brand"}${contact.sendTo.title ? `, ${contact.sendTo.title}` : ""} · ${CHANNELS[contact.sendTo.channel]}`} note={contact.sendTo.note} /> : null}
+            {instagram ? <Line name="Instagram" text={instagram.name} href={instagram.href} /> : null}
+            {linkedin ? <Line name="LinkedIn" text={linkedin.text} href={linkedin.href} /> : null}
             {contact.decisionMaker ? <Line name="Person" text={`${contact.decisionMaker}${contact.dmTitle ? `, ${contact.dmTitle}` : ""}`} /> : null}
-            {second ? <Line name="Another way" text={`${routeName(second.channel)}${secondNumber ? ` · ${secondNumber}` : ""}`} href={secondHref} note={second.note} /> : null}
             {contact.others?.dmEmail ? <Line name="Direct email" text={`${contact.others.dmEmail.address} · ${contact.others.dmEmail.check}`} /> : null}
             {contact.others?.dmPhone ? <Line name="Direct phone" text={contact.others.dmPhone} /> : null}
-            {contact.others?.instagram || contact.instagram ? <Line name="Instagram" text={(contact.others?.instagram ?? contact.instagram)!.name} href={(contact.others?.instagram ?? contact.instagram)?.href} /> : null}
-            {contact.others?.linkedin || contact.linkedin ? <Line name="LinkedIn" text={(contact.others?.linkedin ?? contact.linkedin)!.text} href={(contact.others?.linkedin ?? contact.linkedin)?.href} /> : null}
+            {contact.phone ? <Line name="Phone (details)" text={contact.phone} note={contact.phoneNote} /> : null}
           </dl>
-          {contact.whatsapp.length > 0 && contact.email && !out ? (
+          {switchChannels.length > 0 && !out ? (
             <div className="mt-4 flex flex-wrap items-center gap-2 text-caption text-muted-foreground">
               Messages go by {prospect.channel ? CHANNELS[prospect.channel] : "no channel"}.
-              <Button type="button" variant="secondary" size="compact" loading={busy === "channel"} onClick={() => write({ action: "channel", body: { channel: prospect.channel === "whatsapp" ? "email" : "whatsapp" } })}>
-                Use {CHANNELS[prospect.channel === "whatsapp" ? "email" : "whatsapp"]}
-              </Button>
+              {switchChannels.map((channel) => (
+                <Button key={channel} type="button" variant="secondary" size="compact" loading={busy === "channel"} onClick={() => write({ action: "channel", body: { channel } })}>
+                  Use {CHANNELS[channel]}
+                </Button>
+              ))}
             </div>
           ) : null}
           {failure("channel")}

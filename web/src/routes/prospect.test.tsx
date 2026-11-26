@@ -53,8 +53,8 @@ describe("Prospect page", () => {
 
     const firstRow = (await screen.findByRole("link", { name: "+6580000001" })).closest("dd")!;
     expect(within(firstRow).getByText(/verified business/)).toHaveClass("text-muted-foreground");
-    const currentChoice = screen.getByText("Current choice").nextElementSibling!;
-    expect(currentChoice).toHaveTextContent("The brand · WhatsApp · verified business");
+    const primaryRoute = screen.getByText("Primary route").nextElementSibling!;
+    expect(primaryRoute).toHaveTextContent("WhatsApp · +6580000001 · verified business");
 
     const secondRow = screen.getByText("Another way").nextElementSibling as HTMLElement;
     expect(secondRow).toHaveTextContent("WhatsApp · +6580000002 · direct line");
@@ -90,9 +90,45 @@ describe("Prospect page", () => {
     stubApi({ [GET]: () => ({ body: prospectPage({ contact: { whatsapp: [], phone: "+65 6123 4567", phoneNote: "front desk" } }) }) });
     open();
 
-    const phone = (await screen.findByText("Phone")).nextElementSibling as HTMLElement;
+    const phone = (await screen.findByText("Phone (details)")).nextElementSibling as HTMLElement;
     expect(phone).toHaveTextContent("+65 6123 4567 · front desk");
     expect(within(phone).getByText(/front desk/)).toHaveClass("text-muted-foreground");
+  });
+
+  it("shows the person, pitch context, Instagram primary action, and only available channel switches", async () => {
+    stubApi({
+      [GET]: () => ({
+        body: prospectPage({
+          prospect: prospectRow({ stage: "ready", channel: "instagram" }),
+          pitch: "One-person brand. Hiring freelance video editor.",
+          contact: {
+            whatsapp: [],
+            email: { address: "hello@example.com", href: "mailto:hello@example.com" },
+            instagram: { name: "madeup.brand", href: "https://www.instagram.com/madeup.brand/" },
+            decisionMaker: "A Founder",
+            dmTitle: "Founder",
+            linkedin: { text: "https://linkedin.com/in/a-founder", href: "https://linkedin.com/in/a-founder" },
+            sendTo: { channel: "instagram", to: "@madeup.brand", direct: false },
+            channels: ["email", "instagram"],
+          },
+          message: {
+            step: 0,
+            channel: "instagram",
+            messages: [
+              { title: "One ad for Madeup", text: "Made one ad for you.", href: "https://www.instagram.com/madeup.brand/" },
+              { title: "Spec ad for Madeup", text: "Made one ad for you.", href: "https://www.instagram.com/madeup.brand/" },
+            ],
+          },
+        }),
+      }),
+    });
+    open();
+
+    expect(await screen.findByText("Pitch context")).toBeInTheDocument();
+    expect(screen.getByText("One-person brand. Hiring freelance video editor.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Instagram" })).toHaveAttribute("href", "https://www.instagram.com/madeup.brand/");
+    expect(screen.getByRole("button", { name: "Use Email" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Use WhatsApp" })).not.toBeInTheDocument();
   });
 
   it("starts contact and owner controls expanded, and lets each fold collapse", async () => {

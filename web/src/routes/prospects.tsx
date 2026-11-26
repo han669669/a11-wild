@@ -147,7 +147,7 @@ function Numbers({ numbers }: { numbers: OutreachNumbers }) {
                 {tier}
               </th>
             ))}
-            {(["whatsapp", "email"] as const).map((channel) => (
+            {(["whatsapp", "email", "instagram"] as const).map((channel) => (
               <th key={channel} scope="col" className="px-3 py-2 text-right font-normal">
                 {CHANNELS[channel]}
               </th>
@@ -164,7 +164,7 @@ function Numbers({ numbers }: { numbers: OutreachNumbers }) {
                 </th>
                 {cell(count, "all", count.all)}
                 {OUTREACH_TIERS.map((tier) => cell(count, tier, count.byTier[tier]))}
-                {(["whatsapp", "email"] as const).map((channel) => cell(count, channel, count.byChannel[channel]))}
+                {(["whatsapp", "email", "instagram"] as const).map((channel) => cell(count, channel, count.byChannel[channel]))}
               </tr>
             );
           })}

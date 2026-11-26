@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { OutreachAd, OutreachEvent, OutreachEventBody, OutreachSend, OutreachStep, Prospect, ProspectFile } from "@a11-wild/shared";
 import { Refusal } from "../mcp/registry.js";
 import { type Item, record, type Table } from "../store/table.js";
-import { blockedValues, numberKey } from "./blocked.js";
+import { blockedValues, instagramKey, numberKey } from "./blocked.js";
 import { phoneRouteNumbers } from "./routes.js";
 
 /**
@@ -47,20 +47,29 @@ export const contactKeys = (profile: Prospect, sends: readonly Pick<OutreachSend
     if (!value?.to.trim()) return;
     if (value.channel === "email") email(value.to);
     else if (value.channel === "whatsapp" || value.channel === "call") number(value.to);
-    else keys.add(`${value.channel === "instagram" ? "I" : "F"}#${value.to.toLowerCase()}`);
+    else if (value.channel === "instagram") {
+      const key = instagramKey(value.to);
+      if (!blocked.instagram.has(key)) keys.add(key);
+    } else keys.add(`F#${value.to.toLowerCase()}`);
   };
   profile.whatsapp.forEach(number);
   number(profile.phone);
   number(profile.dmPhone);
   email(profile.email);
   email(profile.dmEmail);
+  if (profile.instagram?.trim()) {
+    const key = instagramKey(profile.instagram);
+    if (!blocked.instagram.has(key)) keys.add(key);
+  }
   route(profile.route);
   route(profile.second);
   routeLabel(profile.bestRoute);
   routeLabel(profile.secondRoute);
   for (const send of sends) {
     if (send.channel === "email") email(send.to);
-    else number(send.to);
+    else if (send.channel === "instagram") {
+      if (send.to?.trim()) keys.add(instagramKey(send.to));
+    } else number(send.to);
   }
   return [...keys];
 };

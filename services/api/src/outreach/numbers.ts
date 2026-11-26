@@ -1,7 +1,7 @@
 import { OUTREACH_STAGES, OUTREACH_TIERS, type OutreachCount, type OutreachNumbers, type OutreachStage, type OutreachTier, type ProspectFile, type ProspectRow } from "@a11-wild/shared";
 import { channelOf, optedOut, stageOf } from "./stage.js";
 
-const none = (): OutreachCount => ({ all: 0, byTier: { "20+": 0, "5-19": 0, "<5": 0 }, byChannel: { whatsapp: 0, email: 0 } });
+const none = (): OutreachCount => ({ all: 0, byTier: { "20+": 0, "5-19": 0, "<5": 0 }, byChannel: { whatsapp: 0, email: 0, instagram: 0 } });
 
 /** The numbers of the campaign: sent, replied, said more, opted out and clients, each also by tier and by channel. A test prospect is in none. */
 export function numbersOf(files: ProspectFile[], optOuts: ReadonlySet<string>): OutreachNumbers {

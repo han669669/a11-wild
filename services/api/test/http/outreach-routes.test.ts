@@ -513,6 +513,7 @@ describe("the owner's day", () => {
       linkedin: { text: "www.linkedin.com/in/a-person", href: "https://www.linkedin.com/in/a-person" },
       bestRoute: "WhatsApp",
       sendTo: { channel: "whatsapp", to: "6580000001", direct: false },
+      channels: ["whatsapp", "email", "instagram"],
       others: {
         instagram: { name: "@brand.one", href: "https://www.instagram.com/brand.one/" },
         linkedin: { text: "www.linkedin.com/in/a-person", href: "https://www.linkedin.com/in/a-person" },
@@ -521,6 +522,156 @@ describe("the owner's day", () => {
     expect((await json(await get("/api/outreach/prospects/00002"))).contact).toMatchObject({ instagram: { name: "javascript:alert(1)" }, linkedin: { text: "https://evil.example/in/x" } });
     expect((await json(await get("/api/outreach/prospects/00002"))).contact.instagram.href).toBeUndefined();
     expect((await json(await get("/api/outreach/prospects/00002"))).contact.linkedin.href).toBeUndefined();
+  });
+
+  it("supports Instagram DM as a send channel and shows owner-only pitch context unless opted out", async () => {
+    await ready([
+      row(1, {
+        whatsapp: undefined,
+        email: "hello@example.com",
+        instagram: "madeup.brand",
+        bestRoute: "Instagram DM @madeup.brand",
+        secondRoute: "Email (valid) hello@example.com",
+        pitch: "One-person brand; hiring freelance video editor.",
+      }),
+      row(2, {
+        whatsapp: "+65 8000 0099",
+        email: undefined,
+        instagram: undefined,
+        pitch: "Mentions backup +65 8000 0099",
+      }),
+    ]);
+    const page = await json(await get("/api/outreach/prospects/00001"));
+    expect(page.pitch).toBe("One-person brand; hiring freelance video editor.");
+    expect(page.contact.sendTo).toMatchObject({ channel: "instagram", to: "@madeup.brand" });
+    expect(page.contact.channels).toEqual(["email", "instagram"]);
+    expect(page.contact.others.secondHref).toBe("mailto:hello@example.com");
+    expect(page.message.channel).toBe("instagram");
+    expect(page.message.messages[0].href).toBe("https://www.instagram.com/madeup.brand/");
+    // Switching channel to email and back to instagram works; whatsapp is refused.
+    expect((await on("00001", "channel", { channel: "email" })).status).toBe(200);
+    expect((await on("00001", "channel", { channel: "whatsapp" })).status).toBe(400);
+    expect((await on("00001", "channel", { channel: "instagram" })).status).toBe(200);
+    expect((await on("00001", "sent", { step: 0, title: 0, channel: "instagram", to: "@madeup.brand" })).status).toBe(200);
+    // Opting out hides pitch and instagram handle.
+    expect((await on("00001", "optout")).status).toBe(200);
+    const opted = await json(await get("/api/outreach/prospects/00001"));
+    expect(opted.pitch).toBeUndefined();
+    expect(opted.contact).toEqual({ whatsapp: [] });
+    // Pitch mentioning an opted-out number or Instagram handle on another brand is also hidden.
+    await on("00002", "optout");
+    await ready([
+      row(3, { whatsapp: "+65 8000 0003", email: undefined, pitch: "Also linked to +65 8000 0099" }),
+      row(4, { whatsapp: "+65 8000 0004", email: undefined, pitch: "Sister brand of @madeup.brand" }),
+      row(5, {
+        whatsapp: undefined,
+        email: undefined,
+        bestRoute: "Instagram DM https://www.instagram.com/url.brand/",
+      }),
+    ]);
+    expect((await json(await get("/api/outreach/prospects/00003"))).pitch).toBeUndefined();
+    expect((await json(await get("/api/outreach/prospects/00004"))).pitch).toBeUndefined();
+    const urlBrand = await json(await get("/api/outreach/prospects/00005"));
+    expect(urlBrand.contact.sendTo).toMatchObject({ channel: "instagram", to: "@url.brand" });
+    expect(urlBrand.message.messages[0].href).toBe("https://www.instagram.com/url.brand/");
+    // Quarantined Instagram handle is stripped at load, preserving a cleaned phone fallback note, and also hidden at read time for already-stored profiles.
+    await ready([
+      row(6, {
+        whatsapp: undefined,
+        email: "ok@example.com",
+        instagram: "@sample.brand",
+        bestRoute: "Email (valid) ok@example.com",
+        secondRoute: "Phone 60000001 (ask for sales @sample.brand)",
+        notes: "AUDIT-FLAG: Instagram @sample.brand — do not send",
+      }),
+    ]);
+    const quarantined = await json(await get("/api/outreach/prospects/00006"));
+    expect(quarantined.contact.instagram).toBeUndefined();
+    expect(quarantined.contact.others?.instagram).toBeUndefined();
+    expect(quarantined.contact.sendTo).toMatchObject({ channel: "email", to: "ok@example.com" });
+    expect(quarantined.contact.others?.second).toMatchObject({ channel: "call", to: "6560000001", note: "ask for sales" });
+    const agentContacts = await outreach().desk.contacts({ prospectId: "00006", after: 0, limit: 10 });
+    expect(agentContacts.prospects[0]?.instagram).toBeUndefined();
+    // Simulate a pre-existing stored profile that still carries a quarantined Instagram handle.
+    const existing = (await outreach().store.all()).find((entry) => entry.profile.id === "00006")!;
+    await outreach().store.saveProfile({ ...existing.profile, instagram: "@sample.brand" });
+    expect((await json(await get("/api/outreach/prospects/00006"))).contact.instagram).toBeUndefined();
+    expect((await outreach().desk.contacts({ prospectId: "00006", after: 0, limit: 10 })).prospects[0]?.instagram).toBeUndefined();
+    // A social route whose destination is a quarantined handle is dropped instead of leaking in `to`, while an email route survives.
+    await ready([
+      row(7, {
+        whatsapp: undefined,
+        email: undefined,
+        bestRoute: "Email (valid) sales!@sample.brand",
+        secondRoute: "Facebook message @sample.brand",
+        notes: "AUDIT-FLAG: Instagram @sample.brand — do not send",
+      }),
+    ]);
+    const socialQuarantined = await json(await get("/api/outreach/prospects/00007"));
+    expect(socialQuarantined.contact.sendTo).toMatchObject({ channel: "email", to: "sales!@sample.brand" });
+    expect(socialQuarantined.contact.others?.second).toBeUndefined();
+    // Pitch ending with an opted-out Instagram handle followed by a full stop is hidden.
+    await ready([
+      row(8, {
+        whatsapp: undefined,
+        email: "ok8@example.com",
+        pitch: "Sister brand of @madeup.brand.",
+      }),
+    ]);
+    expect((await json(await get("/api/outreach/prospects/00008"))).pitch).toBeUndefined();
+    // Scheme-less Instagram profile URLs are quarantined by audit flags and linked consistently when open.
+    await ready([
+      row(9, {
+        whatsapp: undefined,
+        email: undefined,
+        instagram: "instagram.com/sample.flag/",
+        notes: "AUDIT-FLAG: instagram.com/sample.flag/ — do not send",
+      }),
+      row(10, {
+        whatsapp: undefined,
+        email: undefined,
+        instagram: "instagram.com/open.brand/",
+      }),
+    ]);
+    const schemelessFlagged = await json(await get("/api/outreach/prospects/00009"));
+    expect(schemelessFlagged.contact.sendTo).toBeUndefined();
+    expect(schemelessFlagged.contact.instagram).toBeUndefined();
+    const schemelessOpen = await json(await get("/api/outreach/prospects/00010"));
+    expect(schemelessOpen.contact.sendTo).toMatchObject({ channel: "instagram", to: "@open.brand" });
+    expect(schemelessOpen.contact.instagram?.href).toBe("https://www.instagram.com/open.brand/");
+    // A pre-existing stored primary WhatsApp route and phone fallback with a quarantined handle in their notes keep both numbers scrubbed identically.
+    const saved = (await outreach().store.all()).find((entry) => entry.profile.id === "00006")!;
+    await outreach().store.saveProfile({
+      ...saved.profile,
+      whatsapp: ["6580000006"],
+      route: {
+        channel: "whatsapp",
+        to: "6580000006",
+        direct: false,
+        label: "WhatsApp 80000006 (founder line https://instagram.com/sample.brand.)",
+        note: "founder line https://instagram.com/sample.brand.",
+      },
+      second: {
+        channel: "call",
+        to: "6560000001",
+        direct: false,
+        label: "Phone 60000001 (ask for sales @sample.brand)",
+        note: "ask for sales @sample.brand",
+      },
+    });
+    const savedPage = await json(await get("/api/outreach/prospects/00006"));
+    expect(savedPage.contact.sendTo).toMatchObject({ channel: "whatsapp", to: "6580000006", note: "founder line ." });
+    expect(savedPage.contact.whatsapp[0]?.note).toBe("founder line .");
+    expect(savedPage.contact.others?.second).toMatchObject({
+      channel: "call",
+      to: "6560000001",
+      note: "ask for sales",
+    });
+    expect((await outreach().desk.contacts({ prospectId: "00006", after: 0, limit: 10 })).prospects[0]?.second).toMatchObject({
+      channel: "call",
+      to: "6560000001",
+      note: "ask for sales",
+    });
   });
 });
 
@@ -538,11 +689,11 @@ describe("the list and its numbers", () => {
     const page = await json(await get("/api/outreach/prospects"));
     expect(page.numbers).toEqual({
       prospects: 5,
-      sent: { all: 4, byTier: { "20+": 2, "5-19": 1, "<5": 1 }, byChannel: { whatsapp: 3, email: 1 } },
-      replied: { all: 3, byTier: { "20+": 2, "5-19": 1, "<5": 0 }, byChannel: { whatsapp: 2, email: 1 } },
-      saidMore: { all: 1, byTier: { "20+": 1, "5-19": 0, "<5": 0 }, byChannel: { whatsapp: 1, email: 0 } },
-      optedOut: { all: 1, byTier: { "20+": 0, "5-19": 1, "<5": 0 }, byChannel: { whatsapp: 1, email: 0 } },
-      clients: { all: 1, byTier: { "20+": 1, "5-19": 0, "<5": 0 }, byChannel: { whatsapp: 0, email: 1 } },
+      sent: { all: 4, byTier: { "20+": 2, "5-19": 1, "<5": 1 }, byChannel: { whatsapp: 3, email: 1, instagram: 0 } },
+      replied: { all: 3, byTier: { "20+": 2, "5-19": 1, "<5": 0 }, byChannel: { whatsapp: 2, email: 1, instagram: 0 } },
+      saidMore: { all: 1, byTier: { "20+": 1, "5-19": 0, "<5": 0 }, byChannel: { whatsapp: 1, email: 0, instagram: 0 } },
+      optedOut: { all: 1, byTier: { "20+": 0, "5-19": 1, "<5": 0 }, byChannel: { whatsapp: 1, email: 0, instagram: 0 } },
+      clients: { all: 1, byTier: { "20+": 1, "5-19": 0, "<5": 0 }, byChannel: { whatsapp: 0, email: 1, instagram: 0 } },
     });
     expect(page.sectors).toEqual(["Beauty", "F&B", "Test"]);
     expect(page.rows.map((entry: { brand: string }) => entry.brand)).toEqual(["TEST prospect", "Brand 1", "Brand 2", "Brand 3", "Brand 4", "Brand 5"]);

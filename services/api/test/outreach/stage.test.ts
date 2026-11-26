@@ -181,10 +181,55 @@ describe("what a prospect needs next", () => {
     const secondary = { channel: "email" as const, to: "person@example.com", direct: true, label: "DM email (valid) person@example.com" };
     const profileWithSocialPrimary = profile(1, {
       email: undefined as never,
-      route: { channel: "instagram", to: "@madeup", direct: false, label: "Instagram DM @madeup" },
+      route: { channel: "facebook", to: "madeup", direct: false, label: "Facebook message madeup" },
       second: secondary,
     });
     expect(sendTarget(file({ profile: profileWithSocialPrimary }))).toMatchObject({ channel: "email", to: "person@example.com", direct: true });
+  });
+
+  it("honours Instagram DM as an explicit best route, and falls back WhatsApp -> Email -> Instagram", () => {
+    const explicit = profile(1, {
+      whatsapp: [],
+      email: "hello@example.com",
+      instagram: "madeup.brand",
+      route: { channel: "instagram", to: "@madeup.brand", direct: false, label: "Instagram DM @madeup.brand" },
+    });
+    expect(sendTarget(file({ profile: explicit }))).toMatchObject({ channel: "instagram", to: "@madeup.brand", direct: false });
+
+    const waFirst = profile(2, { whatsapp: ["6580000002"], email: "two@example.com", instagram: "brand.two" });
+    expect(sendTarget(file({ profile: waFirst }))).toMatchObject({ channel: "whatsapp", to: "6580000002" });
+
+    const emailSecond = profile(3, { whatsapp: [], email: "three@example.com", instagram: "brand.three" });
+    expect(sendTarget(file({ profile: emailSecond }))).toMatchObject({ channel: "email", to: "three@example.com" });
+
+    const igLast = profile(4, { whatsapp: [], email: undefined as never, instagram: "brand.four" });
+    expect(sendTarget(file({ profile: igLast }))).toMatchObject({ channel: "instagram", to: "@brand.four" });
+    expect(sendTarget(file({ profile: igLast }), new Set(["I#@brand.four"]))).toBeUndefined();
+    // Pre-upgrade opt-out keys (raw URL or bare handle) still block the canonical handle.
+    expect(sendTarget(file({ profile: igLast }), new Set(["I#https://www.instagram.com/brand.four/"]))).toBeUndefined();
+    expect(sendTarget(file({ profile: igLast }), new Set(["I#brand.four"]))).toBeUndefined();
+
+    // Explicit profile URL in Best route becomes a canonical @handle; post/reel links are ignored.
+    const explicitUrl = profile(5, {
+      whatsapp: [],
+      email: undefined as never,
+      route: { channel: "instagram", to: "https://www.instagram.com/brand.five/", direct: false, label: "Instagram DM https://www.instagram.com/brand.five/" },
+    });
+    expect(sendTarget(file({ profile: explicitUrl }))).toMatchObject({ channel: "instagram", to: "@brand.five" });
+
+    const postLink = profile(6, { whatsapp: [], email: undefined as never, instagram: "https://www.instagram.com/p/example/" });
+    expect(sendTarget(file({ profile: postLink }))).toBeUndefined();
+    const reelLink = profile(7, { whatsapp: [], email: undefined as never, instagram: "https://www.instagram.com/reel/example/" });
+    expect(sendTarget(file({ profile: reelLink }))).toBeUndefined();
+
+    // Quarantined Instagram handle in a blocked flag is never offered as a send target.
+    const quarantinedIg = profile(8, {
+      whatsapp: [],
+      email: undefined as never,
+      instagram: "@brand.blocked",
+      flags: [{ kind: "blocked", text: "AUDIT-FLAG: Instagram @brand.blocked — do not send" }],
+    });
+    expect(sendTarget(file({ profile: quarantinedIg }))).toBeUndefined();
   });
 
   it("uses channel preferences only among the current workbook contacts", () => {

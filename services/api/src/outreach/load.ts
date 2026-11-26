@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { OUTREACH_TIERS, type OutreachTier, type Prospect, type ProspectFlag, type ProspectRoute, type ProspectSells } from "@a11-wild/shared";
 import { Refusal } from "../mcp/registry.js";
-import { blockedValues, EMAIL_IN_TEXT, isBlockedTarget, numberKey } from "./blocked.js";
+import { blockedValues, EMAIL_IN_TEXT, instagramKey, isBlockedTarget, numberKey, scrubInstagramText, textShowsClosedInstagram } from "./blocked.js";
 import { EMAIL } from "./messages.js";
 import { hasUnbalancedBrackets, hasUnsafePhoneRouteNote, routeOf, trailingBracketGroup } from "./routes.js";
 import { sendTarget, stageOf } from "./stage.js";
@@ -28,6 +28,7 @@ export interface LoadRow {
   dmVerify?: "valid" | "risky" | "invalid" | "unknown" | undefined;
   dmPhone?: string | undefined;
   notes?: string | undefined;
+  pitch?: string | undefined;
   sells?: ProspectSells | "" | undefined;
   mergedInto?: number | undefined;
 }
@@ -157,12 +158,16 @@ function removeBlocked(profile: Prospect): Prospect {
   const blocked = blockedValues(profile.flags ?? []);
   const isEmailBlocked = (value: string | undefined) => value !== undefined && blocked.emails.has(value.toLowerCase());
   const isNumberBlocked = (value: string | undefined) => value !== undefined && blocked.numbers.has(numberKey(value));
+  const isInstagramBlocked = (value: string | undefined) => value !== undefined && blocked.instagram.has(instagramKey(value));
   const isRouteBlocked = (value: ProspectRoute | undefined) =>
     value !== undefined && isBlockedTarget(blocked, value);
   const stripSegment = (segment: string): string =>
-    segment
-      .replace(EMAIL_IN_TEXT, (email) => (blocked.emails.has(email.toLowerCase()) ? "" : email))
-      .replace(/\+?\d[\d().\s-]{5,}\d/g, (number) => (blocked.numbers.has(numberKey(number)) ? "" : number))
+    scrubInstagramText(
+      segment
+        .replace(EMAIL_IN_TEXT, (email) => (blocked.emails.has(email.toLowerCase()) ? "" : email))
+        .replace(/\+?\d[\d().\s-]{5,}\d/g, (number) => (blocked.numbers.has(numberKey(number)) ? "" : number)),
+      blocked.instagram,
+    )
       .replace(/\s{2,}/g, " ")
       .trim();
   const stripRoute = (value: string | undefined): string | undefined => {
@@ -176,6 +181,14 @@ function removeBlocked(profile: Prospect): Prospect {
     }
     return stripSegment(value) || undefined;
   };
+  const cleanRoute = (route: ProspectRoute | undefined): ProspectRoute | undefined => {
+    if (!route || isRouteBlocked(route)) return undefined;
+    if ((route.channel === "facebook" || route.channel === "instagram") && textShowsClosedInstagram(route.to, blocked.instagram)) return undefined;
+    const label = stripRoute(route.label) ?? route.label;
+    const note = route.note ? stripSegment(route.note) || undefined : undefined;
+    const { note: _oldNote, ...rest } = route;
+    return { ...rest, label, ...(note ? { note } : {}) };
+  };
   const saved: Prospect = {
     ...profile,
     whatsapp: profile.whatsapp.filter((number) => !isNumberBlocked(number)),
@@ -184,8 +197,13 @@ function removeBlocked(profile: Prospect): Prospect {
   if (isEmailBlocked(saved.dmEmail)) delete saved.dmEmail;
   if (isNumberBlocked(saved.phone)) delete saved.phone;
   if (isNumberBlocked(saved.dmPhone)) delete saved.dmPhone;
-  if (isRouteBlocked(saved.route)) delete saved.route;
-  if (isRouteBlocked(saved.second)) delete saved.second;
+  if (isInstagramBlocked(saved.instagram)) delete saved.instagram;
+  const cleanedRoute = cleanRoute(saved.route);
+  if (cleanedRoute) saved.route = cleanedRoute;
+  else delete saved.route;
+  const cleanedSecond = cleanRoute(saved.second);
+  if (cleanedSecond) saved.second = cleanedSecond;
+  else delete saved.second;
   const bestRoute = stripRoute(saved.bestRoute);
   const secondRoute = stripRoute(saved.secondRoute);
   if (bestRoute) saved.bestRoute = bestRoute;
@@ -205,6 +223,8 @@ export function profileOf(row: LoadRow, loadedAt: string): Prospect {
   const secondRoute = routeLabel("secondRoute", row.secondRoute);
   const notes = row.notes;
   if (notes && notes.length > 500) throw new RowError("notes", "the notes are longer than 500 characters");
+  const pitch = row.pitch?.trim();
+  if (pitch && pitch.length > 500) throw new RowError("pitch", "the pitch context is longer than 500 characters");
   if (row.dmTitle && row.dmTitle.length > 189) throw new RowError("dmTitle", "the title is longer than 189 characters");
   if (row.dmVerify !== undefined && !["valid", "risky", "invalid", "unknown"].includes(row.dmVerify)) throw new RowError("dmVerify", "the email check is not one of valid, risky, invalid or unknown");
   if (row.sells !== undefined && row.sells !== "" && !["product", "service", "hybrid"].includes(row.sells)) throw new RowError("sells", "the value is not product, service, hybrid or blank");
@@ -237,6 +257,7 @@ export function profileOf(row: LoadRow, loadedAt: string): Prospect {
     ...(row.dmVerify ? { dmVerify: row.dmVerify } : {}),
     ...optional("dmPhone", plain(row.dmPhone)),
     ...(notes ? { notes } : {}),
+    ...(pitch ? { pitch } : {}),
     ...(notes ? { flags: flagsFrom(notes) } : {}),
     ...(row.mergedInto !== undefined ? { mergedInto: prospectId(row.mergedInto) } : {}),
     loadedAt,

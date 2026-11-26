@@ -4,6 +4,7 @@ import type { IdeaFinal } from "../board/service.js";
 import { Refusal } from "../mcp/registry.js";
 import { noteText } from "./candidates.js";
 import type { SpendLedger } from "../spend/ledger.js";
+import { blockedValues, isInstagramClosed, scrubRouteInstagram, textShowsClosedInstagram } from "./blocked.js";
 import { labelShowsClosed } from "./routes.js";
 import { chosen, sameContact } from "./sequence.js";
 import { adWaits, candidatesWait, kindOf, optedOut, owedNow, stageOf, standingAd, TAKES_NO_AD, wantsAd } from "./stage.js";
@@ -239,21 +240,26 @@ export class OutreachDesk {
       const { instagram: _instagram, ...named } = briefOf(file);
       if (stage === "opted_out") return { ...named, stage };
       const { profile } = file;
+      const blocked = blockedValues(profile.flags ?? []);
+      const hidden = blocked.instagram.size > 0 ? new Set([...closed, ...blocked.instagram]) : closed;
       const openNumber = (number: string | undefined): boolean => Boolean(number && !closed.has(`W#${digitsOf(number)}`));
       const openEmail = (address: string | undefined): boolean => Boolean(address && !closed.has(`E#${address.toLowerCase()}`));
-      const openRouteLabel = (value: string | undefined): boolean => {
+      const openInstagram = (handle: string | undefined): boolean => Boolean(handle && !isInstagramClosed(handle, hidden));
+      const openRouteLabel = (value: string | undefined, instagramClosed: ReadonlySet<string> = hidden): boolean => {
         const emails = value?.match(/[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}/gi) ?? [];
-        return emails.every(openEmail) && !labelShowsClosed(value, closed);
+        return emails.every(openEmail) && !labelShowsClosed(value, closed) && (!value || !textShowsClosedInstagram(value, instagramClosed));
       };
-      const routeOpen = (route: ProspectRoute | undefined): boolean => {
-        if (!route) return false;
+      const cleanOpenRoute = (route: ProspectRoute | undefined): ProspectRoute | undefined => {
+        if (!route) return undefined;
+        if (route.channel === "instagram") return !isInstagramClosed(route.to, hidden) && openRouteLabel(route.label, hidden) ? route : undefined;
+        if (route.channel === "facebook") return !closed.has(`F#${route.to.toLowerCase()}`) && !textShowsClosedInstagram(route.to, hidden) && openRouteLabel(route.label, hidden) ? route : undefined;
         const key =
           route.channel === "email"
             ? `E#${route.to.toLowerCase()}`
-            : route.channel === "whatsapp" || route.channel === "call"
-              ? `W#${digitsOf(route.to)}`
-              : `${route.channel === "instagram" ? "I" : "F"}#${route.to.toLowerCase()}`;
-        return !closed.has(key) && openRouteLabel(route.label);
+            : `W#${digitsOf(route.to)}`;
+        if (closed.has(key)) return undefined;
+        const scrubbed = scrubRouteInstagram(route, blocked.instagram);
+        return openRouteLabel(scrubbed.label, closed) ? scrubbed : undefined;
       };
       const whatsapp = profile.whatsapp.filter(openNumber);
       const known = Object.fromEntries(
@@ -265,8 +271,8 @@ export class OutreachDesk {
           dmEmail: openEmail(profile.dmEmail) ? profile.dmEmail : undefined,
           dmPhone: profile.dmPhone && openNumber(profile.dmPhone) ? profile.dmPhone : undefined,
           flags: profile.flags,
-          route: routeOpen(profile.route) ? profile.route : undefined,
-          second: routeOpen(profile.second) ? profile.second : undefined,
+          route: cleanOpenRoute(profile.route),
+          second: cleanOpenRoute(profile.second),
           email: openEmail(profile.email) ? profile.email : undefined,
           phone: profile.phone && openNumber(profile.phone) ? profile.phone : undefined,
           decisionMaker: profile.decisionMaker,
@@ -274,7 +280,9 @@ export class OutreachDesk {
           linkedin: profile.linkedin,
         }).filter(([, value]) => value !== undefined),
       );
-      return { ...briefOf(file), stage, ...known, ...(whatsapp.length > 0 ? { whatsapp } : {}) };
+      const brief = briefOf(file);
+      if (!openInstagram(brief.instagram)) delete brief.instagram;
+      return { ...brief, stage, ...known, ...(whatsapp.length > 0 ? { whatsapp } : {}) };
     });
     return { prospects, more: listed.length > input.limit };
   }

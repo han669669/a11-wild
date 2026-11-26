@@ -1,4 +1,4 @@
-import type { OutreachAd, OutreachStep, ProspectContact, ProspectFile, ProspectPage, ProspectRoute, ProspectsPage, TemplatesPage } from "@a11-wild/shared";
+import type { OutreachAd, OutreachChannel, OutreachStep, ProspectContact, ProspectFile, ProspectPage, ProspectRoute, ProspectsPage, TemplatesPage } from "@a11-wild/shared";
 import type { Hono, MiddlewareHandler } from "hono";
 import { z } from "zod";
 import type { Deps } from "../app.js";
@@ -9,7 +9,8 @@ import { makeTestProspect } from "../outreach/load.js";
 import { BRAND, mailLink, messagesFor, profileLink } from "../outreach/messages.js";
 import { filtered, filterOf, numbersOf } from "../outreach/numbers.js";
 import { DAILY, nextStep, sameContact } from "../outreach/sequence.js";
-import { approvedAd, owedAnswer, optedOut, routeCheckUnresolved, sendTarget, sendTargetUnavailable, sellsOf, stageOf } from "../outreach/stage.js";
+import { blockedValues, instagramHandle, isInstagramClosed, scrubInstagramText, scrubRouteInstagram, textShowsClosedInstagram } from "../outreach/blocked.js";
+import { approvedAd, owedAnswer, optedOut, routeCheckUnresolved, sendTarget, sendTargetUnavailable, sellsOf, stageOf, targetForChannel } from "../outreach/stage.js";
 import { adView, rowOf, todayPage } from "../outreach/today.js";
 import { labelShowsClosed, routeOf } from "../outreach/routes.js";
 import { contactKeys } from "../outreach/store.js";
@@ -26,7 +27,7 @@ const BODY = {
   sent: z.strictObject({
     step: STEP,
     title: z.union([z.literal(0), z.literal(1)]),
-    channel: z.enum(["whatsapp", "email"]).optional(),
+    channel: z.enum(["whatsapp", "email", "instagram"]).optional(),
     to: z.string().min(1).max(254).optional(),
   }),
   unsent: z.strictObject({ step: STEP }),
@@ -35,7 +36,7 @@ const BODY = {
   optout: NONE,
   stage: z.strictObject({ stage: z.enum(["in_talks", "client", "lost", "parked", "auto"]), reason: z.string().trim().min(1).max(500).optional() }),
   note: z.strictObject({ text: TEXT }),
-  channel: z.strictObject({ channel: z.enum(["whatsapp", "email"]) }),
+  channel: z.strictObject({ channel: z.enum(["whatsapp", "email", "instagram"]) }),
   route: NONE,
   kind: z.strictObject({ kind: z.enum(["product", "service"]) }),
   choose: NONE,
@@ -73,12 +74,12 @@ export function outreachRoutes(
   };
   const routeOpen = (route: Pick<ProspectRoute, "channel" | "to"> | undefined, closed: ReadonlySet<string>) => {
     if (!route) return false;
+    if (route.channel === "instagram") return !isInstagramClosed(route.to, closed);
+    if (route.channel === "facebook") return !closed.has(`F#${route.to.toLowerCase()}`) && !textShowsClosedInstagram(route.to, closed);
     const key =
       route.channel === "email"
         ? `E#${route.to.toLowerCase()}`
-        : route.channel === "whatsapp" || route.channel === "call"
-          ? numberKey(route.to)
-          : `${route.channel === "instagram" ? "I" : "F"}#${route.to.toLowerCase()}`;
+        : numberKey(route.to);
     return !closed.has(key);
   };
   const refused = (error: unknown) => {
@@ -88,35 +89,58 @@ export function outreachRoutes(
 
   const contactOf = (file: ProspectFile, optOuts: ReadonlySet<string>, closed: ReadonlySet<string>): ProspectContact => {
     const { profile } = file;
+    const blocked = blockedValues(profile.flags ?? []);
+    const hidden = blocked.instagram.size > 0 ? new Set([...closed, ...blocked.instagram]) : closed;
     const link = (href: string | undefined) => (href ? { href } : {});
     const openNumber = (value: string | undefined) => Boolean(value && !closed.has(numberKey(value)));
     const openEmail = (value: string | undefined) => Boolean(value && !closed.has(`E#${value.toLowerCase()}`));
-    const openRouteLabel = (value: string | undefined) => {
+    const openInstagram = (value: string | undefined) => Boolean(value && !isInstagramClosed(value, hidden));
+    const openRouteLabel = (value: string | undefined, instagramClosed: ReadonlySet<string> = hidden) => {
       const route = routeOf(value);
       const emails = value?.match(/[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}/gi) ?? [];
-      return (!route || routeOpen(route, closed)) && emails.every(openEmail) && !labelShowsClosed(value, closed);
+      return (!route || routeOpen(route, hidden)) && emails.every(openEmail) && !labelShowsClosed(value, closed) && (!value || !textShowsClosedInstagram(value, instagramClosed));
     };
-    const openRouteObject = (route: ProspectRoute | undefined) =>
-      Boolean(route && routeOpen(route, closed) && openRouteLabel(route.label));
+    const cleanOpenRoute = (route: ProspectRoute | undefined): ProspectRoute | undefined => {
+      if (!route || !routeOpen(route, hidden)) return undefined;
+      const scrubbed = route.channel === "instagram" || route.channel === "facebook" ? route : scrubRouteInstagram(route, blocked.instagram);
+      return openRouteLabel(scrubbed.label, closed) ? scrubbed : undefined;
+    };
     if (optedOut(file, optOuts)) return { whatsapp: [] };
     const target = sendTarget(file, optOuts);
-    const sendTo = target && !sendTargetUnavailable(file, target, optOuts) && routeOpen(target, closed) ? target : undefined;
+    const rawSendTo = target && !sendTargetUnavailable(file, target, optOuts) && routeOpen(target, closed) ? target : undefined;
+    const sendTo = (() => {
+      if (!rawSendTo) return undefined;
+      if (!rawSendTo.note || blocked.instagram.size === 0) return rawSendTo;
+      const note = scrubInstagramText(rawSendTo.note, blocked.instagram) || undefined;
+      const { note: _oldNote, ...rest } = rawSendTo;
+      return { ...rest, ...(note ? { note } : {}) };
+    })();
+    const channels = (["whatsapp", "email", "instagram"] as const).filter((channel): channel is OutreachChannel => {
+      const candidate = targetForChannel(file, channel);
+      return Boolean(candidate && !sendTargetUnavailable(file, candidate, optOuts) && routeOpen(candidate, closed));
+    });
+    const openRoutes = [cleanOpenRoute(profile.route), cleanOpenRoute(profile.second)].filter((route): route is ProspectRoute => Boolean(route));
     const noteForNumber = (number: string) =>
-      [profile.route, profile.second].find((route) => route?.note && openRouteObject(route) && numberKey(route.to) === numberKey(number))?.note;
+      openRoutes.find((route) => route.note && numberKey(route.to) === numberKey(number))?.note;
     const phoneKey = profile.phone ? numberKey(profile.phone) : undefined;
     const phoneNote =
       phoneKey && openNumber(profile.phone)
-        ? [profile.route, profile.second].find(
+        ? openRoutes.find(
             (route) =>
-              route?.channel === "call" &&
+              route.channel === "call" &&
               route.note &&
-              openRouteObject(route) &&
               numberKey(route.to) === phoneKey,
           )?.note
         : undefined;
-    const second = openRouteObject(profile.second) ? profile.second : undefined;
+    const second = cleanOpenRoute(profile.second);
     const secondHref =
-      second?.channel === "whatsapp" && /^\d{10,15}$/.test(second.to) ? link(`https://wa.me/${second.to}`).href : undefined;
+      second?.channel === "whatsapp" && /^\d{10,15}$/.test(second.to)
+        ? link(`https://wa.me/${second.to}`).href
+        : second?.channel === "email"
+          ? link(mailLink(second.to, "", "")?.split("?")[0]).href
+          : second?.channel === "instagram"
+            ? link(instagramHandle(second.to) ? profileLink("instagram", `@${instagramHandle(second.to)}`) : undefined).href
+            : undefined;
     const dmCheck = { valid: "checked", risky: "risky", invalid: "invalid", unknown: "not checked" } as const;
     return {
       whatsapp: profile.whatsapp.filter(openNumber).map((number) => {
@@ -125,19 +149,20 @@ export function outreachRoutes(
       }),
       ...(openEmail(profile.email) && profile.email ? { email: { address: profile.email, ...link(mailLink(profile.email, "", "")?.split("?")[0]) } } : {}),
       ...(openNumber(profile.phone) && profile.phone ? { phone: profile.phone, ...(phoneNote ? { phoneNote } : {}) } : {}),
-      ...(profile.instagram ? { instagram: { name: profile.instagram, ...link(profileLink("instagram", profile.instagram)) } } : {}),
+      ...(openInstagram(profile.instagram) && profile.instagram ? { instagram: { name: profile.instagram, ...link(profileLink("instagram", profile.instagram)) } } : {}),
       ...(profile.decisionMaker ? { decisionMaker: profile.decisionMaker } : {}),
       ...(profile.dmTitle ? { dmTitle: profile.dmTitle } : {}),
       ...(profile.linkedin ? { linkedin: { text: profile.linkedin, ...link(profileLink("linkedin", profile.linkedin)) } } : {}),
       ...(profile.bestRoute && openRouteLabel(profile.bestRoute) ? { bestRoute: profile.bestRoute } : {}),
       ...(profile.secondRoute && openRouteLabel(profile.secondRoute) ? { secondRoute: profile.secondRoute } : {}),
       ...(sendTo ? { sendTo } : {}),
+      ...(channels.length > 0 ? { channels } : {}),
       others: {
         ...(second ? { second } : {}),
         ...(secondHref ? { secondHref } : {}),
         ...(openEmail(profile.dmEmail) && profile.dmEmail ? { dmEmail: { address: profile.dmEmail, check: dmCheck[profile.dmVerify ?? "unknown"] } } : {}),
         ...(openNumber(profile.dmPhone) && profile.dmPhone ? { dmPhone: profile.dmPhone } : {}),
-        ...(profile.instagram ? { instagram: { name: profile.instagram, ...link(profileLink("instagram", profile.instagram)) } } : {}),
+        ...(openInstagram(profile.instagram) && profile.instagram ? { instagram: { name: profile.instagram, ...link(profileLink("instagram", profile.instagram)) } } : {}),
         ...(profile.linkedin ? { linkedin: { text: profile.linkedin, ...link(profileLink("linkedin", profile.linkedin)) } } : {}),
       },
     };
@@ -172,11 +197,17 @@ export function outreachRoutes(
       step !== undefined && templates && approvedAd(file)
         ? { step, ...(messageTarget ? { channel: messageTarget.channel } : {}), messages: messagesFor(templates.steps[step], file.profile, messageTarget) }
         : undefined;
+    const pitchOpen = (value: string | undefined) => {
+      if (!value || stage === "opted_out") return false;
+      const emails = value.match(/[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}/gi) ?? [];
+      return emails.every((address) => !closed.has(`E#${address.toLowerCase()}`)) && !labelShowsClosed(value, closed) && !textShowsClosedInstagram(value, closed);
+    };
     return {
       prospect: rowOf(file, optOuts, sameContact(files), deps.now()),
       ...(file.profile.newestAd ? { newestAd: file.profile.newestAd } : {}),
       ...(sells ? { sells } : {}),
       contact: contactOf(file, optOuts, closed),
+      ...(pitchOpen(file.profile.pitch) ? { pitch: file.profile.pitch } : {}),
       flags: stage === "opted_out" ? [] : file.profile.flags ?? [],
       ...(check ? { check } : {}),
       ads,

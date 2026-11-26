@@ -213,7 +213,13 @@ export class OutreachSequence {
     await this.store.get(id);
     const file = (await this.store.all()).find((entry) => entry.profile.id === id);
     if (!file || !targetForChannel(file, channel)) {
-      throw new Refusal(channel === "whatsapp" ? "This brand has no WhatsApp number." : "This brand has no verified address.");
+      throw new Refusal(
+        channel === "whatsapp"
+          ? "This brand has no WhatsApp number."
+          : channel === "instagram"
+            ? "This brand has no Instagram handle."
+            : "This brand has no verified address.",
+      );
     }
     return this.store.addEvent(id, { type: "channel", channel }, "owner");
   }
