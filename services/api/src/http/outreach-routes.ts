@@ -9,7 +9,7 @@ import { makeTestProspect } from "../outreach/load.js";
 import { BRAND, mailLink, messagesFor, profileLink } from "../outreach/messages.js";
 import { filtered, filterOf, numbersOf } from "../outreach/numbers.js";
 import { DAILY, nextStep, sameContact } from "../outreach/sequence.js";
-import { instagramKey } from "../outreach/blocked.js";
+import { instagramHandle, isInstagramClosed, textShowsClosedInstagram } from "../outreach/blocked.js";
 import { approvedAd, owedAnswer, optedOut, routeCheckUnresolved, sendTarget, sendTargetUnavailable, sellsOf, stageOf, targetForChannel } from "../outreach/stage.js";
 import { adView, rowOf, todayPage } from "../outreach/today.js";
 import { labelShowsClosed, routeOf } from "../outreach/routes.js";
@@ -74,14 +74,13 @@ export function outreachRoutes(
   };
   const routeOpen = (route: Pick<ProspectRoute, "channel" | "to"> | undefined, closed: ReadonlySet<string>) => {
     if (!route) return false;
+    if (route.channel === "instagram") return !isInstagramClosed(route.to, closed);
     const key =
       route.channel === "email"
         ? `E#${route.to.toLowerCase()}`
         : route.channel === "whatsapp" || route.channel === "call"
           ? numberKey(route.to)
-          : route.channel === "instagram"
-            ? instagramKey(route.to)
-            : `F#${route.to.toLowerCase()}`;
+          : `F#${route.to.toLowerCase()}`;
     return !closed.has(key);
   };
   const refused = (error: unknown) => {
@@ -94,11 +93,11 @@ export function outreachRoutes(
     const link = (href: string | undefined) => (href ? { href } : {});
     const openNumber = (value: string | undefined) => Boolean(value && !closed.has(numberKey(value)));
     const openEmail = (value: string | undefined) => Boolean(value && !closed.has(`E#${value.toLowerCase()}`));
-    const openInstagram = (value: string | undefined) => Boolean(value && !closed.has(instagramKey(value)));
+    const openInstagram = (value: string | undefined) => Boolean(value && !isInstagramClosed(value, closed));
     const openRouteLabel = (value: string | undefined) => {
       const route = routeOf(value);
       const emails = value?.match(/[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}/gi) ?? [];
-      return (!route || routeOpen(route, closed)) && emails.every(openEmail) && !labelShowsClosed(value, closed);
+      return (!route || routeOpen(route, closed)) && emails.every(openEmail) && !labelShowsClosed(value, closed) && (!value || !textShowsClosedInstagram(value, closed));
     };
     const openRouteObject = (route: ProspectRoute | undefined) =>
       Boolean(route && routeOpen(route, closed) && openRouteLabel(route.label));
@@ -129,7 +128,7 @@ export function outreachRoutes(
         : second?.channel === "email"
           ? link(mailLink(second.to, "", "")?.split("?")[0]).href
           : second?.channel === "instagram"
-            ? link(profileLink("instagram", second.to)).href
+            ? link(instagramHandle(second.to) ? profileLink("instagram", `@${instagramHandle(second.to)}`) : undefined).href
             : undefined;
     const dmCheck = { valid: "checked", risky: "risky", invalid: "invalid", unknown: "not checked" } as const;
     return {
@@ -190,7 +189,7 @@ export function outreachRoutes(
     const pitchOpen = (value: string | undefined) => {
       if (!value || stage === "opted_out") return false;
       const emails = value.match(/[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}/gi) ?? [];
-      return emails.every((address) => !closed.has(`E#${address.toLowerCase()}`)) && !labelShowsClosed(value, closed);
+      return emails.every((address) => !closed.has(`E#${address.toLowerCase()}`)) && !labelShowsClosed(value, closed) && !textShowsClosedInstagram(value, closed);
     };
     return {
       prospect: rowOf(file, optOuts, sameContact(files), deps.now()),

@@ -47,15 +47,20 @@ export const contactKeys = (profile: Prospect, sends: readonly Pick<OutreachSend
     if (!value?.to.trim()) return;
     if (value.channel === "email") email(value.to);
     else if (value.channel === "whatsapp" || value.channel === "call") number(value.to);
-    else if (value.channel === "instagram") keys.add(instagramKey(value.to));
-    else keys.add(`F#${value.to.toLowerCase()}`);
+    else if (value.channel === "instagram") {
+      const key = instagramKey(value.to);
+      if (!blocked.instagram.has(key)) keys.add(key);
+    } else keys.add(`F#${value.to.toLowerCase()}`);
   };
   profile.whatsapp.forEach(number);
   number(profile.phone);
   number(profile.dmPhone);
   email(profile.email);
   email(profile.dmEmail);
-  if (profile.instagram?.trim()) keys.add(instagramKey(profile.instagram));
+  if (profile.instagram?.trim()) {
+    const key = instagramKey(profile.instagram);
+    if (!blocked.instagram.has(key)) keys.add(key);
+  }
   route(profile.route);
   route(profile.second);
   routeLabel(profile.bestRoute);

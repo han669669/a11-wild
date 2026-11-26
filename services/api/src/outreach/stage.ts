@@ -1,6 +1,6 @@
 import type { OutreachAd, OutreachChannel, OutreachEvent, OutreachStage, Prospect, ProspectFile, ProspectRoute, ProspectSendTarget, ProspectSells } from "@a11-wild/shared";
-import { blockedValues, instagramKey, isBlockedTarget, numberKey, type BlockedValues } from "./blocked.js";
-import { EMAIL, profileLink } from "./messages.js";
+import { blockedValues, instagramHandle, isBlockedTarget, isInstagramClosed, numberKey, type BlockedValues } from "./blocked.js";
+import { EMAIL } from "./messages.js";
 import { contactKeys } from "./store.js";
 
 /** Two tries at an ad the owner says yes to. After the second no the brand is parked. */
@@ -120,24 +120,36 @@ export function owedAnswer(file: ProspectFile): EventOf<"reply"> | undefined {
   return answered && answered.at >= reply.at ? undefined : reply;
 }
 
-const sendable = (route: ProspectRoute | undefined): ProspectSendTarget | undefined =>
-  route && (route.channel === "whatsapp" || route.channel === "email" || (route.channel === "instagram" && Boolean(profileLink("instagram", route.to))))
-    ? {
-        channel: route.channel,
-        to: route.channel === "instagram" ? `@${route.to.replace(/^@/, "")}` : route.to,
-        direct: route.direct,
-        ...(route.note ? { note: route.note } : {}),
-        ...(route.person ? { person: route.person } : {}),
-        ...(route.title ? { title: route.title } : {}),
-      }
-    : undefined;
+const sendable = (route: ProspectRoute | undefined): ProspectSendTarget | undefined => {
+  if (!route) return undefined;
+  if (route.channel === "whatsapp" || route.channel === "email") {
+    return {
+      channel: route.channel,
+      to: route.to,
+      direct: route.direct,
+      ...(route.note ? { note: route.note } : {}),
+      ...(route.person ? { person: route.person } : {}),
+      ...(route.title ? { title: route.title } : {}),
+    };
+  }
+  if (route.channel === "instagram") {
+    const handle = instagramHandle(route.to);
+    if (!handle) return undefined;
+    return {
+      channel: "instagram",
+      to: `@${handle}`,
+      direct: route.direct,
+      ...(route.note ? { note: route.note } : {}),
+      ...(route.person ? { person: route.person } : {}),
+      ...(route.title ? { title: route.title } : {}),
+    };
+  }
+  return undefined;
+};
 
 const instagramTarget = (value: string | undefined): ProspectSendTarget | undefined => {
-  const trimmed = value?.trim();
-  if (!trimmed || !profileLink("instagram", trimmed)) return undefined;
-  const urlMatch = trimmed.match(/^https?:\/\/(?:www\.)?instagram\.com\/([A-Za-z0-9._]{1,30})(?:\/|\?|$)/i);
-  const handle = urlMatch ? urlMatch[1]! : trimmed.replace(/^@/, "");
-  return { channel: "instagram", to: `@${handle}`, direct: false };
+  const handle = instagramHandle(value);
+  return handle ? { channel: "instagram", to: `@${handle}`, direct: false } : undefined;
 };
 
 export function legacyTargets(profile: Prospect): ProspectSendTarget[] {
@@ -175,8 +187,13 @@ export function sendTarget(file: ProspectFile, optOuts?: ReadonlySet<string>): P
 }
 
 export function sendTargetUnavailable(file: ProspectFile, target: ProspectSendTarget, optOuts: ReadonlySet<string>): boolean {
-  const key = target.channel === "email" ? `E#${target.to.toLowerCase()}` : target.channel === "instagram" ? instagramKey(target.to) : `W#${numberKey(target.to)}`;
-  return isBlockedTarget(blockedValues(file.profile.flags ?? []), target) || file.events.some((event) => event.type === "optout") || optOuts.has(key);
+  const closed =
+    target.channel === "email"
+      ? optOuts.has(`E#${target.to.toLowerCase()}`)
+      : target.channel === "instagram"
+        ? isInstagramClosed(target.to, optOuts)
+        : optOuts.has(`W#${numberKey(target.to)}`);
+  return isBlockedTarget(blockedValues(file.profile.flags ?? []), target) || file.events.some((event) => event.type === "optout") || closed;
 }
 
 function defaultTarget(file: ProspectFile, blocked: BlockedValues): ProspectSendTarget | undefined {
@@ -198,7 +215,7 @@ export function channelOf(file: ProspectFile): OutreachChannel | undefined {
 export function optedOut(file: ProspectFile, optOuts: ReadonlySet<string>): boolean {
   if (file.events.some((event) => event.type === "optout")) return true;
   // A test prospect's opt-out never enters the register, and the register never reaches a test prospect.
-  return !file.profile.test && contactKeys(file.profile).some((key) => optOuts.has(key));
+  return !file.profile.test && contactKeys(file.profile).some((key) => (key.startsWith("I#") ? isInstagramClosed(key.slice(2), optOuts) : optOuts.has(key)));
 }
 
 /**

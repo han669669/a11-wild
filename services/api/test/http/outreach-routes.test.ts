@@ -558,10 +558,22 @@ describe("the owner's day", () => {
     const opted = await json(await get("/api/outreach/prospects/00001"));
     expect(opted.pitch).toBeUndefined();
     expect(opted.contact).toEqual({ whatsapp: [] });
-    // Pitch mentioning an opted-out number on another brand is also hidden.
+    // Pitch mentioning an opted-out number or Instagram handle on another brand is also hidden.
     await on("00002", "optout");
-    await ready([row(3, { whatsapp: "+65 8000 0003", email: undefined, pitch: "Also linked to +65 8000 0099" })]);
+    await ready([
+      row(3, { whatsapp: "+65 8000 0003", email: undefined, pitch: "Also linked to +65 8000 0099" }),
+      row(4, { whatsapp: "+65 8000 0004", email: undefined, pitch: "Sister brand of @madeup.brand" }),
+      row(5, {
+        whatsapp: undefined,
+        email: undefined,
+        bestRoute: "Instagram DM https://www.instagram.com/url.brand/",
+      }),
+    ]);
     expect((await json(await get("/api/outreach/prospects/00003"))).pitch).toBeUndefined();
+    expect((await json(await get("/api/outreach/prospects/00004"))).pitch).toBeUndefined();
+    const urlBrand = await json(await get("/api/outreach/prospects/00005"));
+    expect(urlBrand.contact.sendTo).toMatchObject({ channel: "instagram", to: "@url.brand" });
+    expect(urlBrand.message.messages[0].href).toBe("https://www.instagram.com/url.brand/");
   });
 });
 
