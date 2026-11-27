@@ -135,20 +135,25 @@ export function outreachRoutes(
       }
       return false;
     };
-    const whatsappNoteFor = (number: string): string | undefined => {
-      const raw = profile.whatsappNotes?.[number];
-      if (!raw) return undefined;
-      const scrubbed = blocked.instagram.size > 0 ? scrubInstagramText(raw, blocked.instagram) : raw;
+    const cleanNote = (note: string | undefined): string | undefined => {
+      if (!note) return undefined;
+      const scrubbed = blocked.instagram.size > 0 ? scrubInstagramText(note, blocked.instagram) : note;
       return scrubbed && openRouteLabel(scrubbed, closed) && !textShowsClosedFacebook(scrubbed, closed) ? scrubbed : undefined;
     };
+    const whatsappNoteFor = (number: string): string | undefined => cleanNote(profile.whatsappNotes?.[number]);
+    const whatsappRouteNoteFor = (number: string): string | undefined =>
+      openRoutes.find((route) => route.channel === "whatsapp" && route.note && numberKey(route.to) === numberKey(number))?.note;
     const noteForNumber = (number: string) =>
       whatsappNoteFor(number) ??
-      openRoutes.find((route) => route.channel === "whatsapp" && route.note && numberKey(route.to) === numberKey(number))?.note ??
+      whatsappRouteNoteFor(number) ??
       openRoutes.find((route) => route.note && numberKey(route.to) === numberKey(number))?.note;
     const sendTo = (() => {
       if (!rawSendTo) return undefined;
-      const scrubbedRawNote = rawSendTo.note && blocked.instagram.size > 0 ? scrubInstagramText(rawSendTo.note, blocked.instagram) || undefined : rawSendTo.note;
-      const resolvedNote = rawSendTo.channel === "whatsapp" ? whatsappNoteFor(rawSendTo.to) ?? scrubbedRawNote : scrubbedRawNote;
+      const ownNote = cleanNote(rawSendTo.note);
+      const resolvedNote =
+        rawSendTo.channel === "whatsapp"
+          ? whatsappNoteFor(rawSendTo.to) ?? ownNote ?? whatsappRouteNoteFor(rawSendTo.to)
+          : ownNote;
       const { note: _oldNote, ...rest } = rawSendTo;
       return { ...rest, ...(resolvedNote ? { note: resolvedNote } : {}) };
     })();

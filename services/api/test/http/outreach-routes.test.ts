@@ -773,6 +773,22 @@ describe("the owner's day", () => {
     const page18 = await json(await get("/api/outreach/prospects/00018"));
     expect(page18.contact.sendTo).toMatchObject({ channel: "whatsapp", to: "6560000008", note: "message bookings desk" });
     expect(page18.contact.whatsapp[0]?.note).toBe("message bookings desk");
+    // When the first WhatsApp route has no note (or an opted-out handle), sendTo falls back to the clean second WhatsApp route note.
+    await loadRows(
+      outreach().store,
+      [
+        row(19, {
+          bestRoute: "Phone 80000009 (@opted.brand)",
+          secondRoute: "WhatsApp 80000009 (bookings desk)",
+          whatsapp: "+6580000009",
+          email: undefined,
+        }),
+      ],
+      () => studio.clock.now,
+    );
+    const page19 = await json(await get("/api/outreach/prospects/00019"));
+    expect(page19.contact.sendTo).toMatchObject({ channel: "whatsapp", to: "6580000009", note: "bookings desk" });
+    expect(page19.contact.whatsapp[0]?.note).toBe("bookings desk");
   });
 });
 
