@@ -682,18 +682,18 @@ describe("the owner's day", () => {
         row(11, {
           bestRoute: "WhatsApp +6010000001 (founder line)",
           secondRoute: "Email (valid) founder@brand11.example",
-          whatsapp: "+6010000001, +6580000002 (Singapore office, Mon-Fri)",
+          whatsapp: "+6010000001 (founders' direct line), +6580000002 (Singapore office, Mon-Fri 9.00-17.00)",
           email: "office@brand11.example",
         }),
         row(12, {
-          whatsapp: "+44 (20) 8000 0001 (UK office)",
+          whatsapp: "+44 (20) 8000 0001 (UK office); 80000007 80000008 (second only)",
           email: undefined,
         }),
         row(13, { whatsapp: "+6580000003 (unclosed note" }),
         row(14, { whatsapp: "+6580000004 (call 8000 0009 instead)" }),
         row(15, { whatsapp: "+6580000005 (write sales@brand15.example)" }),
         row(16, { whatsapp: `+6580000006 (${"a".repeat(65)})` }),
-        row(17, { whatsapp: undefined, email: undefined, instagram: "@opted.brand" }),
+        row(17, { whatsapp: undefined, email: undefined, instagram: "@opted.brand", secondRoute: "Facebook message fb.example/opted" }),
       ],
       () => studio.clock.now,
     );
@@ -705,14 +705,16 @@ describe("the owner's day", () => {
     ]);
     const page11 = await json(await get("/api/outreach/prospects/00011"));
     expect(page11.contact.whatsapp).toEqual([
-      { number: "6010000001", href: "https://wa.me/6010000001", note: "founder line" },
-      { number: "6580000002", href: "https://wa.me/6580000002", note: "Singapore office, Mon-Fri" },
+      { number: "6010000001", href: "https://wa.me/6010000001", note: "founders' direct line" },
+      { number: "6580000002", href: "https://wa.me/6580000002", note: "Singapore office, Mon-Fri 9.00-17.00" },
     ]);
     const page12 = await json(await get("/api/outreach/prospects/00012"));
     expect(page12.contact.whatsapp).toEqual([
       { number: "442080000001", href: "https://wa.me/442080000001", note: "UK office" },
+      { number: "6580000007", href: "https://wa.me/6580000007" },
+      { number: "6580000008", href: "https://wa.me/6580000008", note: "second only" },
     ]);
-    // Quarantine scrubs a saved per-number note without dropping the number; an opted-out handle hides the note.
+    // Quarantine scrubs a saved per-number note without dropping the number; an opted-out Instagram or Facebook handle hides the note.
     const saved11 = (await outreach().store.all()).find((entry) => entry.profile.id === "00011")!;
     await outreach().store.saveProfile({
       ...saved11.profile,
@@ -732,6 +734,15 @@ describe("the owner's day", () => {
     });
     const opted11 = await json(await get("/api/outreach/prospects/00011"));
     expect(opted11.contact.whatsapp[1]).toEqual({
+      number: "6580000002",
+      href: "https://wa.me/6580000002",
+    });
+    await outreach().store.saveProfile({
+      ...saved11.profile,
+      whatsappNotes: { "6580000002": "via fb.example/opted" },
+    });
+    const optedFb11 = await json(await get("/api/outreach/prospects/00011"));
+    expect(optedFb11.contact.whatsapp[1]).toEqual({
       number: "6580000002",
       href: "https://wa.me/6580000002",
     });

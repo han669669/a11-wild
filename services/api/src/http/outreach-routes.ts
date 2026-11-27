@@ -120,13 +120,29 @@ export function outreachRoutes(
       return Boolean(candidate && !sendTargetUnavailable(file, candidate, optOuts) && routeOpen(candidate, closed));
     });
     const openRoutes = [cleanOpenRoute(profile.route), cleanOpenRoute(profile.second)].filter((route): route is ProspectRoute => Boolean(route));
+    const textShowsClosedFacebook = (text: string, closedSet: ReadonlySet<string>): boolean => {
+      const lower = text.toLowerCase();
+      for (const key of closedSet) {
+        if (!key.startsWith("F#")) continue;
+        const target = key.slice(2);
+        if (target.length < 2) continue;
+        let pos = lower.indexOf(target);
+        while (pos !== -1) {
+          const before = pos > 0 ? lower[pos - 1]! : "";
+          const after = pos + target.length < lower.length ? lower[pos + target.length]! : "";
+          if (!/[a-z0-9]/i.test(before) && !/[a-z0-9]/i.test(after)) return true;
+          pos = lower.indexOf(target, pos + 1);
+        }
+      }
+      return false;
+    };
     const noteForNumber = (number: string) => {
-      const fromRoute = openRoutes.find((route) => route.note && numberKey(route.to) === numberKey(number))?.note;
-      if (fromRoute) return fromRoute;
       const raw = profile.whatsappNotes?.[number];
-      if (!raw) return undefined;
-      const scrubbed = blocked.instagram.size > 0 ? scrubInstagramText(raw, blocked.instagram) : raw;
-      return scrubbed && openRouteLabel(scrubbed, closed) ? scrubbed : undefined;
+      if (raw) {
+        const scrubbed = blocked.instagram.size > 0 ? scrubInstagramText(raw, blocked.instagram) : raw;
+        if (scrubbed && openRouteLabel(scrubbed, closed) && !textShowsClosedFacebook(scrubbed, closed)) return scrubbed;
+      }
+      return openRoutes.find((route) => route.note && numberKey(route.to) === numberKey(number))?.note;
     };
     const phoneKey = profile.phone ? numberKey(profile.phone) : undefined;
     const phoneNote =

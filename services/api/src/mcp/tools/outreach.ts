@@ -28,7 +28,9 @@ const row = z.strictObject({
   newestAd: text(40).optional(),
   bestRoute: text(64).optional(),
   secondRoute: text(64).optional(),
-  whatsapp: text(200).optional().describe("One number or several, with a semicolon between them."),
+  whatsapp: text(200)
+    .optional()
+    .describe("One number or several (separated by ; , or /), up to 200 characters total; each number may end with a space and a word note in brackets."),
   email: text(254).optional().describe("Only an address the list marks as verified."),
   phone: text(100).optional(),
   instagram: text(200).optional(),

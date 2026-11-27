@@ -72,6 +72,8 @@ const splitOutsideBrackets = (value: string): string[] => {
   return pieces;
 };
 
+const TIME_RANGE = /\b(?:[01]?\d|2[0-3])[.:][0-5]\d\s*[-–]\s*(?:[01]?\d|2[0-3])[.:][0-5]\d\b/g;
+
 /** Parses WhatsApp numbers plus optional trailing bracketed word notes (e.g. "+6580000001 (office line)"). */
 export function whatsappEntries(value: string | undefined): { numbers: string[]; notes?: Record<string, string> } {
   const text = plain(value);
@@ -88,7 +90,7 @@ export function whatsappEntries(value: string | undefined): { numbers: string[];
     const note = bracket && /\p{L}/u.test(bracket.content) ? bracket.content : undefined;
     if (note !== undefined) {
       if (note.length > 64) throw new RowError("whatsapp", "a WhatsApp note is longer than 64 characters");
-      if (hasUnsafeNoteContent(note)) {
+      if (hasUnsafeNoteContent(note.replace(TIME_RANGE, " "))) {
         throw new RowError("whatsapp", "a WhatsApp note can't hold a number or address; put it as its own entry or in Notes");
       }
     }
@@ -96,8 +98,9 @@ export function whatsappEntries(value: string | undefined): { numbers: string[];
     const parsed = numbers(target);
     for (const full of parsed) {
       if (!found.includes(full)) found.push(full);
-      if (note && !notes[full]) notes[full] = note;
     }
+    const annotatedNumber = parsed.at(-1);
+    if (note && annotatedNumber && !notes[annotatedNumber]) notes[annotatedNumber] = note;
   }
   return Object.keys(notes).length > 0 ? { numbers: found, notes } : { numbers: found };
 }
