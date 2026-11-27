@@ -35,15 +35,15 @@ Human engineers and AI agents contribute to the main repository, often through f
 These rules prevent silent data corruption and duplicate outreach.
 
 - **Row-targeted updates only:** when updating the live CRM from an owner workbook, update **only** the explicitly requested row(s). Never silently mass-overwrite unrelated drifted rows.
-- **Mandatory full-row diff report:** on every workbook update, diff every workbook Outreach field against the live CRM and report the full-row diff breakdown. Separate intentional import rules from unexpected drift:
+- **Mandatory full-row diff report:** on every workbook update, diff every comparable Outreach field returned by `outreach_contacts` (routes, contacts, decision-maker, live ads, newest ad, derived `flags`; raw `Notes` are not returned by `outreach_contacts`) against the workbook and report the full-row diff breakdown. Separate intentional import rules from unexpected drift:
   - CRM keeps the later `Newest ad` date it has already seen.
   - Placeholder Decision-maker / DM title values (such as `<UNKNOWN>` or null markers) are dropped at ingest.
-  - Multi-email cells keep the first address.
-  - Merged duplicates (`MERGED-INTO`) stay hidden from active CRM rows.
+  - `email` validates as a single address, so multi-email workbook cells are preprocessed to keep the first address before calling `outreach_load` (`dmEmail` is stored as passed).
+  - Duplicate rows marked `MERGED-INTO` stay hidden from active CRM rows when mapped to `mergedInto` in the `outreach_load` payload.
 - **Tool limits:** `outreach_contacts` paginates at most 50 prospects per call; `outreach_load` takes at most 200 rows per call.
 - **Workflow state preservation:** `outreach_load` updates profile fields while keeping sends, replies, opt-outs, ads and manual stages intact. Because manual stages persist, unparking a previously parked prospect requires a `stage: auto` event — re-importing the row alone does not unpark it.
-- **Channel priority:** default fallback order is **WhatsApp first, Email second, Instagram DM last**. An explicit workbook `Best route` always overrides the generic fallback order.
-- **Route notes and per-number WhatsApp notes:** phone route cells and individual `WhatsApp` entries may carry a short plain-language note in brackets at the end (for example, `WhatsApp +6580000001 (office partnership line)`). Bracketed notes cannot hold phone numbers or email addresses, and unclosed brackets are refused.
+- **Channel priority:** without a manual channel choice, `defaultTarget` tries a usable workbook `Best route`, then a usable `Second route`, before falling back to **WhatsApp first, Email second, Instagram DM last**.
+- **Route notes and per-number WhatsApp notes:** phone route labels (for example, `WhatsApp +6580000001 (verified business)`) and individual `WhatsApp` field entries without the `WhatsApp` prefix (for example, `+6580000001 (office partnership line)`) may carry a short plain-language note in brackets at the end. Bracketed notes cannot hold phone numbers or email addresses, and unclosed brackets are refused.
 - **Zero audit jargon in UI-facing fields:** never expose internal audit tags (such as `JIT-HUNT`, `WA-FIELD-CHECK`, `NEGATIVE-FINAL`) in `pitch`, route notes or any owner-facing label. Keep `pitch` plain, concise and actionable (the right decision-maker, pitch hook and channel strategy).
 - **Bidirectional shared-contact linkage:** sibling brands under the same decision-maker stay as separate prospect pages linked via `linkedBrands`. One authoritative first message (`step 0`) covers every sibling sharing the exact destination sent to (1 daily slot, 1 campaign count, atomic same-day take-back). Combined multi-brand messages are assembled manually using `Pitch context` for now.
 
