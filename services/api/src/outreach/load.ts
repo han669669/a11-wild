@@ -3,7 +3,7 @@ import { OUTREACH_TIERS, type OutreachTier, type Prospect, type ProspectFlag, ty
 import { Refusal } from "../mcp/registry.js";
 import { blockedValues, EMAIL_IN_TEXT, instagramKey, isBlockedTarget, numberKey, scrubInstagramText, textShowsClosedInstagram } from "./blocked.js";
 import { EMAIL } from "./messages.js";
-import { hasUnbalancedBrackets, hasUnsafeNoteContent, hasUnsafePhoneRouteNote, routeOf, trailingBracketGroup } from "./routes.js";
+import { hasEmailInNote, hasPhoneInNote, hasUnbalancedBrackets, hasUnsafePhoneRouteNote, routeOf, trailingBracketGroup } from "./routes.js";
 import { sendTarget, stageOf } from "./stage.js";
 import { type OutreachStore, prospectId } from "./store.js";
 
@@ -90,7 +90,7 @@ export function whatsappEntries(value: string | undefined): { numbers: string[];
     const note = bracket && /\p{L}/u.test(bracket.content) ? bracket.content : undefined;
     if (note !== undefined) {
       if (note.length > 64) throw new RowError("whatsapp", "a WhatsApp note is longer than 64 characters");
-      if (hasUnsafeNoteContent(note.replace(TIME_RANGE, " "))) {
+      if (hasEmailInNote(note) || hasPhoneInNote(note.replace(TIME_RANGE, " "))) {
         throw new RowError("whatsapp", "a WhatsApp note can't hold a number or address; put it as its own entry or in Notes");
       }
     }

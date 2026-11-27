@@ -37,7 +37,9 @@ export function hasUnbalancedBrackets(value: string): boolean {
   return depth !== 0;
 }
 
-export const hasUnsafeNoteContent = (note: string): boolean => PHONE_IN_NOTE.test(note) || EMAIL_IN_NOTE.test(note);
+export const hasEmailInNote = (note: string): boolean => EMAIL_IN_NOTE.test(note);
+export const hasPhoneInNote = (note: string): boolean => PHONE_IN_NOTE.test(note);
+export const hasUnsafeNoteContent = (note: string): boolean => hasPhoneInNote(note) || hasEmailInNote(note);
 
 export function hasUnsafePhoneRouteNote(value: string | undefined): boolean {
   const phone = value?.trim().match(PHONE_ROUTE_LABEL);

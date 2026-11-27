@@ -108,13 +108,6 @@ export function outreachRoutes(
     if (optedOut(file, optOuts)) return { whatsapp: [] };
     const target = sendTarget(file, optOuts);
     const rawSendTo = target && !sendTargetUnavailable(file, target, optOuts) && routeOpen(target, closed) ? target : undefined;
-    const sendTo = (() => {
-      if (!rawSendTo) return undefined;
-      if (!rawSendTo.note || blocked.instagram.size === 0) return rawSendTo;
-      const note = scrubInstagramText(rawSendTo.note, blocked.instagram) || undefined;
-      const { note: _oldNote, ...rest } = rawSendTo;
-      return { ...rest, ...(note ? { note } : {}) };
-    })();
     const channels = (["whatsapp", "email", "instagram"] as const).filter((channel): channel is OutreachChannel => {
       const candidate = targetForChannel(file, channel);
       return Boolean(candidate && !sendTargetUnavailable(file, candidate, optOuts) && routeOpen(candidate, closed));
@@ -129,8 +122,12 @@ export function outreachRoutes(
         let pos = lower.indexOf(target);
         while (pos !== -1) {
           const before = pos > 0 ? lower[pos - 1]! : "";
-          const after = pos + target.length < lower.length ? lower[pos + target.length]! : "";
-          if (!/[a-z0-9]/i.test(before) && !/[a-z0-9]/i.test(after)) return true;
+          const end = pos + target.length;
+          const after = end < lower.length ? lower[end]! : "";
+          const afterNext = end + 1 < lower.length ? lower[end + 1]! : "";
+          const beforeOk = !/[a-z0-9._-]/i.test(before);
+          const afterOk = !/[a-z0-9_-]/i.test(after) && !(after === "." && /[a-z0-9]/i.test(afterNext));
+          if (beforeOk && afterOk) return true;
           pos = lower.indexOf(target, pos + 1);
         }
       }
@@ -144,6 +141,17 @@ export function outreachRoutes(
       }
       return openRoutes.find((route) => route.note && numberKey(route.to) === numberKey(number))?.note;
     };
+    const sendTo = (() => {
+      if (!rawSendTo) return undefined;
+      const resolvedNote =
+        rawSendTo.channel === "whatsapp"
+          ? noteForNumber(rawSendTo.to) ?? (rawSendTo.note && blocked.instagram.size > 0 ? scrubInstagramText(rawSendTo.note, blocked.instagram) || undefined : rawSendTo.note)
+          : rawSendTo.note && blocked.instagram.size > 0
+            ? scrubInstagramText(rawSendTo.note, blocked.instagram) || undefined
+            : rawSendTo.note;
+      const { note: _oldNote, ...rest } = rawSendTo;
+      return { ...rest, ...(resolvedNote ? { note: resolvedNote } : {}) };
+    })();
     const phoneKey = profile.phone ? numberKey(profile.phone) : undefined;
     const phoneNote =
       phoneKey && openNumber(profile.phone)

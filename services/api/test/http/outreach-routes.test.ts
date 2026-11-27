@@ -691,7 +691,7 @@ describe("the owner's day", () => {
         }),
         row(13, { whatsapp: "+6580000003 (unclosed note" }),
         row(14, { whatsapp: "+6580000004 (call 8000 0009 instead)" }),
-        row(15, { whatsapp: "+6580000005 (write sales@brand15.example)" }),
+        row(15, { whatsapp: "+6580000005 (write support-09.00-17.00@brand15.example)" }),
         row(16, { whatsapp: `+6580000006 (${"a".repeat(65)})` }),
         row(17, { whatsapp: undefined, email: undefined, instagram: "@opted.brand", secondRoute: "Facebook message fb.example/opted" }),
       ],
@@ -704,6 +704,7 @@ describe("the owner's day", () => {
       { row: 16, field: "whatsapp" },
     ]);
     const page11 = await json(await get("/api/outreach/prospects/00011"));
+    expect(page11.contact.sendTo?.note).toBe("founders' direct line");
     expect(page11.contact.whatsapp).toEqual([
       { number: "6010000001", href: "https://wa.me/6010000001", note: "founders' direct line" },
       { number: "6580000002", href: "https://wa.me/6580000002", note: "Singapore office, Mon-Fri 9.00-17.00" },
@@ -739,12 +740,22 @@ describe("the owner's day", () => {
     });
     await outreach().store.saveProfile({
       ...saved11.profile,
-      whatsappNotes: { "6580000002": "via fb.example/opted" },
+      whatsappNotes: { "6580000002": "via fb.example/opted." },
     });
     const optedFb11 = await json(await get("/api/outreach/prospects/00011"));
     expect(optedFb11.contact.whatsapp[1]).toEqual({
       number: "6580000002",
       href: "https://wa.me/6580000002",
+    });
+    await outreach().store.saveProfile({
+      ...saved11.profile,
+      whatsappNotes: { "6580000002": "via fb.example/opted.design" },
+    });
+    const distinctFb11 = await json(await get("/api/outreach/prospects/00011"));
+    expect(distinctFb11.contact.whatsapp[1]).toEqual({
+      number: "6580000002",
+      href: "https://wa.me/6580000002",
+      note: "via fb.example/opted.design",
     });
   });
 });
