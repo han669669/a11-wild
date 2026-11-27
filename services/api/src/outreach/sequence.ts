@@ -29,17 +29,28 @@ export function linkedFirstSends(files: readonly ProspectFile[]): Map<string, Ou
     }
   }
   const linked = new Map<string, OutreachSend>();
+  const origins: { origin: ProspectFile; first: OutreachSend; derived: OutreachSend }[] = [];
   for (const origin of active) {
     const first = origin.sends.find((send) => send.step === 0 && !send.linkedFrom);
     if (!first) continue;
+    origins.push({ origin, first, derived: { ...first, linkedFrom: origin.profile.id, linkedBrand: origin.profile.brand } });
+  }
+  const assign = (peer: ProspectFile, origin: ProspectFile, derived: OutreachSend) => {
+    if (peer.profile.id === origin.profile.id) return;
+    if (peer.sends.some((send) => send.step === 0 && !send.linkedFrom)) return;
+    if (!linked.has(peer.profile.id)) linked.set(peer.profile.id, derived);
+  };
+  // Pass 1: current contact matches always take precedence over historical `covered` matches.
+  for (const { origin, first, derived } of origins) {
     const key = sendContactKey(first);
     const byContact = key ? byKey.get(key) ?? [] : contactKeys(origin.profile).flatMap((k) => byKey.get(k) ?? []);
-    const byCovered = (first.covered ?? []).map((id) => byId.get(id)).filter((peer): peer is ProspectFile => peer !== undefined);
-    const derived: OutreachSend = { ...first, linkedFrom: origin.profile.id, linkedBrand: origin.profile.brand };
-    for (const peer of [...byCovered, ...byContact]) {
-      if (peer.profile.id === origin.profile.id) continue;
-      if (peer.sends.some((send) => send.step === 0 && !send.linkedFrom)) continue;
-      if (!linked.has(peer.profile.id)) linked.set(peer.profile.id, derived);
+    for (const peer of byContact) assign(peer, origin, derived);
+  }
+  // Pass 2: durable fallback for siblings whose contact changed after the first message went out.
+  for (const { origin, first, derived } of origins) {
+    for (const coveredId of first.covered ?? []) {
+      const peer = byId.get(coveredId);
+      if (peer) assign(peer, origin, derived);
     }
   }
   return linked;
@@ -285,12 +296,15 @@ export class OutreachSequence {
 
   /** Final, and kept for the contact: every brand with that number or that address leaves every list. */
   async optOut(id: string): Promise<void> {
-    const { file } = await this.file(id);
+    const { file, files } = await this.file(id);
     const { profile } = file;
     // The reply can't say which message drew it, so every address this brand was messaged at is closed.
     // The contact's own register is written first: if the second write fails, every brand with the contact is off the lists already, and a second try finishes it.
     // A test prospect's opt-out stays on the test prospect, so a test can neither block nor free a real contact.
-    if (!profile.test) await this.store.addOptOut(profile, file.sends);
+    if (!profile.test) {
+      const linked = linkedFirstSends(files).get(id);
+      await this.store.addOptOut(profile, linked ? [...file.sends, linked] : file.sends);
+    }
     await this.store.addEvent(id, { type: "optout" }, "owner");
   }
 

@@ -371,6 +371,23 @@ describe("marking a message as sent", () => {
     await sequence.reply("00005", { reply: "more", text: "tell me more" });
     const afterReply = await store.all();
     expect(nextStep(afterReply.find((e) => e.profile.id === "00004")!, afterReply)).toBeUndefined();
+
+    // Opting out a covered sibling whose contact changed still closes the original sent destination.
+    await sequence.reply("00005", { reply: "no" });
+    expect((await store.optOuts()).has("W#6580000004")).toBe(true);
+
+    // Current contact match takes precedence over historical `covered` match when a sibling switches to another sender's contact.
+    await loadRows(store, [row(7, { whatsapp: "+65 8000 0007" }), row(8, { whatsapp: "+65 8000 0007" }), row(9, { whatsapp: "+65 8000 0009" })], now);
+    await ready("00007");
+    await ready("00009");
+    await sequence.send("00007", { step: 0, title: 0 });
+    await sequence.send("00009", { step: 0, title: 0 });
+    await loadRows(store, [row(8, { whatsapp: "+65 8000 0009" })], now);
+    expect(linkedFirstSends(await store.all()).get("00008")).toMatchObject({ linkedFrom: "00009", linkedBrand: "Brand 9" });
+    await sequence.reply("00008", { reply: "more" });
+    const afterSwitchReply = await store.all();
+    expect(nextStep(afterSwitchReply.find((e) => e.profile.id === "00007")!, afterSwitchReply)).toMatchObject({ step: 1 });
+    expect(nextStep(afterSwitchReply.find((e) => e.profile.id === "00009")!, afterSwitchReply)).toBeUndefined();
   });
 
   it("refuses a send before the message text is loaded", async () => {
