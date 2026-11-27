@@ -740,7 +740,7 @@ describe("the owner's day", () => {
     });
     await outreach().store.saveProfile({
       ...saved11.profile,
-      whatsappNotes: { "6580000002": "via fb.example/opted." },
+      whatsappNotes: { "6580000002": "via https://www.fb.example/opted." },
     });
     const optedFb11 = await json(await get("/api/outreach/prospects/00011"));
     expect(optedFb11.contact.whatsapp[1]).toEqual({
@@ -757,6 +757,22 @@ describe("the owner's day", () => {
       href: "https://wa.me/6580000002",
       note: "via fb.example/opted.design",
     });
+    // A call route on the same landline does not override the WhatsApp route's own note on sendTo or WhatsApp details.
+    await loadRows(
+      outreach().store,
+      [
+        row(18, {
+          bestRoute: "Phone 60000008 (ask the switchboard)",
+          secondRoute: "WhatsApp 60000008 (message bookings desk)",
+          whatsapp: "+6560000008",
+          email: undefined,
+        }),
+      ],
+      () => studio.clock.now,
+    );
+    const page18 = await json(await get("/api/outreach/prospects/00018"));
+    expect(page18.contact.sendTo).toMatchObject({ channel: "whatsapp", to: "6560000008", note: "message bookings desk" });
+    expect(page18.contact.whatsapp[0]?.note).toBe("message bookings desk");
   });
 });
 

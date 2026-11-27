@@ -113,11 +113,13 @@ export function outreachRoutes(
       return Boolean(candidate && !sendTargetUnavailable(file, candidate, optOuts) && routeOpen(candidate, closed));
     });
     const openRoutes = [cleanOpenRoute(profile.route), cleanOpenRoute(profile.second)].filter((route): route is ProspectRoute => Boolean(route));
+    const normalizeHost = (value: string): string =>
+      value.toLowerCase().replace(/\bhttps?:\/\/(?:www\.|m\.|mbasic\.)?/g, "").replace(/\b(?:www\.|m\.|mbasic\.)(?=[a-z0-9-]+\.)/g, "");
     const textShowsClosedFacebook = (text: string, closedSet: ReadonlySet<string>): boolean => {
-      const lower = text.toLowerCase();
+      const lower = normalizeHost(text);
       for (const key of closedSet) {
         if (!key.startsWith("F#")) continue;
-        const target = key.slice(2);
+        const target = normalizeHost(key.slice(2)).replace(/\/+$/, "");
         if (target.length < 2) continue;
         let pos = lower.indexOf(target);
         while (pos !== -1) {
@@ -133,22 +135,20 @@ export function outreachRoutes(
       }
       return false;
     };
-    const noteForNumber = (number: string) => {
+    const whatsappNoteFor = (number: string): string | undefined => {
       const raw = profile.whatsappNotes?.[number];
-      if (raw) {
-        const scrubbed = blocked.instagram.size > 0 ? scrubInstagramText(raw, blocked.instagram) : raw;
-        if (scrubbed && openRouteLabel(scrubbed, closed) && !textShowsClosedFacebook(scrubbed, closed)) return scrubbed;
-      }
-      return openRoutes.find((route) => route.note && numberKey(route.to) === numberKey(number))?.note;
+      if (!raw) return undefined;
+      const scrubbed = blocked.instagram.size > 0 ? scrubInstagramText(raw, blocked.instagram) : raw;
+      return scrubbed && openRouteLabel(scrubbed, closed) && !textShowsClosedFacebook(scrubbed, closed) ? scrubbed : undefined;
     };
+    const noteForNumber = (number: string) =>
+      whatsappNoteFor(number) ??
+      openRoutes.find((route) => route.channel === "whatsapp" && route.note && numberKey(route.to) === numberKey(number))?.note ??
+      openRoutes.find((route) => route.note && numberKey(route.to) === numberKey(number))?.note;
     const sendTo = (() => {
       if (!rawSendTo) return undefined;
-      const resolvedNote =
-        rawSendTo.channel === "whatsapp"
-          ? noteForNumber(rawSendTo.to) ?? (rawSendTo.note && blocked.instagram.size > 0 ? scrubInstagramText(rawSendTo.note, blocked.instagram) || undefined : rawSendTo.note)
-          : rawSendTo.note && blocked.instagram.size > 0
-            ? scrubInstagramText(rawSendTo.note, blocked.instagram) || undefined
-            : rawSendTo.note;
+      const scrubbedRawNote = rawSendTo.note && blocked.instagram.size > 0 ? scrubInstagramText(rawSendTo.note, blocked.instagram) || undefined : rawSendTo.note;
+      const resolvedNote = rawSendTo.channel === "whatsapp" ? whatsappNoteFor(rawSendTo.to) ?? scrubbedRawNote : scrubbedRawNote;
       const { note: _oldNote, ...rest } = rawSendTo;
       return { ...rest, ...(resolvedNote ? { note: resolvedNote } : {}) };
     })();
