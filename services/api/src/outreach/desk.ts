@@ -152,19 +152,20 @@ export class OutreachDesk {
   /** What the brand sells, or that no good ad can be made for it. Only for a brand the owner has not written to. */
   async mark(id: string, input: { mark: "product" | "service" | "parked"; reason?: string | undefined }): Promise<{ stage: OutreachStage }> {
     const { store } = this.deps;
-    const { file, optOuts } = await this.file(id);
+    const { files, file, optOuts } = await this.file(id);
     if (optedOut(file, optOuts)) throw new Refusal("This contact opted out. Nothing is changed for it.");
-    if (file.sends.length > 0) throw new Refusal("The owner has written to this brand. Tell him what you found: only he changes it now.");
+    const linkedSend = linkedFirstSends(files).get(file.profile.id);
+    if (file.sends.length > 0 || linkedSend) throw new Refusal("The owner has written to this brand. Tell him what you found: only he changes it now.");
     if (input.mark === "parked") {
       if (!input.reason) throw new Refusal("Give the reason: what was missing for a good ad (too few facts, no usable real photo).");
-      const stage = stageOf(file, optOuts);
+      const stage = stageOf(file, optOuts, linkedSend);
       if (stage !== "new") throw new Refusal(`Only a brand with no ad can be parked. This one is at "${stage}".`);
       await store.addEvent(id, { type: "stage", stage: "parked", reason: input.reason }, "agent");
     } else {
       await store.addEvent(id, { type: "kind", kind: input.mark }, "agent");
     }
     const after = (await store.all()).find((entry) => entry.profile.id === id) as ProspectFile;
-    return { stage: stageOf(after, optOuts) };
+    return { stage: stageOf(after, optOuts, linkedSend) };
   }
 
   /**

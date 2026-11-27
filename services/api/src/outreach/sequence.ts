@@ -35,6 +35,7 @@ export function linkedFirstSends(files: readonly ProspectFile[]): Map<string, Ou
     if (!first) continue;
     origins.push({ origin, first, derived: { ...first, linkedFrom: origin.profile.id, linkedBrand: origin.profile.brand } });
   }
+  origins.sort((a, b) => a.first.at.localeCompare(b.first.at));
   const assign = (peer: ProspectFile, origin: ProspectFile, derived: OutreachSend) => {
     if (peer.profile.id === origin.profile.id) return;
     if (peer.sends.some((send) => send.step === 0 && !send.linkedFrom)) return;

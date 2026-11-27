@@ -814,8 +814,13 @@ describe("the owner's day", () => {
     const p22 = await json(await get("/api/outreach/prospects/00022"));
     expect(p22.prospect.stage).toBe("contacted");
     expect(p22.message).toBeUndefined();
-    await loadRows(outreach().store, [row(23, { bestRoute: "DM phone +6590000020", dmPhone: "+6590000020" })], () => studio.clock.now);
+    await loadRows(outreach().store, [row(23, { bestRoute: "Email (valid) brand23@example.com", email: "brand23@example.com", dmPhone: "+6590000020" })], () => studio.clock.now);
     await expect(outreach().desk.checkNew("00023")).rejects.toThrow(/contacted/);
+    await expect(outreach().desk.mark("00023", { mark: "parked", reason: "no photo" })).rejects.toThrow(/written to this brand/);
+    expect((await on("00023", "reply", { reply: "more" })).status).toBe(200);
+    const { numbers } = await json(await get("/api/outreach/prospects"));
+    expect(numbers.replied.byChannel.whatsapp).toBe(1);
+    expect(numbers.replied.byChannel.email).toBe(0);
 
     expect((await on("00020", "optout", {})).status).toBe(200);
     const out20 = await json(await get("/api/outreach/prospects/00020"));
