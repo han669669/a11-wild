@@ -35,10 +35,10 @@ Human engineers and AI agents contribute to the main repository, often through f
 These rules prevent silent data corruption and duplicate outreach.
 
 - **Row-targeted updates only:** when updating the live CRM from an owner workbook, update **only** the explicitly requested row(s). Never silently mass-overwrite unrelated drifted rows.
-- **Mandatory full-row diff report:** on every workbook update, diff every comparable Outreach field returned by `outreach_contacts` (routes, contacts, decision-maker, live ads, newest ad, derived `flags`; raw `Notes` are not returned by `outreach_contacts`) against the workbook and report the full-row diff breakdown. Separate intentional import rules from unexpected drift:
+- **Mandatory full-row diff report:** on every workbook update, diff every comparable Outreach field returned by `outreach_contacts` (routes, contacts, decision-maker, live ads, newest ad, derived `flags`; raw `Notes`, `pitch` and per-number WhatsApp notes are not returned by `outreach_contacts`) against the workbook and report the full-row diff breakdown. Separate intentional import rules from unexpected drift:
   - CRM keeps the later `Newest ad` date it has already seen.
   - Placeholder Decision-maker / DM title values (such as `<UNKNOWN>` or null markers) are dropped at ingest.
-  - `email` validates as a single address, so multi-email workbook cells are preprocessed to keep the first address before calling `outreach_load` (`dmEmail` is stored as passed).
+  - Both `email` and `dmEmail` should hold a single address (multi-email workbook cells must be preprocessed to keep one address before calling `outreach_load`, because `email` rejects multiple addresses and fallback routing ignores multi-address `dmEmail` values).
   - Duplicate rows marked `MERGED-INTO` stay hidden from active CRM rows when mapped to `mergedInto` in the `outreach_load` payload.
 - **Tool limits:** `outreach_contacts` paginates at most 50 prospects per call; `outreach_load` takes at most 200 rows per call.
 - **Workflow state preservation:** `outreach_load` updates profile fields while keeping sends, replies, opt-outs, ads and manual stages intact. Because manual stages persist, unparking a previously parked prospect requires a `stage: auto` event — re-importing the row alone does not unpark it.
