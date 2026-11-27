@@ -7,19 +7,22 @@ const none = (): OutreachCount => ({ all: 0, byTier: { "20+": 0, "5-19": 0, "<5"
 /** The numbers of the campaign: sent, replied, said more, opted out and clients, each also by tier and by channel. A test prospect is in none. */
 export function numbersOf(files: ProspectFile[], optOuts: ReadonlySet<string>): OutreachNumbers {
   const numbers: OutreachNumbers = { prospects: 0, sent: none(), replied: none(), saidMore: none(), optedOut: none(), clients: none() };
+  const byId = new Map(files.map((file) => [file.profile.id, file]));
   const linked = linkedFirstSends(files);
   for (const file of files) {
     if (file.profile.test || file.profile.mergedInto) continue;
     numbers.prospects += 1;
     const linkedSend = linked.get(file.profile.id);
+    const replies = file.events.filter((event) => event.type === "reply");
+    const replyOrigin = replies.find((event) => event.linkedFrom)?.linkedFrom;
+    const replyChannel = replyOrigin ? byId.get(replyOrigin)?.sends.find((send) => send.step === 0 && !send.linkedFrom)?.channel : undefined;
     // The channel of the first message when one was sent (directly or via a linked brand), else the one a message would take.
-    const channel = file.sends.find((send) => send.step === 0 && !send.linkedFrom)?.channel ?? linkedSend?.channel ?? channelOf(file);
+    const channel = file.sends.find((send) => send.step === 0 && !send.linkedFrom)?.channel ?? replyChannel ?? linkedSend?.channel ?? channelOf(file);
     const add = (count: OutreachCount) => {
       count.all += 1;
       count.byTier[file.profile.tier] += 1;
       if (channel) count.byChannel[channel] += 1;
     };
-    const replies = file.events.filter((event) => event.type === "reply");
     if (file.sends.some((send) => send.step === 0 && !send.linkedFrom)) add(numbers.sent);
     if (replies.length > 0) add(numbers.replied);
     if (replies.some((event) => event.type === "reply" && event.reply === "more")) add(numbers.saidMore);
