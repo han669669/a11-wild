@@ -15,7 +15,7 @@ Treat the repository as public at all times.
 
 Human engineers and AI agents contribute to the main repository, often through forks.
 
-- **Remotes:** when working from a fork, keep `origin` pointing to your fork and `upstream` pointing to the main repository. Never push directly to `main`.
+- **Remotes:** when working from a fork, keep `origin` pointing to your fork and `upstream` pointing to the main repository. Never push development commits directly to `main` (the only push to `origin/main` is fast-forwarding your fork from `upstream/main` after a pull request merges).
 - **Branches:** work on a focused branch (`feat/`, `fix/`, `docs/`, `chore/`, `ci/`). When inspecting or updating a pull request, always check out the exact PR branch name — never create a local `pr-*` branch.
 - **Sync after merge:** once a pull request is merged to `upstream/main`, fast-forward your local `main` and push it to `origin/main` so your fork stays in sync, then delete the merged feature branch.
 - **Auto-merge vs fork PRs:**
@@ -34,14 +34,14 @@ Human engineers and AI agents contribute to the main repository, often through f
 
 These rules prevent silent data corruption and duplicate outreach.
 
-- **Row-targeted updates only:** when updating the live CRM from an owner workbook, update **only** the explicitly requested row(s). Never silently mass-overwrite unrelated drifted rows.
+- **Row-targeted updates only:** when updating the live CRM from an owner workbook, update **only** the explicitly requested row(s). Never silently mass-overwrite unrelated drifted rows. Because `outreach_load` replaces each submitted profile rather than patching individual fields, always include every preserved field on the target row (including `pitch` and per-number WhatsApp notes) so nothing is dropped.
 - **Mandatory full-row diff report:** on every workbook update, diff every comparable Outreach field returned by `outreach_contacts` (routes, contacts, decision-maker, live ads, newest ad, derived `flags`; raw `Notes`, `pitch` and per-number WhatsApp notes are not returned by `outreach_contacts`) against the workbook and report the full-row diff breakdown. Separate intentional import rules from unexpected drift:
   - CRM keeps the later `Newest ad` date it has already seen.
   - Placeholder Decision-maker / DM title values (such as `<UNKNOWN>` or null markers) are dropped at ingest.
   - Both `email` and `dmEmail` should hold a single address (multi-email workbook cells must be preprocessed to keep one address before calling `outreach_load`, because `email` rejects multiple addresses and fallback routing ignores multi-address `dmEmail` values).
   - Duplicate rows marked `MERGED-INTO` stay hidden from active CRM rows when mapped to `mergedInto` in the `outreach_load` payload.
 - **Tool limits:** `outreach_contacts` paginates at most 50 prospects per call; `outreach_load` takes at most 200 rows per call.
-- **Workflow state preservation:** `outreach_load` updates profile fields while keeping sends, replies, opt-outs, ads and manual stages intact. Because manual stages persist, unparking a previously parked prospect requires a `stage: auto` event — re-importing the row alone does not unpark it.
+- **Workflow state preservation:** `outreach_load` replaces profile fields while keeping sends, replies, opt-outs, ads and manual stages intact. Because manual stages persist, clearing a manual park requires a `stage: auto` event — re-importing the row alone does not clear it (a prospect parked automatically after two refusals stays parked).
 - **Channel priority:** without a manual channel choice, `defaultTarget` tries a usable workbook `Best route`, then a usable `Second route`, before falling back to **WhatsApp first, Email second, Instagram DM last**.
 - **Route notes and per-number WhatsApp notes:** phone route labels (for example, `WhatsApp +6580000001 (verified business)`) and individual `WhatsApp` field entries without the `WhatsApp` prefix (for example, `+6580000001 (office partnership line)`) may carry a short plain-language note in brackets at the end. Bracketed notes cannot hold phone numbers or email addresses, and unclosed brackets are refused.
 - **Zero audit jargon in UI-facing fields:** never expose internal audit tags (such as `JIT-HUNT`, `WA-FIELD-CHECK`, `NEGATIVE-FINAL`) in `pitch`, route notes or any owner-facing label. Keep `pitch` plain, concise and actionable (the right decision-maker, pitch hook and channel strategy).
@@ -52,7 +52,7 @@ These rules prevent silent data corruption and duplicate outreach.
 - **Constantly refine and curate taste:** taste is never hard-coded into application logic. Record observations with `learn` and propose updates with `canon_propose`; only the owner approves changes to the taste canon. Hard checks in code test only true/false facts and require a real failure fixture.
 - **Real photos first, for everything:** every brand item, pack, food piece or prop shown in an ad must come from the product's saved real photos.
 - **Engine v1 Wild:** five ideas, two drafts per idea, logo-only (`logo_set`, no words). Concepts must be earned by the product itself — never template-copy motifs from reference ads. The blind critic is advisory in non-outreach v1 batches.
-- **Spend discipline:** every paid Parallel or fal call goes through the spend ledger and caps (US$25/month studio cap, US$5/batch, separate outreach campaign cap at US$1.50/batch). Calls at US$1 or more wait for the owner's yes, except FindAll runs of US$10 or less.
+- **Spend discipline:** every paid Parallel or fal call goes through the spend ledger and caps (US$25/month studio cap, US$5/batch, separate outreach campaign cap at US$1.50/batch). The US$1 owner-approval gate checks cumulative research spend and projected render-stage totals (not just a single call), except FindAll runs of US$10 or less.
 
 ## 6. Code and review pitfalls already solved
 
