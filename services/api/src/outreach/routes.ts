@@ -37,15 +37,13 @@ export function hasUnbalancedBrackets(value: string): boolean {
   return depth !== 0;
 }
 
+export const hasUnsafeNoteContent = (note: string): boolean => PHONE_IN_NOTE.test(note) || EMAIL_IN_NOTE.test(note);
+
 export function hasUnsafePhoneRouteNote(value: string | undefined): boolean {
   const phone = value?.trim().match(PHONE_ROUTE_LABEL);
   if (!phone) return false;
   const bracket = trailingBracketGroup(phone[2]!);
-  return Boolean(
-    bracket &&
-      /\p{L}/u.test(bracket.content) &&
-      (PHONE_IN_NOTE.test(bracket.content) || EMAIL_IN_NOTE.test(bracket.content)),
-  );
+  return Boolean(bracket && /\p{L}/u.test(bracket.content) && hasUnsafeNoteContent(bracket.content));
 }
 
 export function phoneRouteNumbers(value: string | undefined): string[] {

@@ -1166,6 +1166,8 @@ export interface Prospect {
   mergedInto?: string;
   /** WhatsApp numbers: digits only, with the country code. */
   whatsapp: string[];
+  /** Optional plain-language notes keyed by normalised WhatsApp number. */
+  whatsappNotes?: Record<string, string>;
   /** A verified address, in lower case. */
   email?: string;
   phone?: string;

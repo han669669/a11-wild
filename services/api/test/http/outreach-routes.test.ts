@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RULES_VERSION } from "../../src/houserules.js";
+import { loadRows } from "../../src/outreach/load.js";
 import { approvedClient, callTool, config, createStudio, json, ORIGIN, sessionCookie, type Studio } from "../helpers/deps.js";
 import { outreachBatch } from "../helpers/outreach-batch.js";
 import { JPEG, PNG } from "../helpers/pictures.js";
@@ -671,6 +672,68 @@ describe("the owner's day", () => {
       channel: "call",
       to: "6560000001",
       note: "ask for sales",
+    });
+  });
+
+  it("keeps per-number WhatsApp notes, refuses unsafe ones, and scrubs quarantined or opted-out text", async () => {
+    const loaded = await loadRows(
+      outreach().store,
+      [
+        row(11, {
+          bestRoute: "WhatsApp +6010000001 (founder line)",
+          secondRoute: "Email (valid) founder@brand11.example",
+          whatsapp: "+6010000001, +6580000002 (Singapore office, Mon-Fri)",
+          email: "office@brand11.example",
+        }),
+        row(12, {
+          whatsapp: "+44 (20) 8000 0001 (UK office)",
+          email: undefined,
+        }),
+        row(13, { whatsapp: "+6580000003 (unclosed note" }),
+        row(14, { whatsapp: "+6580000004 (call 8000 0009 instead)" }),
+        row(15, { whatsapp: "+6580000005 (write sales@brand15.example)" }),
+        row(16, { whatsapp: `+6580000006 (${"a".repeat(65)})` }),
+        row(17, { whatsapp: undefined, email: undefined, instagram: "@opted.brand" }),
+      ],
+      () => studio.clock.now,
+    );
+    expect(loaded.refused.map((r: { row: number; field: string }) => ({ row: r.row, field: r.field }))).toEqual([
+      { row: 13, field: "whatsapp" },
+      { row: 14, field: "whatsapp" },
+      { row: 15, field: "whatsapp" },
+      { row: 16, field: "whatsapp" },
+    ]);
+    const page11 = await json(await get("/api/outreach/prospects/00011"));
+    expect(page11.contact.whatsapp).toEqual([
+      { number: "6010000001", href: "https://wa.me/6010000001", note: "founder line" },
+      { number: "6580000002", href: "https://wa.me/6580000002", note: "Singapore office, Mon-Fri" },
+    ]);
+    const page12 = await json(await get("/api/outreach/prospects/00012"));
+    expect(page12.contact.whatsapp).toEqual([
+      { number: "442080000001", href: "https://wa.me/442080000001", note: "UK office" },
+    ]);
+    // Quarantine scrubs a saved per-number note without dropping the number; an opted-out handle hides the note.
+    const saved11 = (await outreach().store.all()).find((entry) => entry.profile.id === "00011")!;
+    await outreach().store.saveProfile({
+      ...saved11.profile,
+      flags: [{ kind: "blocked", text: "AUDIT-FLAG: @flagged.brand — do not send" }],
+      whatsappNotes: { "6580000002": "Singapore office @flagged.brand" },
+    });
+    const scrubbed11 = await json(await get("/api/outreach/prospects/00011"));
+    expect(scrubbed11.contact.whatsapp[1]).toEqual({
+      number: "6580000002",
+      href: "https://wa.me/6580000002",
+      note: "Singapore office",
+    });
+    expect((await on("00017", "optout", {})).status).toBe(200);
+    await outreach().store.saveProfile({
+      ...saved11.profile,
+      whatsappNotes: { "6580000002": "Singapore office @opted.brand" },
+    });
+    const opted11 = await json(await get("/api/outreach/prospects/00011"));
+    expect(opted11.contact.whatsapp[1]).toEqual({
+      number: "6580000002",
+      href: "https://wa.me/6580000002",
     });
   });
 });

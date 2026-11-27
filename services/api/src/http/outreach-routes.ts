@@ -120,8 +120,14 @@ export function outreachRoutes(
       return Boolean(candidate && !sendTargetUnavailable(file, candidate, optOuts) && routeOpen(candidate, closed));
     });
     const openRoutes = [cleanOpenRoute(profile.route), cleanOpenRoute(profile.second)].filter((route): route is ProspectRoute => Boolean(route));
-    const noteForNumber = (number: string) =>
-      openRoutes.find((route) => route.note && numberKey(route.to) === numberKey(number))?.note;
+    const noteForNumber = (number: string) => {
+      const fromRoute = openRoutes.find((route) => route.note && numberKey(route.to) === numberKey(number))?.note;
+      if (fromRoute) return fromRoute;
+      const raw = profile.whatsappNotes?.[number];
+      if (!raw) return undefined;
+      const scrubbed = blocked.instagram.size > 0 ? scrubInstagramText(raw, blocked.instagram) : raw;
+      return scrubbed && openRouteLabel(scrubbed, closed) ? scrubbed : undefined;
+    };
     const phoneKey = profile.phone ? numberKey(profile.phone) : undefined;
     const phoneNote =
       phoneKey && openNumber(profile.phone)
