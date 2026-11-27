@@ -3,7 +3,7 @@ import { OUTREACH_TIERS, type OutreachTier, type Prospect, type ProspectFlag, ty
 import { Refusal } from "../mcp/registry.js";
 import { blockedValues, EMAIL_IN_TEXT, instagramKey, isBlockedTarget, numberKey, scrubInstagramText, textShowsClosedInstagram } from "./blocked.js";
 import { EMAIL } from "./messages.js";
-import { hasUnbalancedBrackets, hasUnsafePhoneRouteNote, routeOf, trailingBracketGroup } from "./routes.js";
+import { hasEmailInNote, hasPhoneInNote, hasUnbalancedBrackets, hasUnsafePhoneRouteNote, routeOf, trailingBracketGroup } from "./routes.js";
 import { sendTarget, stageOf } from "./stage.js";
 import { type OutreachStore, prospectId } from "./store.js";
 
@@ -54,6 +54,56 @@ const LOCAL = /^[3689]\d{7}$/;
 
 // eslint-disable-next-line no-control-regex
 const plain = (value: string | undefined): string | undefined => value?.replace(/[\u0000-\u001f\u007f]+/g, " ").trim() || undefined;
+
+const splitOutsideBrackets = (value: string): string[] => {
+  const pieces: string[] = [];
+  let start = 0;
+  let depth = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    const ch = value[i]!;
+    if (ch === "(") depth += 1;
+    else if (ch === ")" && depth > 0) depth -= 1;
+    else if (depth === 0 && (ch === ";" || ch === "," || ch === "/")) {
+      pieces.push(value.slice(start, i));
+      start = i + 1;
+    }
+  }
+  pieces.push(value.slice(start));
+  return pieces;
+};
+
+const TIME_RANGE = /\b(?:[01]?\d|2[0-3])[.:][0-5]\d\s*[-–]\s*(?:[01]?\d|2[0-3])[.:][0-5]\d\b/g;
+
+/** Parses WhatsApp numbers plus optional trailing bracketed word notes (e.g. "+6580000001 (office line)"). */
+export function whatsappEntries(value: string | undefined): { numbers: string[]; notes?: Record<string, string> } {
+  const text = plain(value);
+  if (!text) return { numbers: [] };
+  if (hasUnbalancedBrackets(text)) {
+    throw new RowError("whatsapp", "the WhatsApp entry has unclosed brackets; write a note in words in brackets after the number");
+  }
+  const found: string[] = [];
+  const notes: Record<string, string> = {};
+  for (const rawPiece of splitOutsideBrackets(text)) {
+    const piece = rawPiece.trim();
+    if (!piece) continue;
+    const bracket = trailingBracketGroup(piece);
+    const note = bracket && /\p{L}/u.test(bracket.content) ? bracket.content : undefined;
+    if (note !== undefined) {
+      if (note.length > 64) throw new RowError("whatsapp", "a WhatsApp note is longer than 64 characters");
+      if (hasEmailInNote(note) || hasPhoneInNote(note.replace(TIME_RANGE, " "))) {
+        throw new RowError("whatsapp", "a WhatsApp note can't hold a number or address; put it as its own entry or in Notes");
+      }
+    }
+    const target = note !== undefined ? bracket!.prefix : piece;
+    const parsed = numbers(target);
+    for (const full of parsed) {
+      if (!found.includes(full)) found.push(full);
+    }
+    const annotatedNumber = parsed.at(-1);
+    if (note && annotatedNumber && !notes[annotatedNumber]) notes[annotatedNumber] = note;
+  }
+  return Object.keys(notes).length > 0 ? { numbers: found, notes } : { numbers: found };
+}
 
 /** The digits of each number, with the country code. A Singapore number of eight digits gets 65. */
 export function numbers(value: string | undefined): string[] {
@@ -193,6 +243,17 @@ function removeBlocked(profile: Prospect): Prospect {
     ...profile,
     whatsapp: profile.whatsapp.filter((number) => !isNumberBlocked(number)),
   };
+  if (saved.whatsappNotes) {
+    const keptNotes: Record<string, string> = {};
+    for (const number of saved.whatsapp) {
+      const rawNote = saved.whatsappNotes[number];
+      if (!rawNote) continue;
+      const cleanNote = stripSegment(rawNote);
+      if (cleanNote) keptNotes[number] = cleanNote;
+    }
+    if (Object.keys(keptNotes).length > 0) saved.whatsappNotes = keptNotes;
+    else delete saved.whatsappNotes;
+  }
   if (isEmailBlocked(saved.email)) delete saved.email;
   if (isEmailBlocked(saved.dmEmail)) delete saved.dmEmail;
   if (isNumberBlocked(saved.phone)) delete saved.phone;
@@ -233,6 +294,7 @@ export function profileOf(row: LoadRow, loadedAt: string): Prospect {
   const second = routeOf(secondRoute);
   const decisionMaker = person(row.decisionMaker);
   const dmTitle = person(row.dmTitle);
+  const wa = whatsappEntries(row.whatsapp);
   return removeBlocked({
     id: prospectId(row.n),
     n: row.n,
@@ -246,7 +308,8 @@ export function profileOf(row: LoadRow, loadedAt: string): Prospect {
     ...optional("secondRoute", secondRoute),
     ...(route ? { route: withRoutePerson(route, decisionMaker, dmTitle) } : {}),
     ...(second ? { second: withRoutePerson(second, decisionMaker, dmTitle) } : {}),
-    whatsapp: numbers(row.whatsapp),
+    whatsapp: wa.numbers,
+    ...(wa.notes ? { whatsappNotes: wa.notes } : {}),
     ...optional("email", address(row.email)),
     ...optional("phone", plain(row.phone)),
     ...optional("instagram", plain(row.instagram)),

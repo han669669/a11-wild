@@ -108,20 +108,67 @@ export function outreachRoutes(
     if (optedOut(file, optOuts)) return { whatsapp: [] };
     const target = sendTarget(file, optOuts);
     const rawSendTo = target && !sendTargetUnavailable(file, target, optOuts) && routeOpen(target, closed) ? target : undefined;
-    const sendTo = (() => {
-      if (!rawSendTo) return undefined;
-      if (!rawSendTo.note || blocked.instagram.size === 0) return rawSendTo;
-      const note = scrubInstagramText(rawSendTo.note, blocked.instagram) || undefined;
-      const { note: _oldNote, ...rest } = rawSendTo;
-      return { ...rest, ...(note ? { note } : {}) };
-    })();
     const channels = (["whatsapp", "email", "instagram"] as const).filter((channel): channel is OutreachChannel => {
       const candidate = targetForChannel(file, channel);
       return Boolean(candidate && !sendTargetUnavailable(file, candidate, optOuts) && routeOpen(candidate, closed));
     });
     const openRoutes = [cleanOpenRoute(profile.route), cleanOpenRoute(profile.second)].filter((route): route is ProspectRoute => Boolean(route));
-    const noteForNumber = (number: string) =>
-      openRoutes.find((route) => route.note && numberKey(route.to) === numberKey(number))?.note;
+    const normalizeHost = (value: string): string =>
+      value.toLowerCase().replace(/\bhttps?:\/\/(?:www\.|m\.|mbasic\.)?/g, "").replace(/\b(?:www\.|m\.|mbasic\.)(?=[a-z0-9-]+\.)/g, "");
+    const textShowsClosedFacebook = (text: string, closedSet: ReadonlySet<string>): boolean => {
+      const lower = normalizeHost(text);
+      for (const key of closedSet) {
+        if (!key.startsWith("F#")) continue;
+        const target = normalizeHost(key.slice(2)).replace(/\/+$/, "");
+        if (target.length < 2) continue;
+        let pos = lower.indexOf(target);
+        while (pos !== -1) {
+          const before = pos > 0 ? lower[pos - 1]! : "";
+          const end = pos + target.length;
+          const after = end < lower.length ? lower[end]! : "";
+          const afterNext = end + 1 < lower.length ? lower[end + 1]! : "";
+          const beforeOk = !/[a-z0-9._-]/i.test(before);
+          const afterOk = !/[a-z0-9_-]/i.test(after) && !(after === "." && /[a-z0-9]/i.test(afterNext));
+          if (beforeOk && afterOk) return true;
+          pos = lower.indexOf(target, pos + 1);
+        }
+      }
+      return false;
+    };
+    const cleanNote = (note: string | undefined): string | undefined => {
+      if (!note) return undefined;
+      const scrubbed = blocked.instagram.size > 0 ? scrubInstagramText(note, blocked.instagram) : note;
+      return scrubbed && openRouteLabel(scrubbed, closed) && !textShowsClosedFacebook(scrubbed, closed) ? scrubbed : undefined;
+    };
+    const whatsappNoteFor = (number: string): string | undefined => cleanNote(profile.whatsappNotes?.[number]);
+    const whatsappRouteNoteFor = (number: string): string | undefined => {
+      for (const route of openRoutes) {
+        if (route.channel !== "whatsapp" || !route.note || numberKey(route.to) !== numberKey(number)) continue;
+        const cleaned = cleanNote(route.note);
+        if (cleaned) return cleaned;
+      }
+      return undefined;
+    };
+    const noteForNumber = (number: string) => {
+      const direct = whatsappNoteFor(number) ?? whatsappRouteNoteFor(number);
+      if (direct) return direct;
+      for (const route of openRoutes) {
+        if (!route.note || numberKey(route.to) !== numberKey(number)) continue;
+        const cleaned = cleanNote(route.note);
+        if (cleaned) return cleaned;
+      }
+      return undefined;
+    };
+    const sendTo = (() => {
+      if (!rawSendTo) return undefined;
+      const ownNote = cleanNote(rawSendTo.note);
+      const resolvedNote =
+        rawSendTo.channel === "whatsapp"
+          ? whatsappNoteFor(rawSendTo.to) ?? ownNote ?? whatsappRouteNoteFor(rawSendTo.to)
+          : ownNote;
+      const { note: _oldNote, ...rest } = rawSendTo;
+      return { ...rest, ...(resolvedNote ? { note: resolvedNote } : {}) };
+    })();
     const phoneKey = profile.phone ? numberKey(profile.phone) : undefined;
     const phoneNote =
       phoneKey && openNumber(profile.phone)
