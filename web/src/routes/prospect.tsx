@@ -292,7 +292,7 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
                   It sells a product
                 </Button>
               )}
-              {lastSend && lastSend.day === page.day ? (
+              {lastSend && !lastSend.linkedFrom && lastSend.day === page.day ? (
                 <Button type="button" variant="ghost" size="compact" className={TAP} loading={busy === "unsent"} onClick={() => write({ action: "unsent", body: { step: lastSend.step } })}>
                   Take back "{STEPS[lastSend.step]} sent"
                 </Button>

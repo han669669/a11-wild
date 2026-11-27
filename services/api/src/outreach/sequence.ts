@@ -3,7 +3,7 @@ import { Refusal } from "../mcp/registry.js";
 import { dueDay, singaporeDay } from "./days.js";
 import { checkTemplate, fill } from "./messages.js";
 import { newestAd, optedOut, routeCheckUnresolved, sendTarget, sendTargetUnavailable, stageOf, targetForChannel, verdictOf } from "./stage.js";
-import { contactKeys, type OutreachStore } from "./store.js";
+import { contactKeys, sendContactKey, type OutreachStore } from "./store.js";
 
 /** The owner's sequence: follow-up 1 three days after the first message, follow-up 2 four days after follow-up 1. */
 export const GAP_DAYS: Record<1 | 2, number> = { 1: 3, 2: 4 };
@@ -12,12 +12,56 @@ export const STEP_NAMES = ["the first message", "follow-up 1", "follow-up 2"] as
 export const DAILY = { name: "DAILY", standard: 5, min: 1, max: 20 } as const;
 const TEMPLATES = "TEMPLATES";
 
+/**
+ * Derived bidirectional first-message linkage: keeps one authoritative step-0 send in storage and derives
+ * linked send state for any non-test, non-merged sibling brand that shares the exact destination sent to
+ * (or any contact key for legacy sends without a saved destination).
+ */
+export function linkedFirstSends(files: readonly ProspectFile[]): Map<string, OutreachSend> {
+  const active = files.filter((file) => !file.profile.test && !file.profile.mergedInto);
+  const byKey = new Map<string, ProspectFile[]>();
+  for (const file of active) {
+    for (const key of contactKeys(file.profile)) {
+      const list = byKey.get(key);
+      if (list) list.push(file);
+      else byKey.set(key, [file]);
+    }
+  }
+  const linked = new Map<string, OutreachSend>();
+  for (const origin of active) {
+    const first = origin.sends.find((send) => send.step === 0 && !send.linkedFrom);
+    if (!first) continue;
+    const key = sendContactKey(first);
+    const covered = key ? byKey.get(key) ?? [] : contactKeys(origin.profile).flatMap((k) => byKey.get(k) ?? []);
+    const derived: OutreachSend = { ...first, linkedFrom: origin.profile.id, linkedBrand: origin.profile.brand };
+    for (const peer of covered) {
+      if (peer.profile.id === origin.profile.id) continue;
+      if (peer.sends.some((send) => send.step === 0 && !send.linkedFrom)) continue;
+      if (!linked.has(peer.profile.id)) linked.set(peer.profile.id, derived);
+    }
+  }
+  return linked;
+}
+
 /** The next message of a contacted prospect and the day it is due, or nothing when the sequence is over. */
-export function nextStep(file: ProspectFile): { step: 1 | 2; due: string } | undefined {
+export function nextStep(file: ProspectFile, files?: readonly ProspectFile[]): { step: 1 | 2; due: string } | undefined {
   if (file.events.some((event) => event.type === "reply")) return undefined;
   const sent = new Map(file.sends.map((send) => [send.step, send]));
   const first = sent.get(0);
   if (!first || first.linkedFrom) return undefined;
+  if (files && !file.profile.test) {
+    const key = sendContactKey(first);
+    const originKeys = key ? new Set([key]) : new Set(contactKeys(file.profile));
+    const peerReplied = files.some(
+      (other) =>
+        other.profile.id !== file.profile.id &&
+        !other.profile.test &&
+        !other.profile.mergedInto &&
+        other.events.some((event) => event.type === "reply" && event.at >= first.at) &&
+        contactKeys(other.profile).some((k) => originKeys.has(k)),
+    );
+    if (peerReplied) return undefined;
+  }
   const one = sent.get(1);
   if (!one) return { step: 1, due: dueDay(first.day, GAP_DAYS[1]) };
   return sent.has(2) ? undefined : { step: 2, due: dueDay(one.day, GAP_DAYS[2]) };
@@ -137,17 +181,16 @@ export class OutreachSequence {
       recordTarget = earlierTarget;
     }
     const day = singaporeDay(this.now());
-    const stage = stageOf(file, optOuts);
-    const peers = !file.profile.test ? sameContactPeers(files).get(id) ?? [] : [];
+    const linked = !file.profile.test ? linkedFirstSends(files).get(id) : undefined;
+    const stage = stageOf(file, optOuts, linked);
     if (step === 0) {
+      if (linked) throw new Refusal(`This contact was already messaged via ${linked.linkedBrand ?? linked.linkedFrom}. One first message covers all linked brands.`);
       if (stage !== "ready") throw new Refusal(`The first message goes only to a brand whose ad you said yes to. This one is at "${stage}".`);
-      const messagedPeer = peers.find((peer) => peer.sends.some((entry) => entry.step === 0));
-      if (messagedPeer) throw new Refusal(`This contact was already messaged via ${messagedPeer.profile.brand}. One first message covers all linked brands.`);
       const earlier = sameContact(files).get(id);
       if (earlier && !chosen(file)) throw new Refusal(`This brand has the same contact as ${earlier.profile.brand}. Choose it first if you want to send to it too.`);
     } else {
       if (stage !== "contacted") throw new Refusal(`A follow-up goes only to a brand that got the first message and has not replied. This one is at "${stage}".`);
-      const next = nextStep(file);
+      const next = nextStep(file, files);
       if (next?.step !== step) throw new Refusal(next ? `The next message of this brand is ${STEP_NAMES[next.step]}.` : "This brand has had its last message.");
       if (next.due > day) throw new Refusal(`${STEP_NAMES[step]} of this brand is due on ${next.due}.`);
     }
@@ -155,6 +198,19 @@ export class OutreachSequence {
     if (!templates) throw new Refusal("The message text is not loaded yet.");
     if (!recordTarget) throw new Refusal("This brand has no checked number or address.");
     const { channel } = recordTarget;
+    if (step === 0 && !file.profile.test) {
+      const targetKey = sendContactKey({ channel, to: recordTarget.to });
+      if (targetKey) {
+        const sentPeer = files.find(
+          (other) =>
+            other.profile.id !== id &&
+            !other.profile.test &&
+            !other.profile.mergedInto &&
+            other.sends.some((entry) => entry.step === 0 && !entry.linkedFrom && sendContactKey(entry) === targetKey),
+        );
+        if (sentPeer) throw new Refusal(`This contact was already messaged via ${sentPeer.profile.brand}. One first message covers all linked brands.`);
+      }
+    }
     const counted = step === 0 && !file.profile.test;
     // The place in the day's count is taken first, so two marks at once cannot pass the day's number.
     if (counted) {
@@ -169,14 +225,7 @@ export class OutreachSequence {
       // The mark was not saved, or another mark of the same step came first: this one gives its place back.
       if (!put && counted) await this.store.givePlace(day);
     }
-    if (put) {
-      // Bidirectional send-state linkage: one first message covers every brand sharing this contact.
-      if (step === 0 && peers.length > 0) {
-        const linked: OutreachSend = { ...send, linkedFrom: id, linkedBrand: file.profile.brand };
-        await Promise.all(peers.filter((peer) => !peer.sends.some((entry) => entry.step === 0)).map((peer) => this.store.putSend(peer.profile.id, linked)));
-      }
-      return { send, already: false };
-    }
+    if (put) return { send, already: false };
     const saved = (await this.file(id)).file.sends.find((entry) => entry.step === step);
     return { send: saved ?? send, already: true };
   }
@@ -185,17 +234,17 @@ export class OutreachSequence {
   async takeBack(id: string, step: OutreachStep): Promise<void> {
     const { file, files, optOuts } = await this.file(id);
     const send = file.sends.find((entry) => entry.step === step);
-    if (!send) throw new Refusal(`${STEP_NAMES[step]} of this brand is not marked as sent.`);
+    if (!send) {
+      const linked = step === 0 && !file.profile.test ? linkedFirstSends(files).get(id) : undefined;
+      if (linked) throw new Refusal(`This first message was sent via ${linked.linkedBrand ?? linked.linkedFrom}. Take it back on that brand's page instead.`);
+      throw new Refusal(`${STEP_NAMES[step]} of this brand is not marked as sent.`);
+    }
     if (send.linkedFrom) throw new Refusal(`This first message was sent via ${send.linkedBrand ?? send.linkedFrom}. Take it back on that brand's page instead.`);
     if (file.sends.some((entry) => entry.step > step)) throw new Refusal("A later message of this brand is marked as sent. Take that one back first.");
     const day = singaporeDay(this.now());
     if (send.day !== day || !(await this.store.deleteSend(id, step, day))) throw new Refusal(`A mark can be taken back on its own day only. This one is of ${send.day}.`);
     // The place goes back before the note of it is written: the mark is gone, so the day must not count it.
-    if (step === 0 && !file.profile.test) {
-      await this.store.givePlace(day);
-      const linkedSiblings = files.filter((other) => other.profile.id !== id && other.sends.some((entry) => entry.step === 0 && entry.linkedFrom === id && entry.day === day));
-      await Promise.all(linkedSiblings.map((other) => this.store.deleteSend(other.profile.id, 0, day)));
-    }
+    if (step === 0 && !file.profile.test) await this.store.givePlace(day);
     const current = sendTarget(file, optOuts);
     const recheck = step === 0 && (send.channel !== current?.channel || send.to !== current?.to);
     await this.store.addEvent(id, { type: "unsent", step, ...(recheck ? { recheck: true as const } : {}) }, "owner");
@@ -203,8 +252,9 @@ export class OutreachSequence {
 
   /** A reply the owner got. "no" is an opt-out, at once and for good. */
   async reply(id: string, input: { reply: "more" | "no" | "other"; text?: string | undefined }): Promise<OutreachEvent> {
-    const { file } = await this.file(id);
-    if (!file.sends.some((send) => send.step === 0)) throw new Refusal("A reply is logged for a brand that got the first message.");
+    const { file, files } = await this.file(id);
+    const linked = !file.profile.test ? linkedFirstSends(files).get(id) : undefined;
+    if (!file.sends.some((send) => send.step === 0) && !linked) throw new Refusal("A reply is logged for a brand that got the first message.");
     const event = await this.store.addEvent(id, { type: "reply", reply: input.reply, ...(input.text ? { text: input.text } : {}) }, "owner");
     if (input.reply === "no") await this.optOut(id);
     return event;

@@ -8,7 +8,7 @@ import { singaporeDay } from "../outreach/days.js";
 import { makeTestProspect } from "../outreach/load.js";
 import { BRAND, mailLink, messagesFor, profileLink } from "../outreach/messages.js";
 import { filtered, filterOf, numbersOf } from "../outreach/numbers.js";
-import { DAILY, nextStep, sameContact, sameContactPeers } from "../outreach/sequence.js";
+import { DAILY, linkedFirstSends, nextStep, sameContact, sameContactPeers } from "../outreach/sequence.js";
 import { blockedValues, instagramHandle, isInstagramClosed, scrubInstagramText, scrubRouteInstagram, textShowsClosedInstagram } from "../outreach/blocked.js";
 import { approvedAd, owedAnswer, optedOut, routeCheckUnresolved, sendTarget, sendTargetUnavailable, sellsOf, stageOf, targetForChannel } from "../outreach/stage.js";
 import { adView, rowOf, todayPage } from "../outreach/today.js";
@@ -220,11 +220,13 @@ export function outreachRoutes(
     const file = files.find((entry) => entry.profile.id === id);
     if (!file) return undefined;
     const day = singaporeDay(deps.now());
-    const stage = stageOf(file, optOuts);
+    const linkedMap = linkedFirstSends(files);
+    const linkedSend = linkedMap.get(file.profile.id);
+    const stage = stageOf(file, optOuts, linkedSend);
     const sells = sellsOf(file);
     const reply = owedAnswer(file);
     // The message that can be sent now, on any day: the first one for a brand that is ready, or a follow-up that is due.
-    const due = stage === "contacted" ? nextStep(file) : undefined;
+    const due = stage === "contacted" && !linkedSend ? nextStep(file, files) : undefined;
     const step: OutreachStep | undefined = stage === "ready" ? 0 : due && due.due <= day ? due.step : undefined;
     const ads = await Promise.all([...file.ads].sort((a, b) => b.n - a.n).map((ad: OutreachAd) => adView(file, ad, deps.pictures)));
     const candidates = await picks.view(file, optOuts);
@@ -233,7 +235,7 @@ export function outreachRoutes(
     const check = stage !== "opted_out" && routeCheckUnresolved(file);
     const target = step === undefined ? undefined : sendTarget(file, optOuts);
     const messageTarget = target && !sendTargetUnavailable(file, target, optOuts) && routeOpen(target, closed) ? target : undefined;
-    const sends = [...file.sends]
+    const sends = [...file.sends, ...(linkedSend && !file.sends.some((s) => s.step === 0) ? [linkedSend] : [])]
       .sort((a, b) => a.step - b.step)
       .map((send) => {
         if (stage !== "opted_out" && (!send.to || routeOpen({ channel: send.channel, to: send.to }, closed))) return send;
@@ -255,10 +257,10 @@ export function outreachRoutes(
         : (sameContactPeers(files).get(file.profile.id) ?? []).map((peer) => ({
             id: peer.profile.id,
             brand: peer.profile.brand,
-            contacted: peer.sends.some((entry) => entry.step === 0),
+            contacted: peer.sends.some((entry) => entry.step === 0) || linkedMap.has(peer.profile.id),
           }));
     return {
-      prospect: rowOf(file, optOuts, sameContact(files), deps.now()),
+      prospect: rowOf(file, optOuts, sameContact(files), deps.now(), linkedMap, files),
       ...(file.profile.newestAd ? { newestAd: file.profile.newestAd } : {}),
       ...(sells ? { sells } : {}),
       contact: contactOf(file, optOuts, closed),
@@ -288,7 +290,8 @@ export function outreachRoutes(
     if (!filter) return c.json({ error: "bad_request", message: "The ads-running or stage filter is not one the list has." }, 400);
     const [files, optOuts] = await Promise.all([store.all(), store.optOuts()]);
     const shared = sameContact(files);
-    const rows = files.map((file) => rowOf(file, optOuts, shared, deps.now()));
+    const linked = linkedFirstSends(files);
+    const rows = files.map((file) => rowOf(file, optOuts, shared, deps.now(), linked, files));
     return c.json({
       numbers: numbersOf(files, optOuts),
       sectors: [...new Set(files.map((file) => file.profile.sector))].sort(),

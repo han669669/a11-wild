@@ -1,7 +1,7 @@
-import type { OutreachAd, OutreachAdView, OutreachStep, OutreachTemplates, ProspectFile, ProspectRow, TodayLine, TodayPage } from "@a11-wild/shared";
+import type { OutreachAd, OutreachAdView, OutreachSend, OutreachStep, OutreachTemplates, ProspectFile, ProspectRow, TodayLine, TodayPage } from "@a11-wild/shared";
 import { isSendingDay, nextSendingDay, singaporeDay } from "./days.js";
 import { messagesFor } from "./messages.js";
-import { chosen, nextStep, sameContact, type OutreachSequence } from "./sequence.js";
+import { chosen, linkedFirstSends, nextStep, sameContact, type OutreachSequence } from "./sequence.js";
 import { adWaits, approvedAd, candidatesWait, channelOf, newestAd, owedAnswer, routeCheckUnresolved, sendTarget, sendTargetUnavailable, stageOf, verdictOf } from "./stage.js";
 import type { OutreachStore } from "./store.js";
 import type { Pictures } from "../pictures/store.js";
@@ -12,14 +12,22 @@ const utcDay = (day: string): number => {
   return Date.UTC(year!, month! - 1, date!);
 };
 
-export function rowOf(file: ProspectFile, optOuts: ReadonlySet<string>, shared: ReadonlyMap<string, ProspectFile>, now = new Date()): ProspectRow {
+export function rowOf(
+  file: ProspectFile,
+  optOuts: ReadonlySet<string>,
+  shared: ReadonlyMap<string, ProspectFile>,
+  now = new Date(),
+  linked: ReadonlyMap<string, OutreachSend> = new Map(),
+  files?: readonly ProspectFile[],
+): ProspectRow {
   const { profile } = file;
-  const stage = stageOf(file, optOuts);
+  const linkedSend = linked.get(profile.id);
+  const stage = stageOf(file, optOuts, linkedSend);
   const channel = channelOf(file);
   const target = sendTarget(file);
   const openTarget = target && !sendTargetUnavailable(file, target, optOuts) ? target : undefined;
   const staleDays = profile.newestAd ? Math.max(0, Math.floor((utcDay(singaporeDay(now)) - utcDay(profile.newestAd)) / 86_400_000)) : undefined;
-  const next = stage === "contacted" ? nextStep(file) : undefined;
+  const next = stage === "contacted" && !linkedSend ? nextStep(file, files) : undefined;
   const earlier = shared.get(profile.id);
   return {
     id: profile.id,
@@ -81,19 +89,21 @@ export async function todayLists(deps: { store: OutreachStore; sequence: Outreac
   const day = singaporeDay(now);
   const [files, optOuts, daily, firstsSent, templates] = await Promise.all([store.all(), store.optOuts(), sequence.daily(), store.placesTaken(day), sequence.templates()]);
   const shared = sameContact(files);
+  const linked = linkedFirstSends(files);
   const lists: TodayLists = { day, daily, firstsSent, templates, optOuts, shared, owed: [], followUps: [], firsts: [], adsWaiting: [], picks: [] };
   const firstCandidates: ProspectFile[] = [];
 
   for (const file of files) {
-    const stage = stageOf(file, optOuts);
+    const linkedSend = linked.get(file.profile.id);
+    const stage = stageOf(file, optOuts, linkedSend);
     if (stage === "opted_out") continue;
     const reply = owedAnswer(file);
     if (reply && (stage === "replied" || stage === "in_talks")) lists.owed.push({ file, reply: { ...(reply.text ? { text: reply.text } : {}), at: reply.at } });
     if (adWaits(file) && stage !== "lost" && stage !== "parked") lists.adsWaiting.push(file);
     const shown = candidatesWait(file);
     if (shown && stage !== "lost" && stage !== "parked") lists.picks.push({ file, drafts: shown.drafts });
-    if (stage === "contacted") {
-      const next = nextStep(file);
+    if (stage === "contacted" && !linkedSend) {
+      const next = nextStep(file, files);
       if (next && next.due <= day) lists.followUps.push({ file, step: next.step });
     }
     if (stage === "ready") {

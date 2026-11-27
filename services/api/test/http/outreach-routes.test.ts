@@ -791,19 +791,30 @@ describe("the owner's day", () => {
     expect(page19.contact.whatsapp[0]?.note).toBe("bookings desk");
   });
 
-  it("shows bidirectional linkedBrands on both pages sharing a contact and omits them when opted out", async () => {
-    await loadRows(
-      outreach().store,
-      [
-        row(20, { bestRoute: "DM phone +6590000020", dmPhone: "+6590000020", email: "support@brand20.example" }),
-        row(21, { bestRoute: "DM phone +6590000020", dmPhone: "+6590000020", email: "support@brand21.example" }),
-      ],
-      () => studio.clock.now,
-    );
+  it("shows bidirectional linkedBrands on both pages sharing a contact, hides message on a newly imported covered sibling, and omits linkedBrands when opted out", async () => {
+    await ready([
+      row(20, { bestRoute: "DM phone +6590000020", dmPhone: "+6590000020", email: "support@brand20.example" }),
+      row(21, { bestRoute: "DM phone +6590000020", dmPhone: "+6590000020", email: "support@brand21.example" }),
+    ]);
     const p20 = await json(await get("/api/outreach/prospects/00020"));
     const p21 = await json(await get("/api/outreach/prospects/00021"));
     expect(p20.linkedBrands).toEqual([{ id: "00021", brand: "Brand 21", contacted: false }]);
     expect(p21.linkedBrands).toEqual([{ id: "00020", brand: "Brand 20", contacted: false }]);
+
+    // Send on Brand 20 -> Brand 21 is derived as contacted with no sendable message offered, and campaign counts only 1 first message.
+    expect((await on("00020", "sent", { step: 0, title: 0 })).status).toBe(200);
+    const p21After = await json(await get("/api/outreach/prospects/00021"));
+    expect(p21After.prospect.stage).toBe("contacted");
+    expect(p21After.message).toBeUndefined();
+    expect(p21After.sends[0]).toMatchObject({ step: 0, linkedFrom: "00020", linkedBrand: "Brand 20" });
+    expect((await outreach().desk.state()).firstMessagesSent).toBe(1);
+
+    // A newly imported Brand 22 sharing the same number with an approved ad is immediately covered too.
+    await ready([row(22, { bestRoute: "DM phone +6590000020", dmPhone: "+6590000020" })]);
+    const p22 = await json(await get("/api/outreach/prospects/00022"));
+    expect(p22.prospect.stage).toBe("contacted");
+    expect(p22.message).toBeUndefined();
+
     expect((await on("00020", "optout", {})).status).toBe(200);
     const out20 = await json(await get("/api/outreach/prospects/00020"));
     expect(out20.linkedBrands).toBeUndefined();

@@ -6,7 +6,7 @@ import { noteText } from "./candidates.js";
 import type { SpendLedger } from "../spend/ledger.js";
 import { blockedValues, isInstagramClosed, scrubRouteInstagram, textShowsClosedInstagram } from "./blocked.js";
 import { labelShowsClosed } from "./routes.js";
-import { chosen, sameContact } from "./sequence.js";
+import { chosen, linkedFirstSends, sameContact } from "./sequence.js";
 import { adWaits, candidatesWait, kindOf, optedOut, owedNow, stageOf, standingAd, TAKES_NO_AD, wantsAd } from "./stage.js";
 import { contactKeys, type OutreachStore } from "./store.js";
 
@@ -234,9 +234,10 @@ export class OutreachDesk {
       if (file.profile.test || !optedOut(file, optOuts)) continue;
       contactKeys(file.profile).forEach((key) => closed.add(key));
     }
+    const linked = linkedFirstSends(all);
     const listed = one ? [one] : all.filter((file) => !file.profile.test && file.profile.n > input.after).sort((a, b) => a.profile.n - b.profile.n);
     const prospects = listed.slice(0, input.limit).map((file): ProspectContacts => {
-      const stage = stageOf(file, optOuts);
+      const stage = stageOf(file, optOuts, linked.get(file.profile.id));
       const { instagram: _instagram, ...named } = briefOf(file);
       if (stage === "opted_out") return { ...named, stage };
       const { profile } = file;
@@ -290,9 +291,10 @@ export class OutreachDesk {
   /** The campaign in numbers. It names no brand and holds no contact. */
   async state() {
     const { files, optOuts, started, open } = await this.read();
+    const linked = linkedFirstSends(files);
     const count = (of: ProspectFile[]) => {
       const stages = Object.fromEntries(OUTREACH_STAGES.map((stage) => [stage, 0])) as Record<OutreachStage, number>;
-      for (const file of of) stages[stageOf(file, optOuts)] += 1;
+      for (const file of of) stages[stageOf(file, optOuts, linked.get(file.profile.id))] += 1;
       return stages;
     };
     const real = files.filter((file) => !file.profile.test);
