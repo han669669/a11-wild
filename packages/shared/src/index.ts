@@ -1248,6 +1248,12 @@ export interface OutreachSend {
   channel: OutreachChannel;
   /** The exact address or number the owner used. Older sends have no target. */
   to?: string;
+  /** Present when this first-message mark was propagated from a linked sibling brand sharing the same contact. */
+  linkedFrom?: string;
+  /** The sibling brand name the first message was sent from. */
+  linkedBrand?: string;
+  /** Sibling prospect ids covered by this first message at send time (durable across contact updates). */
+  covered?: string[];
   title: string;
   text: string;
   at: string;
@@ -1267,7 +1273,7 @@ export type OutreachEventBody =
   | { type: "none"; batchId: string; ownerSaid: string }
   /** The owner wants one draft with other words. The agent sets them and shows the drafts again. */
   | { type: "words"; batchId: string; ideaId: string; imageId: string; ownerSaid: string }
-  | { type: "reply"; reply: "more" | "no" | "other"; text?: string }
+  | { type: "reply"; reply: "more" | "no" | "other"; text?: string; linkedFrom?: string }
   | { type: "answered" }
   | { type: "optout" }
   | { type: "unsent"; step: OutreachStep; recheck?: true }
@@ -1433,6 +1439,8 @@ export interface ProspectPage {
   contact: ProspectContact;
   /** Plain-language person & pitch context for the owner, omitted when opted out. */
   pitch?: string;
+  /** Other non-test brands sharing a contact with this prospect (bidirectional), omitted when opted out. */
+  linkedBrands?: { id: string; brand: string; contacted: boolean }[];
   flags: ProspectFlag[];
   check?: boolean;
   /** Newest first. */

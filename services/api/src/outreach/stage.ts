@@ -1,4 +1,4 @@
-import type { OutreachAd, OutreachChannel, OutreachEvent, OutreachStage, Prospect, ProspectFile, ProspectRoute, ProspectSendTarget, ProspectSells } from "@a11-wild/shared";
+import type { OutreachAd, OutreachChannel, OutreachEvent, OutreachSend, OutreachStage, Prospect, ProspectFile, ProspectRoute, ProspectSendTarget, ProspectSells } from "@a11-wild/shared";
 import { blockedValues, instagramHandle, isBlockedTarget, isInstagramClosed, numberKey, type BlockedValues } from "./blocked.js";
 import { EMAIL } from "./messages.js";
 import { contactKeys } from "./store.js";
@@ -222,12 +222,12 @@ export function optedOut(file: ProspectFile, optOuts: ReadonlySet<string>): bool
  * The stage is not stored: it comes from the profile, the ads, the sends and the events, so it can be explained from the timeline alone.
  * An ad attached after the first message does not change it; `adWaits` says that a new ad waits for the owner's look.
  */
-export function stageOf(file: ProspectFile, optOuts: ReadonlySet<string>): OutreachStage {
+export function stageOf(file: ProspectFile, optOuts: ReadonlySet<string>, linkedSend?: OutreachSend): OutreachStage {
   if (optedOut(file, optOuts)) return "opted_out";
   const set = last(file.events, "stage");
   if (set && set.stage !== "auto") return set.stage;
   if (file.events.some((event) => event.type === "reply")) return "replied";
-  if (file.sends.some((send) => send.step === 0)) return "contacted";
+  if (file.sends.some((send) => send.step === 0) || linkedSend) return "contacted";
   const ad = newestAd(file);
   // The studio makes no ad for a service. The owner's own picture is one, so the brand then goes on like any other.
   if (last(file.events, "kind")?.kind === "service" && ad?.from !== "owner") return "needs_service_ad";
@@ -253,8 +253,8 @@ export const owedNow = (file: ProspectFile, optOuts: ReadonlySet<string>): Event
  * Why the agent should make an ad for this prospect now, or nothing when it should not:
  * a "more" reply with no ad after it, or a brand with no ad yet, or one ad the owner said no to.
  */
-export function wantsAd(file: ProspectFile, optOuts: ReadonlySet<string>): { why: "more" | "first" | "again"; ownerSaid?: string } | undefined {
-  const stage = stageOf(file, optOuts);
+export function wantsAd(file: ProspectFile, optOuts: ReadonlySet<string>, linkedSend?: OutreachSend): { why: "more" | "first" | "again"; ownerSaid?: string } | undefined {
+  const stage = stageOf(file, optOuts, linkedSend);
   if (adWaits(file) || candidatesWait(file) || owedByAgent(file)) return undefined;
   const more = byTime(file.events)
     .filter((event): event is EventOf<"reply"> => event.type === "reply" && event.reply === "more")

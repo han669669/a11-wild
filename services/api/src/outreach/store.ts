@@ -27,6 +27,15 @@ const HOLD_MS = 60_000;
 /** The id of a list row: its number, padded so that the table's order is the list's order. */
 export const prospectId = (n: number): string => String(n).padStart(5, "0");
 
+/** The normalised contact key of a recorded send, or undefined when the send has no destination. */
+export const sendContactKey = (send: Pick<OutreachSend, "channel" | "to">): string | undefined => {
+  if (!send.to?.trim()) return undefined;
+  if (send.channel === "email") return `E#${send.to.toLowerCase()}`;
+  if (send.channel === "instagram") return instagramKey(send.to);
+  const digits = send.to.replace(/\D/g, "");
+  return digits ? `W#${digits.length === 8 ? `65${digits}` : digits}` : undefined;
+};
+
 /** The key of a contact in the opt-out register. Phone routes share a key with WhatsApp. */
 export const contactKeys = (profile: Prospect, sends: readonly Pick<OutreachSend, "channel" | "to">[] = []): string[] => {
   const keys = new Set<string>();
@@ -66,10 +75,8 @@ export const contactKeys = (profile: Prospect, sends: readonly Pick<OutreachSend
   routeLabel(profile.bestRoute);
   routeLabel(profile.secondRoute);
   for (const send of sends) {
-    if (send.channel === "email") email(send.to);
-    else if (send.channel === "instagram") {
-      if (send.to?.trim()) keys.add(instagramKey(send.to));
-    } else number(send.to);
+    const key = sendContactKey(send);
+    if (key) keys.add(key);
   }
   return [...keys];
 };

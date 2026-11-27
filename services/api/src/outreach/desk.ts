@@ -6,7 +6,7 @@ import { noteText } from "./candidates.js";
 import type { SpendLedger } from "../spend/ledger.js";
 import { blockedValues, isInstagramClosed, scrubRouteInstagram, textShowsClosedInstagram } from "./blocked.js";
 import { labelShowsClosed } from "./routes.js";
-import { chosen, sameContact } from "./sequence.js";
+import { chosen, linkedFirstSends, sameContact } from "./sequence.js";
 import { adWaits, candidatesWait, kindOf, optedOut, owedNow, stageOf, standingAd, TAKES_NO_AD, wantsAd } from "./stage.js";
 import { contactKeys, type OutreachStore } from "./store.js";
 
@@ -93,6 +93,7 @@ export class OutreachDesk {
   /** What the owner is owed first (the final of his pick, or other words), then the brands that need an ad now: a "more" reply first, then the list's order. */
   async next(limit: number): Promise<{ owed: OwedBrand[]; brands: NextBrand[]; brandsWithAnAd: number; brandsLimit: number }> {
     const { files, optOuts, open, started, shared } = await this.read();
+    const linked = linkedFirstSends(files);
     const owed: OwedBrand[] = [];
     for (const file of files) {
       const choice = owedNow(file, optOuts);
@@ -104,7 +105,7 @@ export class OutreachDesk {
     let firsts = Math.max(0, CAMPAIGN.brands - started);
     for (const file of files) {
       if (file.profile.test) continue;
-      const want = wantsAd(file, optOuts);
+      const want = wantsAd(file, optOuts, linked.get(file.profile.id));
       if (!want) continue;
       const openBatchId = open.get(file.profile.id);
       const brand: NextBrand = { ...briefOf(file), why: want.why, ...(want.ownerSaid ? { ownerSaid: want.ownerSaid } : {}), ...(kindOf(file) === "product" ? { sells: "product" as const } : {}), ...(openBatchId ? { openBatchId } : {}) };
@@ -138,10 +139,11 @@ export class OutreachDesk {
 
   /** Refuses an outreach batch for a brand that needs no ad now. */
   async checkNew(prospectId: string): Promise<void> {
-    const { file, optOuts, started } = await this.file(prospectId);
+    const { files, file, optOuts, started } = await this.file(prospectId);
     if (file.profile.test) throw new Refusal("That is a test prospect. No ad is made for it.");
-    const want = wantsAd(file, optOuts);
-    if (!want) throw new Refusal(adWaits(file) ? "An ad of this brand waits for the owner's yes or no. Make no other until he has answered." : candidatesWait(file) ? "The drafts of this brand wait for the owner's pick. Make no other until he has chosen." : owedNow(file, optOuts) ? "The owner has chosen for this brand. outreach_next names what he is owed: do that first." : `This brand is at "${stageOf(file, optOuts)}": it needs no ad now. outreach_next gives the brands that do.`);
+    const linkedSend = linkedFirstSends(files).get(file.profile.id);
+    const want = wantsAd(file, optOuts, linkedSend);
+    if (!want) throw new Refusal(adWaits(file) ? "An ad of this brand waits for the owner's yes or no. Make no other until he has answered." : candidatesWait(file) ? "The drafts of this brand wait for the owner's pick. Make no other until he has chosen." : owedNow(file, optOuts) ? "The owner has chosen for this brand. outreach_next names what he is owed: do that first." : `This brand is at "${stageOf(file, optOuts, linkedSend)}": it needs no ad now. outreach_next gives the brands that do.`);
     if (want.why === "more") return;
     if (!inCampaign(file)) throw new Refusal(`The campaign is for the tiers ${CAMPAIGN.tiers.join(" and ")} live ads. This brand is in "${file.profile.tier}".`);
     if (want.why === "first" && started >= CAMPAIGN.brands) throw new Refusal(`The campaign's ${CAMPAIGN.brands} brands have their ad. A new brand needs the owner's say.`);
@@ -150,19 +152,20 @@ export class OutreachDesk {
   /** What the brand sells, or that no good ad can be made for it. Only for a brand the owner has not written to. */
   async mark(id: string, input: { mark: "product" | "service" | "parked"; reason?: string | undefined }): Promise<{ stage: OutreachStage }> {
     const { store } = this.deps;
-    const { file, optOuts } = await this.file(id);
+    const { files, file, optOuts } = await this.file(id);
     if (optedOut(file, optOuts)) throw new Refusal("This contact opted out. Nothing is changed for it.");
-    if (file.sends.length > 0) throw new Refusal("The owner has written to this brand. Tell him what you found: only he changes it now.");
+    const linkedSend = linkedFirstSends(files).get(file.profile.id);
+    if (file.sends.length > 0 || linkedSend) throw new Refusal("The owner has written to this brand. Tell him what you found: only he changes it now.");
     if (input.mark === "parked") {
       if (!input.reason) throw new Refusal("Give the reason: what was missing for a good ad (too few facts, no usable real photo).");
-      const stage = stageOf(file, optOuts);
+      const stage = stageOf(file, optOuts, linkedSend);
       if (stage !== "new") throw new Refusal(`Only a brand with no ad can be parked. This one is at "${stage}".`);
       await store.addEvent(id, { type: "stage", stage: "parked", reason: input.reason }, "agent");
     } else {
       await store.addEvent(id, { type: "kind", kind: input.mark }, "agent");
     }
     const after = (await store.all()).find((entry) => entry.profile.id === id) as ProspectFile;
-    return { stage: stageOf(after, optOuts) };
+    return { stage: stageOf(after, optOuts, linkedSend) };
   }
 
   /**
@@ -234,9 +237,10 @@ export class OutreachDesk {
       if (file.profile.test || !optedOut(file, optOuts)) continue;
       contactKeys(file.profile).forEach((key) => closed.add(key));
     }
+    const linked = linkedFirstSends(all);
     const listed = one ? [one] : all.filter((file) => !file.profile.test && file.profile.n > input.after).sort((a, b) => a.profile.n - b.profile.n);
     const prospects = listed.slice(0, input.limit).map((file): ProspectContacts => {
-      const stage = stageOf(file, optOuts);
+      const stage = stageOf(file, optOuts, linked.get(file.profile.id));
       const { instagram: _instagram, ...named } = briefOf(file);
       if (stage === "opted_out") return { ...named, stage };
       const { profile } = file;
@@ -290,16 +294,17 @@ export class OutreachDesk {
   /** The campaign in numbers. It names no brand and holds no contact. */
   async state() {
     const { files, optOuts, started, open } = await this.read();
+    const linked = linkedFirstSends(files);
     const count = (of: ProspectFile[]) => {
       const stages = Object.fromEntries(OUTREACH_STAGES.map((stage) => [stage, 0])) as Record<OutreachStage, number>;
-      for (const file of of) stages[stageOf(file, optOuts)] += 1;
+      for (const file of of) stages[stageOf(file, optOuts, linked.get(file.profile.id))] += 1;
       return stages;
     };
     const real = files.filter((file) => !file.profile.test);
     const campaign = real.filter((file) => inCampaign(file, open.get(file.profile.id)));
     const wants = { first: 0, again: 0, more: 0 };
     for (const file of real) {
-      const want = wantsAd(file, optOuts);
+      const want = wantsAd(file, optOuts, linked.get(file.profile.id));
       if (want && (want.why === "more" || inCampaign(file, open.get(file.profile.id)))) wants[want.why] += 1;
     }
     const spend = (await this.deps.ledger.summary()).campaign;

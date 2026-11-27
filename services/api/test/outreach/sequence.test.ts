@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadRows, makeTestProspect } from "../../src/outreach/load.js";
-import { nextStep, OutreachSequence, sameContact } from "../../src/outreach/sequence.js";
+import { linkedFirstSends, nextStep, OutreachSequence, sameContact, sameContactPeers } from "../../src/outreach/sequence.js";
 import { routeCheckUnresolved, sendTarget, stageOf } from "../../src/outreach/stage.js";
 import { OutreachStore } from "../../src/outreach/store.js";
 import { inCampaign } from "../../src/outreach/desk.js";
@@ -316,6 +316,78 @@ describe("marking a message as sent", () => {
     await expect(sequence.send("00002", { step: 0, title: 0 })).rejects.toThrow(/same contact as Brand 1/);
     await sequence.choose("00002");
     expect((await sequence.send("00002", { step: 0, title: 0 })).already).toBe(false);
+    // Derived bidirectional send-state linkage: one authoritative send in storage covers Brand 1 too, using 1 daily slot.
+    const all = await store.all();
+    const linked = linkedFirstSends(all);
+    expect(linked.get("00001")).toMatchObject({ step: 0, linkedFrom: "00002", linkedBrand: "Brand 2" });
+    expect(stageOf(all.find((entry) => entry.profile.id === "00001")!, new Set(), linked.get("00001"))).toBe("contacted");
+    expect(all.find((entry) => entry.profile.id === "00001")!.sends).toHaveLength(0);
+    expect(await store.placesTaken("2026-11-23")).toBe(1);
+    await expect(sequence.send("00001", { step: 0, title: 0 })).rejects.toThrow(/already messaged via Brand 2/);
+    await expect(sequence.takeBack("00001", 0)).rejects.toThrow(/sent via Brand 2/);
+    await sequence.takeBack("00002", 0);
+    expect(linkedFirstSends(await store.all()).size).toBe(0);
+    expect(await stage("00001")).toBe("ready");
+    expect(await stage("00002")).toBe("ready");
+    expect(await store.placesTaken("2026-11-23")).toBe(0);
+  });
+
+  it("derives linked send state only for the destination used and stops origin follow-ups after a sibling reply", async () => {
+    await loadRows(
+      store,
+      [
+        row(1, { whatsapp: "+65 8000 0001", email: "brand1@example.com" }),
+        row(2, { whatsapp: "+65 8000 0001", email: "brand2@example.com" }),
+      ],
+      now,
+    );
+    await ready("00001");
+    await ready("00002");
+    await sequence.choose("00002");
+    const peers = sameContactPeers(await store.all());
+    expect(peers.get("00001")?.map((p) => p.profile.id)).toEqual(["00002"]);
+    expect(peers.get("00002")?.map((p) => p.profile.id)).toEqual(["00001"]);
+
+    // Sending to Brand 1's own unique email does NOT mark Brand 2 contacted, and a reply on Brand 1's own email does NOT cancel Brand 2's WhatsApp follow-up.
+    await sequence.setChannel("00001", "email");
+    await sequence.send("00001", { step: 0, title: 0 });
+    expect(linkedFirstSends(await store.all()).get("00002")).toBeUndefined();
+    await sequence.send("00002", { step: 0, title: 0 });
+    await sequence.reply("00001", { reply: "other", text: "email reply" });
+    const afterIndependentReply = await store.all();
+    expect(nextStep(afterIndependentReply.find((e) => e.profile.id === "00002")!, afterIndependentReply)).toMatchObject({ step: 1 });
+    await sequence.takeBack("00002", 0);
+
+    // Sending to the shared WhatsApp number DOES cover Brand 2 (durably across contact updates) and newly imported Brand 3, and a linked reply stops origin follow-ups.
+    await loadRows(store, [row(4, { whatsapp: "+65 8000 0004" }), row(5, { whatsapp: "+65 8000 0004" })], now);
+    await ready("00004");
+    await ready("00005");
+    await sequence.send("00004", { step: 0, title: 0 });
+    await loadRows(store, [row(6, { whatsapp: "+65 8000 0004" }), row(5, { whatsapp: "+65 8000 0099" })], now);
+    const all = await store.all();
+    expect(linkedFirstSends(all).get("00005")).toMatchObject({ linkedFrom: "00004", linkedBrand: "Brand 4" });
+    expect(linkedFirstSends(all).get("00006")).toMatchObject({ linkedFrom: "00004", linkedBrand: "Brand 4" });
+    expect(nextStep(all.find((e) => e.profile.id === "00004")!, all)).toMatchObject({ step: 1 });
+    await sequence.reply("00005", { reply: "more", text: "tell me more" });
+    const afterReply = await store.all();
+    expect(nextStep(afterReply.find((e) => e.profile.id === "00004")!, afterReply)).toBeUndefined();
+
+    // Opting out a covered sibling whose contact changed still closes the original sent destination.
+    await sequence.reply("00005", { reply: "no" });
+    expect((await store.optOuts()).has("W#6580000004")).toBe(true);
+
+    // Current contact match takes precedence over historical `covered` match when a sibling switches to another sender's contact.
+    await loadRows(store, [row(7, { whatsapp: "+65 8000 0007" }), row(8, { whatsapp: "+65 8000 0007" }), row(9, { whatsapp: "+65 8000 0009" })], now);
+    await ready("00007");
+    await ready("00009");
+    await sequence.send("00007", { step: 0, title: 0 });
+    await sequence.send("00009", { step: 0, title: 0 });
+    await loadRows(store, [row(8, { whatsapp: "+65 8000 0009" })], now);
+    expect(linkedFirstSends(await store.all()).get("00008")).toMatchObject({ linkedFrom: "00009", linkedBrand: "Brand 9" });
+    await sequence.reply("00008", { reply: "more" });
+    const afterSwitchReply = await store.all();
+    expect(nextStep(afterSwitchReply.find((e) => e.profile.id === "00007")!, afterSwitchReply)).toMatchObject({ step: 1 });
+    expect(nextStep(afterSwitchReply.find((e) => e.profile.id === "00009")!, afterSwitchReply)).toBeUndefined();
   });
 
   it("refuses a send before the message text is loaded", async () => {
