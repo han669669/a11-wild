@@ -115,6 +115,20 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
             {page.flags.filter((flag) => flag.kind === "duplicate").map((flag) => <p key={flag.text} className="text-body">{outreachFlagText(flag.text)}</p>)}
           </div>
         ) : null}
+        {!out && page.linkedBrands && page.linkedBrands.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-body">
+            <span>Same contact as</span>
+            {page.linkedBrands.map((peer, index) => (
+              <span key={peer.id}>
+                {index > 0 ? ", " : ""}
+                <Link to={`/outreach/prospects/${peer.id}`} className="underline underline-offset-4">
+                  {peer.brand}
+                </Link>
+              </span>
+            ))}
+            <span>— one first message covers all linked brands.</span>
+          </div>
+        ) : null}
         {prospect.sameContactAs ? (
           <div className="flex flex-wrap items-center gap-2 text-body">
             Same contact as {prospect.sameContactAs}: it gets no first message until you choose it.
@@ -342,6 +356,18 @@ function Next({ page }: { page: ProspectPage }) {
     );
   }
   if (stage === "contacted") {
+    const linked = page.sends.find((send) => send.step === 0 && send.linkedFrom);
+    if (linked?.linkedFrom) {
+      return (
+        <Step who="nobody">
+          Messaged via{" "}
+          <Link to={`/outreach/prospects/${linked.linkedFrom}`} className="underline underline-offset-4">
+            {linked.linkedBrand ?? linked.linkedFrom}
+          </Link>
+          . One first message covers all linked brands.
+        </Step>
+      );
+    }
     return <Step who="nobody">{prospect.next ? `${STEPS[prospect.next.step]} is due ${dayName(prospect.next.due)}.` : "All three messages are sent."} Log a reply below when one comes.</Step>;
   }
   if (stage === "replied") return <Step who="nobody">They replied and you answered. Set the stage below when it becomes a talk, a client or a loss.</Step>;

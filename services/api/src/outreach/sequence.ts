@@ -17,7 +17,7 @@ export function nextStep(file: ProspectFile): { step: 1 | 2; due: string } | und
   if (file.events.some((event) => event.type === "reply")) return undefined;
   const sent = new Map(file.sends.map((send) => [send.step, send]));
   const first = sent.get(0);
-  if (!first) return undefined;
+  if (!first || first.linkedFrom) return undefined;
   const one = sent.get(1);
   if (!one) return { step: 1, due: dueDay(first.day, GAP_DAYS[1]) };
   return sent.has(2) ? undefined : { step: 2, due: dueDay(one.day, GAP_DAYS[2]) };
@@ -38,6 +38,36 @@ export function sameContact(files: ProspectFile[]): Map<string, ProspectFile> {
     for (const key of keys) if (!first.has(key)) first.set(key, file);
   }
   return shared;
+}
+
+/**
+ * Bidirectional contact linkage: for every non-test, non-merged prospect that shares any contact key with
+ * another prospect, returns all sibling prospects in list order.
+ */
+export function sameContactPeers(files: ProspectFile[]): Map<string, ProspectFile[]> {
+  const byKey = new Map<string, ProspectFile[]>();
+  const active = files.filter((file) => !file.profile.test && !file.profile.mergedInto);
+  for (const file of active) {
+    for (const key of contactKeys(file.profile)) {
+      const list = byKey.get(key);
+      if (list) list.push(file);
+      else byKey.set(key, [file]);
+    }
+  }
+  const peers = new Map<string, ProspectFile[]>();
+  for (const file of active) {
+    const seen = new Set<string>([file.profile.id]);
+    const list: ProspectFile[] = [];
+    for (const key of contactKeys(file.profile)) {
+      for (const other of byKey.get(key) ?? []) {
+        if (seen.has(other.profile.id)) continue;
+        seen.add(other.profile.id);
+        list.push(other);
+      }
+    }
+    if (list.length > 0) peers.set(file.profile.id, list.sort((a, b) => a.profile.n - b.profile.n));
+  }
+  return peers;
 }
 
 export const chosen = (file: ProspectFile): boolean => file.events.some((event) => event.type === "chosen");
@@ -85,8 +115,9 @@ export class OutreachSequence {
     const { file, files, optOuts } = await this.file(id);
     const { step } = input;
     const before = file.sends.find((send) => send.step === step);
-    if (before) return { send: before, already: true };
     if (step === 0 && optedOut(file, optOuts)) throw new Refusal("This contact opted out. No message to it is recorded, and none should be sent.");
+    if (before?.linkedFrom) throw new Refusal(`This contact was already messaged via ${before.linkedBrand ?? before.linkedFrom}. One first message covers all linked brands.`);
+    if (before) return { send: before, already: true };
 
     const target = sendTarget(file, optOuts);
     if (step === 0 && routeCheckUnresolved(file)) throw new Refusal("The best contact for this brand changed. Check it, then send.");
@@ -107,8 +138,11 @@ export class OutreachSequence {
     }
     const day = singaporeDay(this.now());
     const stage = stageOf(file, optOuts);
+    const peers = !file.profile.test ? sameContactPeers(files).get(id) ?? [] : [];
     if (step === 0) {
       if (stage !== "ready") throw new Refusal(`The first message goes only to a brand whose ad you said yes to. This one is at "${stage}".`);
+      const messagedPeer = peers.find((peer) => peer.sends.some((entry) => entry.step === 0));
+      if (messagedPeer) throw new Refusal(`This contact was already messaged via ${messagedPeer.profile.brand}. One first message covers all linked brands.`);
       const earlier = sameContact(files).get(id);
       if (earlier && !chosen(file)) throw new Refusal(`This brand has the same contact as ${earlier.profile.brand}. Choose it first if you want to send to it too.`);
     } else {
@@ -135,21 +169,33 @@ export class OutreachSequence {
       // The mark was not saved, or another mark of the same step came first: this one gives its place back.
       if (!put && counted) await this.store.givePlace(day);
     }
-    if (put) return { send, already: false };
+    if (put) {
+      // Bidirectional send-state linkage: one first message covers every brand sharing this contact.
+      if (step === 0 && peers.length > 0) {
+        const linked: OutreachSend = { ...send, linkedFrom: id, linkedBrand: file.profile.brand };
+        await Promise.all(peers.filter((peer) => !peer.sends.some((entry) => entry.step === 0)).map((peer) => this.store.putSend(peer.profile.id, linked)));
+      }
+      return { send, already: false };
+    }
     const saved = (await this.file(id)).file.sends.find((entry) => entry.step === step);
     return { send: saved ?? send, already: true };
   }
 
   /** Takes a mark back on the day it was made. Only the newest step can be taken back. */
   async takeBack(id: string, step: OutreachStep): Promise<void> {
-    const { file, optOuts } = await this.file(id);
+    const { file, files, optOuts } = await this.file(id);
     const send = file.sends.find((entry) => entry.step === step);
     if (!send) throw new Refusal(`${STEP_NAMES[step]} of this brand is not marked as sent.`);
+    if (send.linkedFrom) throw new Refusal(`This first message was sent via ${send.linkedBrand ?? send.linkedFrom}. Take it back on that brand's page instead.`);
     if (file.sends.some((entry) => entry.step > step)) throw new Refusal("A later message of this brand is marked as sent. Take that one back first.");
     const day = singaporeDay(this.now());
     if (send.day !== day || !(await this.store.deleteSend(id, step, day))) throw new Refusal(`A mark can be taken back on its own day only. This one is of ${send.day}.`);
     // The place goes back before the note of it is written: the mark is gone, so the day must not count it.
-    if (step === 0 && !file.profile.test) await this.store.givePlace(day);
+    if (step === 0 && !file.profile.test) {
+      await this.store.givePlace(day);
+      const linkedSiblings = files.filter((other) => other.profile.id !== id && other.sends.some((entry) => entry.step === 0 && entry.linkedFrom === id && entry.day === day));
+      await Promise.all(linkedSiblings.map((other) => this.store.deleteSend(other.profile.id, 0, day)));
+    }
     const current = sendTarget(file, optOuts);
     const recheck = step === 0 && (send.channel !== current?.channel || send.to !== current?.to);
     await this.store.addEvent(id, { type: "unsent", step, ...(recheck ? { recheck: true as const } : {}) }, "owner");

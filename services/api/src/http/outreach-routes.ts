@@ -8,7 +8,7 @@ import { singaporeDay } from "../outreach/days.js";
 import { makeTestProspect } from "../outreach/load.js";
 import { BRAND, mailLink, messagesFor, profileLink } from "../outreach/messages.js";
 import { filtered, filterOf, numbersOf } from "../outreach/numbers.js";
-import { DAILY, nextStep, sameContact } from "../outreach/sequence.js";
+import { DAILY, nextStep, sameContact, sameContactPeers } from "../outreach/sequence.js";
 import { blockedValues, instagramHandle, isInstagramClosed, scrubInstagramText, scrubRouteInstagram, textShowsClosedInstagram } from "../outreach/blocked.js";
 import { approvedAd, owedAnswer, optedOut, routeCheckUnresolved, sendTarget, sendTargetUnavailable, sellsOf, stageOf, targetForChannel } from "../outreach/stage.js";
 import { adView, rowOf, todayPage } from "../outreach/today.js";
@@ -249,12 +249,21 @@ export function outreachRoutes(
       const emails = value.match(/[^\s<>()[\]"',;:|@]+@[^\s<>()[\]"',;:|\x2f@]+\.[a-z]{2,}/gi) ?? [];
       return emails.every((address) => !closed.has(`E#${address.toLowerCase()}`)) && !labelShowsClosed(value, closed) && !textShowsClosedInstagram(value, closed);
     };
+    const linkedBrands =
+      stage === "opted_out"
+        ? []
+        : (sameContactPeers(files).get(file.profile.id) ?? []).map((peer) => ({
+            id: peer.profile.id,
+            brand: peer.profile.brand,
+            contacted: peer.sends.some((entry) => entry.step === 0),
+          }));
     return {
       prospect: rowOf(file, optOuts, sameContact(files), deps.now()),
       ...(file.profile.newestAd ? { newestAd: file.profile.newestAd } : {}),
       ...(sells ? { sells } : {}),
       contact: contactOf(file, optOuts, closed),
       ...(pitchOpen(file.profile.pitch) ? { pitch: file.profile.pitch } : {}),
+      ...(linkedBrands.length > 0 ? { linkedBrands } : {}),
       flags: stage === "opted_out" ? [] : file.profile.flags ?? [],
       ...(check ? { check } : {}),
       ads,

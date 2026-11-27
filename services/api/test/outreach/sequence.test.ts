@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadRows, makeTestProspect } from "../../src/outreach/load.js";
-import { nextStep, OutreachSequence, sameContact } from "../../src/outreach/sequence.js";
+import { nextStep, OutreachSequence, sameContact, sameContactPeers } from "../../src/outreach/sequence.js";
 import { routeCheckUnresolved, sendTarget, stageOf } from "../../src/outreach/stage.js";
 import { OutreachStore } from "../../src/outreach/store.js";
 import { inCampaign } from "../../src/outreach/desk.js";
@@ -316,6 +316,34 @@ describe("marking a message as sent", () => {
     await expect(sequence.send("00002", { step: 0, title: 0 })).rejects.toThrow(/same contact as Brand 1/);
     await sequence.choose("00002");
     expect((await sequence.send("00002", { step: 0, title: 0 })).already).toBe(false);
+    // Bidirectional send-state linkage: sending via Brand 2 marks Brand 1 as messaged too and consumes only 1 daily slot.
+    expect(await stage("00001")).toBe("contacted");
+    expect(await store.placesTaken("2026-11-23")).toBe(1);
+    const firstFile = (await store.all()).find((entry) => entry.profile.id === "00001")!;
+    expect(firstFile.sends[0]).toMatchObject({ step: 0, linkedFrom: "00002", linkedBrand: "Brand 2" });
+    expect(nextStep(firstFile)).toBeUndefined();
+    await expect(sequence.takeBack("00001", 0)).rejects.toThrow(/sent via Brand 2/);
+    await sequence.takeBack("00002", 0);
+    expect(await stage("00001")).toBe("ready");
+    expect(await stage("00002")).toBe("ready");
+    expect(await store.placesTaken("2026-11-23")).toBe(0);
+  });
+
+  it("links first-message send state from the first brand to every sibling sharing the contact", async () => {
+    await loadRows(store, [row(2, { whatsapp: "+65 8000 0001" })], now);
+    await ready("00001");
+    await ready("00002");
+    await sequence.choose("00002");
+    const peers = sameContactPeers(await store.all());
+    expect(peers.get("00001")?.map((p) => p.profile.id)).toEqual(["00002"]);
+    expect(peers.get("00002")?.map((p) => p.profile.id)).toEqual(["00001"]);
+    await sequence.send("00001", { step: 0, title: 0 });
+    expect(await stage("00001")).toBe("contacted");
+    expect(await stage("00002")).toBe("contacted");
+    expect(await store.placesTaken("2026-11-23")).toBe(1);
+    const secondFile = (await store.all()).find((entry) => entry.profile.id === "00002")!;
+    expect(secondFile.sends[0]).toMatchObject({ step: 0, linkedFrom: "00001", linkedBrand: "Brand 1" });
+    expect(nextStep(secondFile)).toBeUndefined();
   });
 
   it("refuses a send before the message text is loaded", async () => {

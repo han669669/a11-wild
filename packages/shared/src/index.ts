@@ -1248,6 +1248,10 @@ export interface OutreachSend {
   channel: OutreachChannel;
   /** The exact address or number the owner used. Older sends have no target. */
   to?: string;
+  /** Present when this first-message mark was propagated from a linked sibling brand sharing the same contact. */
+  linkedFrom?: string;
+  /** The sibling brand name the first message was sent from. */
+  linkedBrand?: string;
   title: string;
   text: string;
   at: string;
@@ -1433,6 +1437,8 @@ export interface ProspectPage {
   contact: ProspectContact;
   /** Plain-language person & pitch context for the owner, omitted when opted out. */
   pitch?: string;
+  /** Other non-test brands sharing a contact with this prospect (bidirectional), omitted when opted out. */
+  linkedBrands?: { id: string; brand: string; contacted: boolean }[];
   flags: ProspectFlag[];
   check?: boolean;
   /** Newest first. */
