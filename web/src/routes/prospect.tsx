@@ -126,7 +126,7 @@ function Body({ page, done }: { page: ProspectPage; done: (page: ProspectPage) =
                 </Link>
               </span>
             ))}
-            <span>— one first message covers all linked brands.</span>
+            <span>— sending to a shared number or address covers every linked brand that shares it.</span>
           </div>
         ) : null}
         {prospect.sameContactAs ? (
@@ -368,7 +368,16 @@ function Next({ page }: { page: ProspectPage }) {
         </Step>
       );
     }
-    return <Step who="nobody">{prospect.next ? `${STEPS[prospect.next.step]} is due ${dayName(prospect.next.due)}.` : "All three messages are sent."} Log a reply below when one comes.</Step>;
+    return (
+      <Step who="nobody">
+        {prospect.next
+          ? `${STEPS[prospect.next.step]} is due ${dayName(prospect.next.due)}.`
+          : page.sends.some((send) => send.step === 2)
+            ? "All three messages are sent."
+            : "A linked brand already got a reply, so follow-ups stopped."}{" "}
+        Log a reply below when one comes.
+      </Step>
+    );
   }
   if (stage === "replied") return <Step who="nobody">They replied and you answered. Set the stage below when it becomes a talk, a client or a loss.</Step>;
   if (stage === "no_route") return <Step who="nobody">The list holds no WhatsApp number and no address for this brand, so no message can go to it.</Step>;

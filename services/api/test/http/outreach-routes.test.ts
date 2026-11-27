@@ -809,11 +809,13 @@ describe("the owner's day", () => {
     expect(p21After.sends[0]).toMatchObject({ step: 0, linkedFrom: "00020", linkedBrand: "Brand 20" });
     expect((await outreach().desk.state()).firstMessagesSent).toBe(1);
 
-    // A newly imported Brand 22 sharing the same number with an approved ad is immediately covered too.
+    // A newly imported Brand 22 sharing the same number with an approved ad is immediately covered too, and desk.checkNew skips contacted siblings.
     await ready([row(22, { bestRoute: "DM phone +6590000020", dmPhone: "+6590000020" })]);
     const p22 = await json(await get("/api/outreach/prospects/00022"));
     expect(p22.prospect.stage).toBe("contacted");
     expect(p22.message).toBeUndefined();
+    await loadRows(outreach().store, [row(23, { bestRoute: "DM phone +6590000020", dmPhone: "+6590000020" })], () => studio.clock.now);
+    await expect(outreach().desk.checkNew("00023")).rejects.toThrow(/contacted/);
 
     expect((await on("00020", "optout", {})).status).toBe(200);
     const out20 = await json(await get("/api/outreach/prospects/00020"));

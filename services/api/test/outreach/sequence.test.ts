@@ -348,23 +348,29 @@ describe("marking a message as sent", () => {
     expect(peers.get("00001")?.map((p) => p.profile.id)).toEqual(["00002"]);
     expect(peers.get("00002")?.map((p) => p.profile.id)).toEqual(["00001"]);
 
-    // Sending to Brand 1's own unique email does NOT mark Brand 2 contacted (even though they share a backup phone).
+    // Sending to Brand 1's own unique email does NOT mark Brand 2 contacted, and a reply on Brand 1's own email does NOT cancel Brand 2's WhatsApp follow-up.
     await sequence.setChannel("00001", "email");
     await sequence.send("00001", { step: 0, title: 0 });
     expect(linkedFirstSends(await store.all()).get("00002")).toBeUndefined();
-    await sequence.takeBack("00001", 0);
+    await sequence.send("00002", { step: 0, title: 0 });
+    await sequence.reply("00001", { reply: "other", text: "email reply" });
+    const afterIndependentReply = await store.all();
+    expect(nextStep(afterIndependentReply.find((e) => e.profile.id === "00002")!, afterIndependentReply)).toMatchObject({ step: 1 });
+    await sequence.takeBack("00002", 0);
 
-    // Sending to the shared WhatsApp number DOES cover Brand 2 (and newly imported siblings), and a reply on Brand 2 stops Brand 1's follow-ups.
-    await sequence.setChannel("00001", "whatsapp");
-    await sequence.send("00001", { step: 0, title: 0 });
-    await loadRows(store, [row(3, { whatsapp: "+65 8000 0001" })], now);
+    // Sending to the shared WhatsApp number DOES cover Brand 2 (durably across contact updates) and newly imported Brand 3, and a linked reply stops origin follow-ups.
+    await loadRows(store, [row(4, { whatsapp: "+65 8000 0004" }), row(5, { whatsapp: "+65 8000 0004" })], now);
+    await ready("00004");
+    await ready("00005");
+    await sequence.send("00004", { step: 0, title: 0 });
+    await loadRows(store, [row(6, { whatsapp: "+65 8000 0004" }), row(5, { whatsapp: "+65 8000 0099" })], now);
     const all = await store.all();
-    expect(linkedFirstSends(all).get("00002")).toMatchObject({ linkedFrom: "00001", linkedBrand: "Brand 1" });
-    expect(linkedFirstSends(all).get("00003")).toMatchObject({ linkedFrom: "00001", linkedBrand: "Brand 1" });
-    expect(nextStep(all.find((e) => e.profile.id === "00001")!, all)).toMatchObject({ step: 1 });
-    await sequence.reply("00002", { reply: "more", text: "tell me more" });
+    expect(linkedFirstSends(all).get("00005")).toMatchObject({ linkedFrom: "00004", linkedBrand: "Brand 4" });
+    expect(linkedFirstSends(all).get("00006")).toMatchObject({ linkedFrom: "00004", linkedBrand: "Brand 4" });
+    expect(nextStep(all.find((e) => e.profile.id === "00004")!, all)).toMatchObject({ step: 1 });
+    await sequence.reply("00005", { reply: "more", text: "tell me more" });
     const afterReply = await store.all();
-    expect(nextStep(afterReply.find((e) => e.profile.id === "00001")!, afterReply)).toBeUndefined();
+    expect(nextStep(afterReply.find((e) => e.profile.id === "00004")!, afterReply)).toBeUndefined();
   });
 
   it("refuses a send before the message text is loaded", async () => {

@@ -253,8 +253,8 @@ export const owedNow = (file: ProspectFile, optOuts: ReadonlySet<string>): Event
  * Why the agent should make an ad for this prospect now, or nothing when it should not:
  * a "more" reply with no ad after it, or a brand with no ad yet, or one ad the owner said no to.
  */
-export function wantsAd(file: ProspectFile, optOuts: ReadonlySet<string>): { why: "more" | "first" | "again"; ownerSaid?: string } | undefined {
-  const stage = stageOf(file, optOuts);
+export function wantsAd(file: ProspectFile, optOuts: ReadonlySet<string>, linkedSend?: OutreachSend): { why: "more" | "first" | "again"; ownerSaid?: string } | undefined {
+  const stage = stageOf(file, optOuts, linkedSend);
   if (adWaits(file) || candidatesWait(file) || owedByAgent(file)) return undefined;
   const more = byTime(file.events)
     .filter((event): event is EventOf<"reply"> => event.type === "reply" && event.reply === "more")

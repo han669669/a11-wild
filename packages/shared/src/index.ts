@@ -1252,6 +1252,8 @@ export interface OutreachSend {
   linkedFrom?: string;
   /** The sibling brand name the first message was sent from. */
   linkedBrand?: string;
+  /** Sibling prospect ids covered by this first message at send time (durable across contact updates). */
+  covered?: string[];
   title: string;
   text: string;
   at: string;
@@ -1271,7 +1273,7 @@ export type OutreachEventBody =
   | { type: "none"; batchId: string; ownerSaid: string }
   /** The owner wants one draft with other words. The agent sets them and shows the drafts again. */
   | { type: "words"; batchId: string; ideaId: string; imageId: string; ownerSaid: string }
-  | { type: "reply"; reply: "more" | "no" | "other"; text?: string }
+  | { type: "reply"; reply: "more" | "no" | "other"; text?: string; linkedFrom?: string }
   | { type: "answered" }
   | { type: "optout" }
   | { type: "unsent"; step: OutreachStep; recheck?: true }

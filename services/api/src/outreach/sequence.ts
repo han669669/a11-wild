@@ -19,6 +19,7 @@ const TEMPLATES = "TEMPLATES";
  */
 export function linkedFirstSends(files: readonly ProspectFile[]): Map<string, OutreachSend> {
   const active = files.filter((file) => !file.profile.test && !file.profile.mergedInto);
+  const byId = new Map(active.map((file) => [file.profile.id, file]));
   const byKey = new Map<string, ProspectFile[]>();
   for (const file of active) {
     for (const key of contactKeys(file.profile)) {
@@ -32,9 +33,10 @@ export function linkedFirstSends(files: readonly ProspectFile[]): Map<string, Ou
     const first = origin.sends.find((send) => send.step === 0 && !send.linkedFrom);
     if (!first) continue;
     const key = sendContactKey(first);
-    const covered = key ? byKey.get(key) ?? [] : contactKeys(origin.profile).flatMap((k) => byKey.get(k) ?? []);
+    const byContact = key ? byKey.get(key) ?? [] : contactKeys(origin.profile).flatMap((k) => byKey.get(k) ?? []);
+    const byCovered = (first.covered ?? []).map((id) => byId.get(id)).filter((peer): peer is ProspectFile => peer !== undefined);
     const derived: OutreachSend = { ...first, linkedFrom: origin.profile.id, linkedBrand: origin.profile.brand };
-    for (const peer of covered) {
+    for (const peer of [...byCovered, ...byContact]) {
       if (peer.profile.id === origin.profile.id) continue;
       if (peer.sends.some((send) => send.step === 0 && !send.linkedFrom)) continue;
       if (!linked.has(peer.profile.id)) linked.set(peer.profile.id, derived);
@@ -50,15 +52,12 @@ export function nextStep(file: ProspectFile, files?: readonly ProspectFile[]): {
   const first = sent.get(0);
   if (!first || first.linkedFrom) return undefined;
   if (files && !file.profile.test) {
-    const key = sendContactKey(first);
-    const originKeys = key ? new Set([key]) : new Set(contactKeys(file.profile));
     const peerReplied = files.some(
       (other) =>
         other.profile.id !== file.profile.id &&
         !other.profile.test &&
         !other.profile.mergedInto &&
-        other.events.some((event) => event.type === "reply" && event.at >= first.at) &&
-        contactKeys(other.profile).some((k) => originKeys.has(k)),
+        other.events.some((event) => event.type === "reply" && event.linkedFrom === file.profile.id && event.at >= first.at),
     );
     if (peerReplied) return undefined;
   }
@@ -198,6 +197,7 @@ export class OutreachSequence {
     if (!templates) throw new Refusal("The message text is not loaded yet.");
     if (!recordTarget) throw new Refusal("This brand has no checked number or address.");
     const { channel } = recordTarget;
+    let covered: string[] = [];
     if (step === 0 && !file.profile.test) {
       const targetKey = sendContactKey({ channel, to: recordTarget.to });
       if (targetKey) {
@@ -209,6 +209,16 @@ export class OutreachSequence {
             other.sends.some((entry) => entry.step === 0 && !entry.linkedFrom && sendContactKey(entry) === targetKey),
         );
         if (sentPeer) throw new Refusal(`This contact was already messaged via ${sentPeer.profile.brand}. One first message covers all linked brands.`);
+        covered = files
+          .filter(
+            (other) =>
+              other.profile.id !== id &&
+              !other.profile.test &&
+              !other.profile.mergedInto &&
+              !other.sends.some((entry) => entry.step === 0 && !entry.linkedFrom) &&
+              contactKeys(other.profile).includes(targetKey),
+          )
+          .map((other) => other.profile.id);
       }
     }
     const counted = step === 0 && !file.profile.test;
@@ -217,7 +227,15 @@ export class OutreachSequence {
       const daily = await this.daily();
       if (!(await this.store.takePlace(day, daily))) throw new Refusal(`Today's ${daily} first messages are sent. More can go tomorrow, or raise the daily number.`);
     }
-    const send: OutreachSend = { step, day, channel, to: recordTarget.to, ...fill(templates.steps[step], file.profile.brand, input.title), at: this.now().toISOString() };
+    const send: OutreachSend = {
+      step,
+      day,
+      channel,
+      to: recordTarget.to,
+      ...(covered.length > 0 ? { covered } : {}),
+      ...fill(templates.steps[step], file.profile.brand, input.title),
+      at: this.now().toISOString(),
+    };
     let put = false;
     try {
       put = await this.store.putSend(id, send);
@@ -253,9 +271,14 @@ export class OutreachSequence {
   /** A reply the owner got. "no" is an opt-out, at once and for good. */
   async reply(id: string, input: { reply: "more" | "no" | "other"; text?: string | undefined }): Promise<OutreachEvent> {
     const { file, files } = await this.file(id);
-    const linked = !file.profile.test ? linkedFirstSends(files).get(id) : undefined;
-    if (!file.sends.some((send) => send.step === 0) && !linked) throw new Refusal("A reply is logged for a brand that got the first message.");
-    const event = await this.store.addEvent(id, { type: "reply", reply: input.reply, ...(input.text ? { text: input.text } : {}) }, "owner");
+    const ownFirst = file.sends.some((send) => send.step === 0 && !send.linkedFrom);
+    const linked = !ownFirst && !file.profile.test ? linkedFirstSends(files).get(id) : undefined;
+    if (!ownFirst && !linked) throw new Refusal("A reply is logged for a brand that got the first message.");
+    const event = await this.store.addEvent(
+      id,
+      { type: "reply", reply: input.reply, ...(input.text ? { text: input.text } : {}), ...(linked?.linkedFrom ? { linkedFrom: linked.linkedFrom } : {}) },
+      "owner",
+    );
     if (input.reply === "no") await this.optOut(id);
     return event;
   }
