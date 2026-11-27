@@ -5,10 +5,11 @@ Start here. This file is for every AI agent that works on `a11-wild`. Plain word
 ## 1. Read in this order
 
 1. `AGENTS.md` (this file): the goal, the rules, the workflow.
-2. `docs/plans/`: the current plan. The newest file is the one in force.
-3. `docs/decisions.md`: each owner decision, with its date.
-4. `docs/security-checklist.md`: the security gate. Run it on every change without being asked.
-5. `docs/deploy.md`: how the studio gets to AWS, and the one-time steps.
+2. `docs/pitfalls-and-conventions.md`: day-to-day op sec, fork workflow, Outreach CRM operations, creative conventions and solved pitfalls.
+3. `docs/plans/`: the current plan. The newest file is the one in force.
+4. `docs/decisions.md`: each owner decision, with its date.
+5. `docs/security-checklist.md`: the security gate. Run it on every change without being asked.
+6. `docs/deploy.md`: how the studio gets to AWS, and the one-time steps.
 
 ## 2. The goal
 
@@ -26,12 +27,12 @@ A private ad studio. An AI agent takes one brand and one product to three finish
 | Layer | Choice |
 |---|---|
 | Brain | The connected AI agent. The server never calls a language model. |
-| Agent connection | The a11-wild MCP server only. The server calls Parallel and fal itself. An agent never needs a Parallel or fal connection. |
+| Agent connection | The active `a11-wild` MCP server only (never legacy `a11-adgen` servers). The server calls Parallel and fal itself. An agent never needs a Parallel or fal connection. |
 | Backend | AWS only, in one Region: Lambda, API Gateway, DynamoDB, S3, CloudFront, Cognito, EventBridge, Parameter Store. All of it is defined in `infra/` with CDK. |
 | MCP | Hand-written, stateless, JSON over one `POST /mcp`. No MCP SDK. |
 | Sign-in | Cognito. Email and password, by invitation only. A new MCP client waits for the owner's approval. |
 | Frontend | Vite, React, TypeScript, Tailwind v4, shadcn/ui with Fluid Functionalism (`@fluid` registry, Radix flavour). |
-| Research | Parallel, from the server. |
+| Research | Parallel (search, extract, image search, tasks, Decisions, Shopping, Places, Entity Search, FindAll, Monitor watches), from the server. |
 | Images | fal.ai GPT Image 2.5 Sunburst, from the server. Drafts `low`, finals `high`, 4:5 only. |
 
 ## 5. Layout
@@ -56,14 +57,16 @@ A private ad studio. An AI agent takes one brand and one product to three finish
 - **State.** Each batch step saves its state, so a stopped session resumes.
 - **AWS resources** exist only through `infra/`. Nothing is made by hand in the console, apart from the one-time steps in `docs/deploy.md`.
 - **Logs** hold no token, cookie, key, tool argument or tool answer.
+- **Outreach CRM updates.** Workbook updates are row-targeted only (never silently mass-overwrite unrelated drift) and always include a full-row diff report. Keep `pitch` and route notes in plain English with zero raw audit jargon (`docs/pitfalls-and-conventions.md`).
+- **Child sessions.** Clean up any child or subagent sessions (such as blind critics) as soon as their job is done.
 - **Fluid components** in `web/src/components/ui` and their helpers in `web/src/lib` stay as the registry ships them. Change them by adding them again from the registry.
 
 ## 7. Workflow
 
-1. Never push to `main`. Work on a branch: `feat/`, `fix/`, `docs/`, `chore/`, `ci/`, or `avrea/` for a runner conversion that Avrea opens.
+1. Never push to `main`. Work on a branch: `feat/`, `fix/`, `docs/`, `chore/`, `ci/`, or `avrea/` for a runner conversion that Avrea opens. When contributing from a fork (`origin` = fork, `upstream` = main repo), fast-forward `main` from `upstream/main` and push `origin/main` after each merge.
 2. Run `npm run check` before you push. It runs lint, type check, tests, the dashboard build, the CDK synth and the public-repository check.
-3. Open a pull request. Title: `type(scope): subject`, 72 characters or fewer. Put a "Security check" line in the body.
-4. A merge to `main` deploys to AWS. Merge your own pull request yourself, with no question to the owner, when all of these are true (the owner's standing rule, 22-11-2026): the checks pass on the newest commit; Devin Review of the newest commit is done; each finding is fixed, or answered with a reason; nothing the change needs is missing; and you are confident in it. Squash-merge, then tell the owner what you merged. If one of these is not true, or the change needs something from section 8, ask him first.
+3. Open a pull request. Title: `type(scope): subject`, 72 characters or fewer. Put a "Security check" line in the body. Fix every real bug or security finding until Devin Review finishes with 0 new issues on the newest commit.
+4. A merge to `main` deploys to AWS. When you have push/merge access to the main repository, merge your own pull request yourself, with no question to the owner, when all of these are true (the owner's standing rule, 22-11-2026): the checks pass on the newest commit; Devin Review of the newest commit is done; each finding is fixed, or answered with a reason; nothing the change needs is missing; and you are confident in it. Squash-merge, then tell the owner what you merged. If working from a fork without merge access, hand the owner the pull request once checks and Devin Review are green. If one of these is not true, or the change needs something from section 8, ask him first.
 5. After a deploy, run the live probes and check that the owner can still sign in and an agent can still connect (`docs/security-checklist.md`).
 
 ## 8. Ask the owner first

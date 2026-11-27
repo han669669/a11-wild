@@ -3,9 +3,9 @@
 
 # a11-wild
 
-A private ad studio on AWS. An AI agent takes a brand and a product to three finished, truthful static 4:5 ads through one MCP server, and the studio learns the owner's taste from each pick.
+A private ad studio and cold-outreach CRM on AWS. An AI agent takes a brand and a product through three static 4:5 ad engines (`v1` Wild logo-only, `v2` Headline, `v3` Concept) through one MCP server, delivers private client packs, tracks outreach, and learns the owner's taste from each pick.
 
-- Agents: start with `AGENTS.md`, then `docs/plans/`.
+- Agents: start with `AGENTS.md`, then `docs/pitfalls-and-conventions.md` and `docs/plans/`.
 - Run the checks: `npm ci && npm run check`.
 - Deploy: `docs/deploy.md`.
 
@@ -18,7 +18,7 @@ A private ad studio on AWS. An AI agent takes a brand and a product to three fin
 | Frontend | Vite, React, TypeScript, Tailwind v4, shadcn/ui, Fluid Functionalism (`@fluid`, Radix flavour), Plus Jakarta Sans |
 | Backend | TypeScript on Node.js 22; pixel tools in Python (Pillow, NumPy, OpenCV) |
 | Sign-in | Email and password, by invitation only. An MCP client signs in with OAuth and PKCE, then waits for the owner's approval. |
-| Research | Parallel (search, extract, image search, tasks), called by the server |
+| Research | Parallel (search, extract, image search, tasks, Decisions, Shopping, Places, Entity Search, FindAll, Monitor watches), called by the server |
 | Images | fal.ai GPT Image 2.5 Sunburst, 4:5 only. Roughs and drafts `low` at 1024x1280, finals `high` at 1536x1920. |
 | Infrastructure as code | AWS CDK in TypeScript (`infra/`) |
 | Checks and deploy | GitHub Actions, ESLint, Vitest. A merge to `main` deploys. |
