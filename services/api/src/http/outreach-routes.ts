@@ -141,12 +141,24 @@ export function outreachRoutes(
       return scrubbed && openRouteLabel(scrubbed, closed) && !textShowsClosedFacebook(scrubbed, closed) ? scrubbed : undefined;
     };
     const whatsappNoteFor = (number: string): string | undefined => cleanNote(profile.whatsappNotes?.[number]);
-    const whatsappRouteNoteFor = (number: string): string | undefined =>
-      openRoutes.find((route) => route.channel === "whatsapp" && route.note && numberKey(route.to) === numberKey(number))?.note;
-    const noteForNumber = (number: string) =>
-      whatsappNoteFor(number) ??
-      whatsappRouteNoteFor(number) ??
-      openRoutes.find((route) => route.note && numberKey(route.to) === numberKey(number))?.note;
+    const whatsappRouteNoteFor = (number: string): string | undefined => {
+      for (const route of openRoutes) {
+        if (route.channel !== "whatsapp" || !route.note || numberKey(route.to) !== numberKey(number)) continue;
+        const cleaned = cleanNote(route.note);
+        if (cleaned) return cleaned;
+      }
+      return undefined;
+    };
+    const noteForNumber = (number: string) => {
+      const direct = whatsappNoteFor(number) ?? whatsappRouteNoteFor(number);
+      if (direct) return direct;
+      for (const route of openRoutes) {
+        if (!route.note || numberKey(route.to) !== numberKey(number)) continue;
+        const cleaned = cleanNote(route.note);
+        if (cleaned) return cleaned;
+      }
+      return undefined;
+    };
     const sendTo = (() => {
       if (!rawSendTo) return undefined;
       const ownNote = cleanNote(rawSendTo.note);
